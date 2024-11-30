@@ -1,0 +1,13 @@
+{
+    "extends": "../../tsconfig.json",
+    "compilerOptions": {
+        "moduleResolution": "Node",
+        "types": [
+            "node"
+        ],
+        "declarationDir": "../../dist/node",
+        "emitDeclarationOnly": true
+    },
+    "include": ["./**/*.ts", "../src/*.d.ts"],
+    "exclude": ["../node_modules"]
+}

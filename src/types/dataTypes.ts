@@ -1,0 +1,110 @@
+import {z} from 'zod'
+
+export enum TableFieldDataType {
+    text = 'text',
+    number = 'number',
+    bool = 'bool',
+    email = 'email',
+    url = 'url',
+    editor = 'editor',
+    date = 'date',
+    select = 'select',
+    json = 'json',
+    file = 'file',
+    relation = 'relation',
+    password = 'password',
+    // autodate = 'autodate',
+    integer = 'integer',
+    blob = 'blob',
+}
+
+export enum TableFieldSqlDataType0 {
+    text = 'text',
+    integer = 'integer',
+    real = 'real',
+    blob = 'blob',
+    null = 'null'
+}
+
+export enum TableFieldSqlDataType1 {
+    json = 'json',
+    date = 'date',
+    datetime = 'datetime',
+    time = 'time',
+    timestamp = 'timestamp',
+    float = 'float',
+    int = 'int',
+    boolean = 'boolean',
+    numeric = 'numeric'
+}
+
+export type TableFieldSqlDataType = keyof typeof TableFieldSqlDataType0 | keyof typeof TableFieldSqlDataType1
+
+export const tableFieldTypeToZod = {
+    text: z.string(),
+    number: z.number(),
+    bool: z.boolean(),
+    email: z.string().email(),
+    url: z.string().url(),
+    editor: z.string(),
+    date: z.string(),
+    datetime: z.string(),
+    time: z.string(),
+    timestamp: z.string(),
+    json: z.record(z.any()),
+    // file: z.instanceof(File),
+    file: z.string(),
+    // relation: z.string(),
+    // autodate: z.string(),
+    integer: z.number().int(),
+    real: z.number(),
+    blob: z.string(),
+    float: z.number(),
+    int: z.number().int(),
+    boolean: z.boolean(),
+    numeric: z.number(),
+} as const// satisfies Record<TableFieldDataType|TableFieldSqlDataType, z.ZodType<any, any, any>>
+
+
+export const sqlDataTypeToDataTypeDefaults: Record<TableFieldSqlDataType, TableFieldDataType> = {
+    [TableFieldSqlDataType0.text]: TableFieldDataType.text,
+    [TableFieldSqlDataType0.integer]: TableFieldDataType.integer,
+    [TableFieldSqlDataType0.real]: TableFieldDataType.number,
+    [TableFieldSqlDataType0.blob]: TableFieldDataType.blob,
+    [TableFieldSqlDataType0.null]: TableFieldDataType.text,
+    [TableFieldSqlDataType1.json]: TableFieldDataType.json,
+    [TableFieldSqlDataType1.date]: TableFieldDataType.date,
+    [TableFieldSqlDataType1.datetime]: TableFieldDataType.date,
+    [TableFieldSqlDataType1.time]: TableFieldDataType.date,
+    [TableFieldSqlDataType1.timestamp]: TableFieldDataType.date,
+    [TableFieldSqlDataType1.float]: TableFieldDataType.number,
+    [TableFieldSqlDataType1.int]: TableFieldDataType.integer,
+    [TableFieldSqlDataType1.boolean]: TableFieldDataType.bool,
+    [TableFieldSqlDataType1.numeric]: TableFieldDataType.number,
+}
+export const dataTypeToSqlDataType: Record<TableFieldDataType, TableFieldSqlDataType> = Object.fromEntries(Object.entries(sqlDataTypeToDataTypeDefaults).map(([k, v]) => [v, k])) as any
+
+export const sqlDataTypeAliases: Record<TableFieldSqlDataType, TableFieldSqlDataType0> = {
+    [TableFieldSqlDataType0.text]: TableFieldSqlDataType0.text,
+    [TableFieldSqlDataType0.integer]: TableFieldSqlDataType0.integer,
+    [TableFieldSqlDataType0.real]: TableFieldSqlDataType0.real,
+    [TableFieldSqlDataType0.blob]: TableFieldSqlDataType0.blob,
+    [TableFieldSqlDataType0.null]: TableFieldSqlDataType0.null,
+    [TableFieldSqlDataType1.json]: TableFieldSqlDataType0.text,
+    [TableFieldSqlDataType1.date]: TableFieldSqlDataType0.text,
+    [TableFieldSqlDataType1.datetime]: TableFieldSqlDataType0.text,
+    [TableFieldSqlDataType1.time]: TableFieldSqlDataType0.text,
+    [TableFieldSqlDataType1.timestamp]: TableFieldSqlDataType0.text,
+    [TableFieldSqlDataType1.float]: TableFieldSqlDataType0.real,
+    [TableFieldSqlDataType1.int]: TableFieldSqlDataType0.integer,
+    [TableFieldSqlDataType1.boolean]: TableFieldSqlDataType0.integer,
+    [TableFieldSqlDataType1.numeric]: TableFieldSqlDataType0.real,
+}
+
+export const supportedTypesForSql: Record<TableFieldSqlDataType0, TableFieldDataType[]> = {
+    [TableFieldSqlDataType0.text]: [TableFieldDataType.text, TableFieldDataType.json, TableFieldDataType.date, TableFieldDataType.file, TableFieldDataType.editor, TableFieldDataType.select, TableFieldDataType.email, TableFieldDataType.url, TableFieldDataType.relation],
+    [TableFieldSqlDataType0.integer]: [TableFieldDataType.number, TableFieldDataType.integer, TableFieldDataType.bool, TableFieldDataType.select, TableFieldDataType.relation],
+    [TableFieldSqlDataType0.real]: [TableFieldDataType.number, TableFieldDataType.select, TableFieldDataType.relation],
+    [TableFieldSqlDataType0.blob]: [TableFieldDataType.blob],
+    [TableFieldSqlDataType0.null]: [TableFieldDataType.text],
+}
