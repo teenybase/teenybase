@@ -1,6 +1,7 @@
-import {literalToQuery, SQLLiteral, SQLQuery} from './query'
 import {columnify, JsepContext} from '../parse/jsep'
-import {buildSelectWhere, SelectQuery, SelectWhere} from './select'
+import {buildSelectWhere, SelectWhere} from './select'
+import {SQLLiteral, SQLQuery} from '../../types/sql'
+import {literalToQuery} from './query'
 
 // data in this is expected to be safe already.
 export type UpdateQuery = {

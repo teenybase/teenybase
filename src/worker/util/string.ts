@@ -1,0 +1,43 @@
+import {randomString} from '../../security/random'
+
+const maxFileNameLength = 100 - 7 // 7 is for random string
+export function normalizeFileName(name: string, suffix?: string){
+    const split = name.split('.')
+    const originalExt = split.length > 1 ? split.pop()! : ''
+    let cleanExt = originalExt.replace(/[^\w\.\*\-_\+\=\#]+/g, '')
+    if(!cleanExt) cleanExt = 'dat'
+    let cleanName = Snakecase(split.join('.').replace(/[^a-zA-Z0-9_\.]/g, '_'))
+    if(cleanName.length < 3) {
+        cleanName += randomString(5)
+    }else if(cleanName.length > maxFileNameLength){
+        cleanName = cleanName.substring(0, maxFileNameLength)
+    }
+    return `${cleanName}${suffix ?? ('_'+randomString(10))}.${cleanExt}`
+}
+
+const snakecaseSplitRegex = '[\W_]+'
+
+// Snakecase removes all non word characters and converts any english text into a snakecase.
+// "ABBREVIATIONS" are preserved, eg. "myTestDB" will become "my_test_db".
+export function Snakecase(str: string): string {
+    let result = ''
+
+    const words = str.split(new RegExp(snakecaseSplitRegex, 'g'))
+
+    words.forEach((word, i) => {
+        if (word == "") return;
+
+        if (result.length > 0) result += '_';
+
+        for (let j = 0; j < word.length; j++) {
+            const c = word[j]
+            if (c === c.toUpperCase() && j > 0 && word[j-1] !== word[j-1].toUpperCase()) {
+                result += "_"
+            }
+
+            result += c
+        }
+    })
+
+    return result.toLowerCase()
+}

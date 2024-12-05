@@ -1,5 +1,5 @@
 export async function discordNotify(webhookPath: string, content: string, files?: File[]) {
-    const webhook = "https://discord.com/api/webhooks/" + webhookPath
+    const webhook = !webhookPath.startsWith('https:/') ? ("https://discord.com/api/webhooks/" + webhookPath) : webhookPath
     let init = {
         method: 'POST',
     } as RequestInit

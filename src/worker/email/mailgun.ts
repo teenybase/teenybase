@@ -1,6 +1,9 @@
 import {HTTPException} from 'hono/http-exception'
 import {discordNotify} from './discordNotify'
 import {MailgunBindings} from '../../types/mailgun'
+import {HttpRoute, HttpRouteZod, RawRouterHandlerFunction, RouteFunction} from '../../types/route'
+import {Context} from 'hono'
+import {z} from 'zod'
 
 export type MGSendEmailProps = {
     from: string, to: string,
@@ -42,17 +45,29 @@ export class MailgunHelper{
             },
             body: form
         });
-        if(!res.ok) {
-            const resp = await res.text()
+        let resJson = undefined
+        let resp = ''
+        try{
+            resp = await res.text()
+            resJson = JSON.parse(resp)
+        }catch (e) {
+            console.error('Failed to parse mailgun response', e)
+        }
+        if(!resJson) {
             console.error('Error sending email, ', res.status, resp)
             if(this.bindings.DISCORD_MAILGUN_NOTIFY_WEBHOOK)
                 await discordNotify(this.bindings.DISCORD_MAILGUN_NOTIFY_WEBHOOK, `Failed to send email(\`${res.status}\`) to \`${to}\` \n\`\`\`${resp}\`\`\``)
             throw new HTTPException(500, {message: 'Failed to send email'})
         }
-        return await res.json() as any
+        return resJson
     }
 
-    async receiveWebhook(data: any){
+    async receiveWebhook(data: MailgunWebhookData){
+        // https://help.mailgun.com/hc/en-us/articles/202236504-Webhooks
+        // If Mailgun receives a 200 (Success) code it will determine the webhook POST is successful and not retry.
+        // If Mailgun receives a 406 (Not Acceptable) code, Mailgun will determine the POST is rejected and not retry.
+        // For any other code, Mailgun will retry POSTing according to the following schedule (other than the delivery notification): 10 minutes, 10 minutes, 15 minutes, 30 minutes, 1 hour, 2 hour and 4 hours.
+
         const key = this.bindings.MAILGUN_WEBHOOK_SIGNING_KEY
         const signature = data.signature
         const verified = (!key || !signature) ? false : await verify({signingKey: key, ...signature})
@@ -73,14 +88,13 @@ export class MailgunHelper{
         if(!eventData) throw new HTTPException(400, {message: 'Invalid mailgun webhook data'})
         const timestamp = eventData.timestamp ?? Date.now()
         const logLevel = eventData['log-level']
-        const event = eventData.event
-        const recipient = eventData.recipient
+        const {event, recipient} = eventData
         message += `${logLevel?.toUpperCase()||'UNKNOWN'} - ${event?.toUpperCase()||'UNKNOWN'} at ${new Date(parseInt(timestamp) * 1000).toISOString()}\n`
         if(event.toLowerCase() === 'failed'){
             message += `Severity: ${eventData.severity}\n`
             message += `Reason: ${eventData.reason}\n`
         }
-        if(recipient) message += `Recipient: ${eventData.recipient}\n`
+        if(recipient) message += `Recipient: ${recipient}\n`
 
         if(logLevel !== 'info'){
             const json = JSON.stringify(eventData, null, 2)
@@ -90,7 +104,7 @@ export class MailgunHelper{
             if(!res){
                 logLevel === 'warn' ? console.warn(message, json) : console.error(message, json)
                 if(this.bindings.DISCORD_MAILGUN_NOTIFY_WEBHOOK)
-                    throw new HTTPException(406, {message: 'Failed to notify destination'})
+                    throw new HTTPException(500, {message: 'Failed to notify destination'})
             }
         }else {
             // todo batch cache
@@ -98,13 +112,76 @@ export class MailgunHelper{
         }
         if(!verified) throw new HTTPException(406, {message: 'Invalid mailgun webhook signature' + key?'':', no key to verify'})
     }
+
+    getRoutes(c: Context): HttpRoute[]{
+        const path = '/mailgun/webhook/:wid?'
+        const handler: RouteFunction = {
+            raw: async (params) => {
+                const wid = params?.wid
+                if((c.env.MAILGUN_WEBHOOK_ID || wid) && wid !== c.env.MAILGUN_WEBHOOK_ID) throw new HTTPException(404, {message: 'Not found'})
+                let body
+                try {
+                    body = JSON.parse((await c.req.text()) || '{}')
+                    // todo - validation
+                    // body = zMailgunWebhookData.parse(body)
+                } catch (e) {
+                    throw new HTTPException(400, {message: 'Invalid mailgun webhook data'})
+                }
+                await this.receiveWebhook(body)
+                return c.json({message: 'Received'}, 200);
+            }
+        }
+        const zod = () => (<HttpRouteZod>{
+            description: 'Mailgun webhook. Webhook can send email errors/events to this endpoint',
+            request: {
+                headers: z.object({}),
+                params: z.object({wid: z.string().optional().describe('Optional id for the webhook.')}),
+                body: {
+                    required: true, content: {'application/json': {schema: zMailgunWebhookData}},
+                },
+            },
+            responses: {
+                '200': {
+                    description: 'Success',
+                    content: {'application/json': {schema: z.object({message: z.literal('Received')})}},
+                },
+                '400': {description: 'Invalid mailgun webhook data, retry in some time.'},
+                '406': {description: 'Invalid mailgun webhook signature, don\'t retry'},
+                '500': {description: 'Failed to notify destination or other error, retry in some time.'},
+            },
+        })
+        // mailgun makes get request for validation and post for actual events
+        return [{method: 'get', path, handler, zod}, {method: 'post', path, handler, zod}]
+    }
 }
 
-interface VerifyParams {
+export type MailgunWebhookData = {
+    signature: {
+        timestamp: string,
+        token: string,
+        signature: string
+    }
+    'event-data': {
+        timestamp: string,
+        'log-level': string,
+        event: string,
+        recipient: string,
+        severity: string,
+        reason: string
+    }
+}
+
+export const zMailgunWebhookData= z.object({
+    signature: z.object({
+        timestamp: z.string(),
+        token: z.string(),
+        signature: z.string()
+    }),
+    'event-data': z.record(z.string()) // todo could it be anything else?
+})
+
+type VerifyParams = MailgunWebhookData['signature'] & {
     signingKey: string;
-    timestamp: string;
-    token: string;
-    signature: string;
 }
 
 async function verify({ signingKey, timestamp, token, signature }: VerifyParams): Promise<boolean> {

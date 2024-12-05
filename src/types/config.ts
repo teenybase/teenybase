@@ -73,6 +73,7 @@ export function validateSettingsChange(nextConfig: DatabaseSettings, lastConfig:
 
     const res: AlterSettings = {create: [], drop: [], alter: []}
     for(const table of nextConfig.tables){
+        if(nextConfig.tables.find(t=>t.name === table.name) !== table) throw new Error(`Table ${table.name} - Duplicate table name found in nextConfig`)
         const lastTable = lastConfig?.tables?.filter(t=>t.name === table.name || t.name === table.lastName) ?? []
         if(lastTable.length > 1) throw new Error(`Table ${table.name} - Duplicate table name found in lastConfig`)
         const res1 = validateTableChange(table, lastTable[0], nextConfig)

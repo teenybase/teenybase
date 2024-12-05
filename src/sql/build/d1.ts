@@ -1,4 +1,4 @@
-import {SQLQuery} from './query'
+import {SQLQuery} from '../../types/sql'
 
 export interface D1Query{
     q: string,

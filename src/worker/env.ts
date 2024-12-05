@@ -18,5 +18,3 @@ export interface $Env {
         $db: $Database
     }
 }
-
-export const migrationsTable = '_db_migrations' // this is hardcoded in wrangler, so cannot be changed

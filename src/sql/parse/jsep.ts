@@ -1,8 +1,8 @@
 import jsep from 'jsep'
 import {Context, Env} from 'hono'
 import {AuthContext} from '../../types/env'
-import {literalToQuery, SQLLiteral, SQLQuery} from '../build/query'
-import {sqlValSchema, tableColumnNameSchema} from '../../types/sql'
+import {SQLLiteral, SQLQuery, sqlValSchema, tableColumnNameSchema} from '../../types/sql'
+import {literalToQuery} from '../build/query'
 
 let jsepSetup = false
 export function setupJsep(){
@@ -20,7 +20,7 @@ export function setupJsep(){
 
     // as operator
     jsep.addBinaryOp('as', 10);
-    jsep.addBinaryOp('=>', 10);
+    jsep.addBinaryOp('=>', 10); // todo should we use : instead of => ?
 
     // json operators - https://developers.cloudflare.com/d1/build-with-d1/query-json/#extract-values
     // The -> operator, which returns a JSON representation of the value.
@@ -125,12 +125,14 @@ export interface JsepContext{
     autoSimplifyExpr: boolean
 }
 
-export function createJsepContext(tableName: string, data: {fields: {name: string}[]}, c: Context, allowedTables?: string[], extras?: JsepContext['extras'], autoNullProps = true, autoSimplifyExpr = true): JsepContext{
+export function createJsepContext(tableName: string, data: {fields: {name: string, noSelect?: boolean}[]}, c: Context, allowedTables?: string[], extras?: JsepContext['extras'], autoNullProps = true, autoSimplifyExpr = true): JsepContext{
     setupJsep()
+    const globals = honoToJsep(c)
+    const isAdmin = !!globals.auth?.admin
     return {
         tableName: columnify(tableName),
-        globals: honoToJsep(c),
-        allowedTables: Object.fromEntries(allowedTables?.map(t=>[columnify(t), data.fields.map(f=>columnify(f.name))]) ?? []),
+        globals,
+        allowedTables: Object.fromEntries(allowedTables?.map(t=>[columnify(t), data.fields.filter(f=>isAdmin || !f.noSelect).map(f=>columnify(f.name))]) ?? []),
         extras: extras || {},
         c,
         autoNullProps: autoNullProps,
@@ -594,7 +596,7 @@ export function treeToSql(tree: jsep.Expression, context: JsepContext): SQLQuery
     throw new Error('Not Supported type - ' + tree.type)
 }
 
-export function parseColumnList(q: string|string[], context: JsepContext, allowExpr = false, allowAs = false): string[] {
+export function parseColumnList(q: string|string[], context: JsepContext, allowExpr = false, allowAs = false, allowExpand = false): string[] {
     if(Array.isArray(q)) q = q.join(', ')
     if(q === '*') return ['*']
     let tree = jsepParse(q as string)
@@ -604,16 +606,24 @@ export function parseColumnList(q: string|string[], context: JsepContext, allowE
     const exp = tree as jsep.Compound
     const res = [] as string[]
     for (let item of exp.body) {
-        if(!allowExpr) res.push(resolveIdentifier(item as jsep.Identifier, context))
+        if(!allowExpr) {
+            if(allowAs) throw new Error('parseColumnList: allowAs must be false when allowExpr is false')
+            if(allowExpand) throw new Error('parseColumnList: allowExpand must be false when allowExpr is false')
+            res.push(resolveIdentifier(item as jsep.Identifier, context))
+        }
         else {
-            let name = ''
+            let nameSql = ''
             if(allowAs && item.type === 'BinaryExpression'){
                 const exp1 = item as jsep.BinaryExpression
                 if(exp1.operator !== 'as' && exp1.operator !== '=>') throw new Error('Not supported, expected => or as')
                 if(exp1.right.type !== 'Identifier') throw new Error('Not supported, expected identifier')
                 item = exp1.left
-                name = ' AS ' + columnify((exp1.right as jsep.Identifier).name)
+                nameSql = ' AS ' + columnify((exp1.right as jsep.Identifier).name)
             }
+            // // expanding functions tableName(column list)
+            // if(allowExpand && item.type === 'CallExpression'){
+            //
+            // }
             const sql = treeToSql(item, context)
             if((sql as SQLLiteral).l) throw new Error('Not supported - literal')
             const sql1 = sql as SQLQuery
@@ -621,8 +631,8 @@ export function parseColumnList(q: string|string[], context: JsepContext, allowE
                 // console.log(sql)
                 throw new Error('Not supported - params/invalid')
             }
-            if(name && sql1.q[sql1.q.length-1]==='*') throw new Error('Not supported, cannot use * with AS')
-            res.push(sql1.q + name)
+            if(nameSql && sql1.q[sql1.q.length-1]==='*') throw new Error('Not supported, cannot use * with AS')
+            res.push(sql1.q + nameSql)
         }
     }
     return res

@@ -21,6 +21,7 @@ export async function parseUpdateQuery(q: UpdateParams, jc: JsepContext) {
     const set = updateData.set ? recordToSqlExpressions(updateData.set, jc) :
         updateData.setValues ? recordToSqlValues(updateData.setValues) : {}
 
+    if(!Object.keys(set).length) throw new Error('Update query must have set or setValues with at least one field')
     // allows new.* in where and rule
     const jc2: JsepContext = {
         ...jc, extras: { ...jc.extras,

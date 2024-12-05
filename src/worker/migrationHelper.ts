@@ -1,10 +1,11 @@
-import {$Env, migrationsTable} from "./env";
-import {Context, Hono} from 'hono'
 import {HTTPException} from 'hono/http-exception'
-import {parseRequestBody} from './util/parseRequestBody'
 import {z} from 'zod'
 import splitSqlQuery from './wrangler/d1/splitter'
 import {D1PreparedStatement} from '@cloudflare/workers-types/2023-07-01/index'
+import {databaseSettingsSchema} from '../types/config'
+import {$Database} from './$Database'
+import {HttpRoute, HttpRouteZod} from '../types/route'
+import {$DBExtension} from './$DBExtension'
 
 export interface DBMigration{
     id: number
@@ -12,32 +13,33 @@ export interface DBMigration{
     sql: string
     sql_revert?: string
 }
-const zDBMigration = z.object({
-    name: z.string(),
-    sql: z.string(),
-    sql_revert: z.string().optional()
+export const zDBMigration = z.object({
+    name: z.string().max(255),
+    sql: z.string().max(65535),
+    sql_revert: z.string().max(65535).optional()
 })
 
-export class MigrationHelper {
-    constructor(private db: D1Database, readonly tableName = '_ddb_migrations') {
+export class MigrationHelper extends $DBExtension{
+    constructor(db: $Database<any>, private readonly tableName = '_db_migrations') {
+        super(db)
     }
 
     async setup(version: number) {
         if (version >= 0) {
             const sql = `
-            CREATE TABLE IF NOT EXISTS "${migrationsTable}" (
+            CREATE TABLE IF NOT EXISTS "${this.tableName}" (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
                 name TEXT UNIQUE,
                 sql TEXT NOT NULL,
                 sql_revert TEXT DEFAULT NULL,
                 applied_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP NOT NULL
             )`.split('\n').map(l => l.trim()).join(' ')
-            await this.db.exec(sql)
+            await this.db.database.exec(sql)
         }
     }
 
     async list() {
-        const res = await this.db.prepare(`SELECT id, name, sql, sql_revert FROM ${migrationsTable}`).run<DBMigration>()
+        const res = await this.db.database.prepare(`SELECT id, name, sql, sql_revert FROM ${this.tableName}`).run<DBMigration>()
         return res.results
     }
 
@@ -54,16 +56,16 @@ export class MigrationHelper {
             if(names.includes(m.name)) throw new Error(`Duplicate migration name ${m.name}`)
             names.push(m.name)
             // console.log(m.sql)
-            const qs = splitSqlQuery(m.sql).map(sql => sql ? this.db.prepare(sql) : undefined).filter(q=>!!q) as D1PreparedStatement[]
+            const qs = splitSqlQuery(m.sql).map(sql => sql ? this.db.database.prepare(sql) : undefined).filter(q=>!!q) as D1PreparedStatement[]
             if(!qs.length) throw new Error(`Empty migration ${m.name}`)
             return [
                 ...qs,
-                this.db.prepare(`INSERT INTO ${migrationsTable} (name, sql, sql_revert)
+                this.db.database.prepare(`INSERT INTO ${this.tableName} (name, sql, sql_revert)
                                  VALUES (?, ?, ?)`).bind(m.name, m.sql, m.sql_revert ?? null)
             ]
         }).filter(q=>!!q) as D1PreparedStatement[]
         if(!prepared.length) return []
-        const res = await this.db.batch(prepared).catch(e => {
+        const res = await this.db.database.batch(prepared).catch(e => {
             throw new Error(`Failed to apply migrations: ${JSON.stringify(prepared)}`)
         })
         const success = res.every(r => r.success)
@@ -73,25 +75,74 @@ export class MigrationHelper {
         }
         return names
     }
-}
 
-export function setupMigrationRoutes<T extends $Env=$Env>(app: Hono<T>, base: string){
-    app.get(base + '/migrations', async (c: Context<$Env>) => {
-        if(!c.get('auth')?.admin) throw new HTTPException(403, {message: 'Forbidden'})
-        const $db = c.get('$db')
-        const migrations = await $db.migration?.list()
-        return c.json({settings: $db.settings, migrations: migrations})
-    })
-    app.post(base + '/migrations', async (c: Context<$Env>) => {
-        if(!c.get('auth')?.admin) throw new HTTPException(403, {message: 'Forbidden'})
-        const $db = c.get('$db')
-        const data = await parseRequestBody(c.req)
-        // if(data.settings.version !== $db.settings.version){
-        //     throw new HTTPException(400, {message: 'Settings version mismatch'})
-        // }
-        const migrations = await $db.migration?.apply(data.migrations)
-        if(!migrations) throw new HTTPException(500, {message: 'Unable to apply migrations'})
-        return c.json({applied: migrations} as any)
-    })
-}
+    routes: HttpRoute[] = [{
+        path: '/migrations',
+        method: 'get',
+        handler: async () => {
+            if (!this.db.auth.admin) throw new HTTPException(403, {message: 'Forbidden'})
+            const migrations = await this.list()
+            return {settings: this.db.settings, migrations: migrations}
+        },
+        zod: () => (<HttpRouteZod>{
+            description: 'List all migrations',
+            request: {headers: z.object({authorization: z.string().min(1).max(255)}).describe('Admin Auth token')},
+            responses: {
+                '200': {
+                    description: 'Success',
+                    content: {
+                        'application/json': {
+                            schema: z.object({
+                                settings: databaseSettingsSchema,
+                                migrations: z.array(zDBMigration),
+                            }),
+                        }
+                    },
+                }
+            },
+        }),
+    }, {
+        path: '/migrations',
+        method: 'post',
+        handler: async (data) => {
+            if (!this.db.auth.admin) throw new HTTPException(403, {message: 'Forbidden'})
+            // if(data.settings.version !== this.db.settings.version){
+            //     throw new HTTPException(400, {message: 'Settings version mismatch'})
+            // }
+            const migrations = await this.apply(data.migrations)
+            if (!migrations) throw new HTTPException(500, {message: 'Unable to apply migrations'})
+            return {applied: migrations}
+        },
+        zod: () => (<HttpRouteZod>{
+            description: 'Apply migrations',
+            request: {
+                headers: z.object({authorization: z.string().min(1).max(255)}).describe('Admin Auth token'),
+                body: {
+                    description: 'All migrations and new DB settings. New migrations will be applied and old migrations will be checked for db match',
+                    content: {
+                        'application/json': {
+                            schema: z.object({
+                                settings: databaseSettingsSchema,
+                                migrations: z.array(zDBMigration),
+                            }),
+                        }
+                    },
+                    required: true,
+                },
+            },
+            responses: {
+                '200': {
+                    description: 'Success',
+                    content: {
+                        'application/json': {
+                            schema: z.object({
+                                applied: z.array(z.string()),
+                            }),
+                        }
+                    },
+                }
+            },
+        }),
+    }]
 
+}

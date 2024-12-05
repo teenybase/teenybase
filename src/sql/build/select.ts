@@ -1,5 +1,6 @@
-import {literalToQuery, SQLLiteral, SQLQuery} from './query'
 import {applyBoolJoinOperator} from '../parse/jsep'
+import {SQLLiteral, SQLQuery} from '../../types/sql'
+import {literalToQuery} from './query'
 
 export type SelectWhere = (SQLQuery|SQLLiteral) | ((SQLQuery|SQLLiteral)[]) // if array, all expressions are joined by AND
 export function appendWhere(query: {where?: SelectWhere}, sql: SQLQuery|SQLLiteral) {

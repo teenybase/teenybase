@@ -1,5 +1,5 @@
-import {literalToQuery, SQLLiteral, SQLQuery} from './query'
 import {buildSelectWhere, SelectQuery, SelectWhere} from './select'
+import {SQLQuery} from '../../types/sql'
 
 // data in this is expected to be safe already.
 export type DeleteQuery = {

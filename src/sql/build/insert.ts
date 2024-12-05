@@ -1,7 +1,8 @@
-import {literalToQuery, SQLLiteral, SQLQuery} from './query'
 import {UPDATE_NEW_COL_ID} from './update'
 import {columnify} from '../parse/jsep'
 import {buildSelectWhere, SelectQuery, SelectWhere} from './select'
+import {SQLLiteral, SQLQuery} from '../../types/sql'
+import {literalToQuery} from './query'
 
 // data in this is expected to be safe already.
 export type InsertQuery = {

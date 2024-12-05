@@ -4,17 +4,17 @@ import {Context} from 'hono'
 // MultipartJsonKey is the key for the special multipart/form-data
 // handling allowing reading serialized json payload without normalization.
 const MultipartJsonKey: string = "@jsonPayload"
-export async function parseRequestBody(req: Context['req']) {
-    if (req.method === 'GET') return req.query()
+export async function parseRequestBody<T = any>(req: Context['req']) {
+    if (req.method === 'GET') return req.query() as T
     const cType = req.header('Content-Type')?.split(';')[0]
     // console.log(cType)
 
     if(cType === undefined) throw new HTTPException(400, {message: 'Content-Type header required'})
     if (cType === 'application/json') {
         const body = await req.text()
-        if(!body) return {}
+        if(!body) return null
         try {
-            return JSON.parse(body)
+            return JSON.parse(body) as T
         }catch (e){
             throw new HTTPException(400, {message: 'Invalid JSON body'})
         }
@@ -26,7 +26,7 @@ export async function parseRequestBody(req: Context['req']) {
             delete body[MultipartJsonKey]
             Object.assign(body, JSON.parse(json))
         }
-        return body
+        return body as T
     }
     return null
 }

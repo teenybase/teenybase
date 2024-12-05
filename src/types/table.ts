@@ -1,11 +1,12 @@
 import {AlterField, TableFieldData, tableFieldDataSchema, validateFieldChange} from "./field";
 import {z} from 'zod'
-import {tableColumnNameSchema} from './sql'
+import {SQLIndex, SQLTrigger, tableColumnNameSchema, zSQLIndex, zSQLTrigger} from './sql'
 import {DatabaseSettings} from './config'
 import {TableFieldUsageRecord} from '../worker/usages'
 import {tableExtensionSchemas} from './tableExtensions'
+import {indexName, migrateTableQuery} from '../sql/schema/tableQueries'
 
-export interface TableData<TF=TableFieldData, TE=TableExtensionData>{
+export interface TableData<TF extends TableFieldData=TableFieldData, TE extends TableExtensionData=TableExtensionData>{
     // id: string
     name: string
     /**
@@ -32,14 +33,53 @@ export interface TableData<TF=TableFieldData, TE=TableExtensionData>{
     allowMultipleFileRef?: boolean
 
     allowWildcard?: boolean // like `select *`
+
+    /**
+     * Columns in the table, see {@link TableFieldData}
+     */
     fields: TF[]
 
     /**
+     * Indexes
+     */
+    indexes?: SQLIndex[]
+
+    /**
+     * Triggers
+     */
+    triggers?: SQLTrigger[]
+
+    /**
+     * Foreign keys. Other than foreign keys specified in fields.
+     */
+    // foreignKeys?: todo
+
+    /**
      * if true, record_uid will be set automatically to uuidv4(when using insert route). type must be text
+     *
+     * default - false
      */
     autoSetUid?: boolean
 
     extensions: TE[]
+
+    fullTextSearch?: {
+        fields: string[]
+        // https://sqlite.org/fts5.html#fts5_table_creation_and_initialization
+        tokenize?: string // tokenizer
+        prefix?: string
+
+        /**
+         * set content=table_name
+         * default = true
+         */
+        contentless?: boolean
+        // content?: string
+        content_rowid?: string
+        // contentless_delete?: string
+        columnsize?: 0|1
+        detail?: "full"|"column"|"none"
+    }
 
     lastName?: string
 }
@@ -59,13 +99,25 @@ export const tableDataSchema = z.object({
     allowMultipleFileRef: z.coerce.boolean().optional(),
     allowWildcard: z.coerce.boolean().optional(),
     fields: z.array(tableFieldDataSchema),
+    indexes: z.array(zSQLIndex).optional(),
+    triggers: z.array(zSQLTrigger).optional(),
     autoSetUid: z.coerce.boolean().optional(),
     extensions: z.array(z.record(z.any()).and(z.object({name: z.string()}))),
     lastName: tableColumnNameSchema.optional(),
+    fullTextSearch: z.object({
+        fields: z.array(tableColumnNameSchema),
+        tokenize: z.string().optional(),
+        prefix: z.string().optional(),
+        // content: z.string().optional(),
+        migrateTableQuery: z.coerce.boolean().default(true),
+        content_rowid: z.string().optional(),
+        columnsize: z.literal(0).or(z.literal(1)).optional(),
+        detail: z.enum(["full", "column", "none"]).optional(),
+    }).optional(),
 })
 
 // [nextTable, lastTable, fieldChanges]
-export type AlterTable = [TableData, TableData, {create: TableFieldData[], drop: TableFieldData[], alter: AlterField[]}]
+export type AlterTable = [TableData, TableData, {create: TableFieldData[], drop: TableFieldData[], alter: AlterField[], indexes: {create: SQLIndex[], drop: SQLIndex[]}, triggers: {create: SQLTrigger[], drop: SQLTrigger[]}, fts: boolean}]
 export function validateTableChange(nextTable: TableData|undefined, lastTable: TableData|undefined, nextSettings?: DatabaseSettings) {
     if(!nextTable){
         if(!lastTable) return {}
@@ -73,6 +125,8 @@ export function validateTableChange(nextTable: TableData|undefined, lastTable: T
         // throw new Error('not implemented')
         return {drop: lastTable}
     }
+    if(lastTable && JSON.stringify(nextTable) === JSON.stringify(lastTable)) return {}
+
     const prefix = `Table ${nextTable.name} - `
 
     // validations
@@ -133,10 +187,11 @@ export function validateTableChange(nextTable: TableData|undefined, lastTable: T
         if(!idField || idField.type !== 'text') throw new Error(prefix + `autoSetUid requires an id field with 'usage' = 'record_uid' and 'type' = 'text'.`)
     }
 
-    const res: AlterTable[2] = {create: [], drop: [], alter: []}
+    const res: AlterTable[2] = {create: [], drop: [], alter: [], indexes: {create: [], drop: []}, triggers: {create: [], drop: []}, fts: false}
 
-    // todo improve lastName logic using multiple passes.
+    // todo improve lastName logic using multiple passes?
     for (const field of nextTable.fields) {
+        if(nextTable.fields.find(f=>f.name === field.name)!==field) throw new Error(`Field ${nextTable.name}:${field.name} - Duplicate field name`)
         let lastField = lastTable?.fields?.filter((f) => f.name === field.name || f.name === field.lastName) ?? []
         // remove the last fields that are renamed now.
         lastField = lastField.filter(lf=>{
@@ -201,11 +256,73 @@ export function validateTableChange(nextTable: TableData|undefined, lastTable: T
         }
     }
 
+    if(nextTable.indexes) {
+        for (const index of nextTable.indexes) {
+            const last = lastTable?.indexes?.find(i=>indexName(i).name === indexName(index).name)
+            const changed = !last || JSON.stringify(index) !== JSON.stringify(last)
+            if(changed) {
+                res.indexes.create.push(index)
+                if(last) res.indexes.drop.push(last)
+            }
+            // todo check if body only has columns and tables that are allowed
+        }
+    }
+    if(lastTable?.indexes) {
+        for (const index of lastTable?.indexes || []) {
+            const next = nextTable.indexes?.find(i => indexName(i).name === indexName(index).name)
+            if (!next) {
+                res.indexes.drop.push(index)
+            }
+        }
+    }
+
+    if(nextTable.triggers) {
+        for (const trigger of nextTable.triggers) {
+            const last = lastTable?.triggers?.find(i=>i.name === trigger.name)
+            const changed = !last || JSON.stringify(trigger) !== JSON.stringify(last)
+            if(changed) {
+                res.triggers.create.push(trigger)
+                if(last) res.triggers.drop.push(last)
+            }
+            // todo check if body only has columns and tables that are allowed
+        }
+    }
+    if(lastTable?.triggers) {
+        for (const trigger of lastTable?.triggers || []) {
+            const next = nextTable.triggers?.find(i => i.name === trigger.name)
+            if (!next) {
+                res.triggers.drop.push(trigger)
+            }
+        }
+    }
+
     // if(res.drop.length){
     //     if(res.create.length || res.alter.length){
     //         throw new Error(`Field ${nextTable.name}:${res.drop[0].name} - Field cannot be dropped - todo: right now it's not checked if the field is renamed or dropped.`)
     //     }
     // }
+
+    if(JSON.stringify(nextTable.fullTextSearch ?? {}) !== JSON.stringify(lastTable?.fullTextSearch ?? {})) {
+        res.fts = true
+    }
+    if(nextTable.fullTextSearch){
+        if(!nextTable.fullTextSearch.fields.length) throw new Error(`Table ${nextTable.name} - Full text search fields must be set`)
+        const invalidFields = nextTable.fullTextSearch.fields.filter(f=>!nextTable.fields.find(f2=>f2.name === f))
+        if(invalidFields.length) throw new Error(`Table ${nextTable.name} - Invalid full text search fields - ${invalidFields.join(', ')}`)
+        if(nextTable.fullTextSearch.tokenize && !['simple', 'porter', 'unicode61', 'unicode61tokenize'].includes(nextTable.fullTextSearch.tokenize)) {
+            throw new Error(`Table ${nextTable.name} - Invalid tokenize value - ${nextTable.fullTextSearch.tokenize}`)
+        }
+        if(!nextTable.fullTextSearch.contentless && nextTable.fullTextSearch.content_rowid) {
+            throw new Error(`Table ${nextTable.name} - content_rowid must not be set when contentless is false`)
+        }
+        if(nextTable.fullTextSearch.content_rowid){
+            const field = nextTable.fields.find(f=>f.name === nextTable.fullTextSearch!.content_rowid)
+            if(!field) throw new Error(`Table ${nextTable.name} - content_rowid field not found - ${nextTable.fullTextSearch!.content_rowid}`)
+            if(field.sqlType !== 'integer') throw new Error(`Table ${nextTable.name} - content_rowid field must be integer`)
+            if(field.foreignKey) throw new Error(`Table ${nextTable.name} - content_rowid field cannot have foreign key`)
+            // todo should be primary?
+        }
+    }
 
     const extensions = nextTable.extensions
     for (const extension of extensions) {

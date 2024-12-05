@@ -4,14 +4,13 @@ import {extensions, ExtensionsKeys, TableExtensions} from './extensions'
 import {buildSelectQuery, SelectQuery} from '../sql/build/select'
 import {buildDeleteQuery, DeleteQuery} from '../sql/build/delete'
 import {buildUpdateQuery, UpdateQuery} from '../sql/build/update'
-import {SQLQuery} from '../sql/build/query'
 import {HTTPException} from 'hono/http-exception'
 import {parseUpdateQuery, UpdateParams} from '../sql/parse/update'
 import {InsertParams, parseInsertQuery} from '../sql/parse/insert'
 import {parseSelectQuery, SelectParams} from '../sql/parse/select'
 import {DeleteParams, parseDeleteQuery} from '../sql/parse/delete'
 import {z} from 'zod'
-import {noInsertSetUsages, noSelectFieldsUsages, noUpdateSetUsages, TableFieldUsage} from './usages'
+import {TableFieldUsage} from './usages'
 import {generateUid, randomString} from '../security/random'
 import {$Database} from './$Database'
 import {D1Error, ProcessError} from './util/error'
@@ -19,10 +18,12 @@ import {TableCrudExtension} from './extensions/tableCrudExtention'
 import {TableFieldData} from '../types/field'
 import {TableData} from '../types/table'
 import {columnify, ident, JsepContext} from '../sql/parse/jsep'
-import {sqlValSchemaFile2, sqlValSchemaFile3} from '../types/sql'
+import {SQLQuery, sqlValSchemaFile2, sqlValSchemaFile3, sqlValSchemaRecord} from '../types/sql'
 import {$Env} from './env'
 import {tableFieldTypeToZod} from '../types/dataTypes'
-import {RouteConfig} from '@asteasolutions/zod-to-openapi/dist/openapi-registry'
+import {LinearRouter} from 'hono/router/linear-router'
+import {HttpRoute, RawRouterHandlerFunction} from '../types/route'
+import {normalizeFileName} from './util/string'
 
 export class $Table<T extends $Env = any>{
     extensions: TableExtension[] = []
@@ -119,28 +120,7 @@ export class $Table<T extends $Env = any>{
         return this
     }
 
-    async route(path: string) {
-        for (const extension of this.extensions) {
-            const res = await extension.route(path)
-            if(res) return res
-        }
-    }
-
-    getApiRoutes(): RouteConfig[]{
-        let apiRoutes = [] as RouteConfig[]
-        for (const extension of this.extensions) {
-            const routes = extension.getRoutes()
-            for (const route of routes) {
-                const zod = route.zod()
-                apiRoutes.push({
-                    path: `/${this.name}${route.path}`,
-                    method: route.method.toLowerCase() as any,
-                    ...zod,
-                })
-            }
-        }
-        return apiRoutes
-    }
+    // crud
 
     async delete(data: DeleteParams) {
         const query = await parseDeleteQuery(data, this.jc).catch(e=>{
@@ -163,23 +143,28 @@ export class $Table<T extends $Env = any>{
         return res
     }
 
-    async insert(data: InsertParams&{values: z.infer<typeof sqlValSchemaFile3>}) {
+    async insert(data: Omit<InsertParams, 'values'>&{values: z.infer<typeof sqlValSchemaFile3>}) {
         // console.error('insert', data)
         const values = Array.isArray(data.values) ? data.values : [data.values]
         let filesToUpload = {} as Record<string, File>
         let filesToRef: string[] = []
+        const data2 = {
+            ...data,
+            values: [] as z.infer<typeof sqlValSchemaRecord>[]
+        } as const
         if(values) {
             for (const setValues of values) {
                 for (const [key, val] of Object.entries(setValues)) { // todo
                     if(Array.isArray(val)) throw new ProcessError('Array values not supported at the moment')
                 }
-                this.filesToUpload(setValues, filesToUpload, filesToRef)
+                const {values: _values} = this.filesToUpload(setValues, filesToUpload, filesToRef)
+                data2.values.push(_values)
             }
         }
 
         // todo - make beforeInsertParse
 
-        const query = await parseInsertQuery(data, this.jc).catch(e=>{
+        const query = await parseInsertQuery(data2, this.jc).catch(e=>{
             throw new ProcessError('Error parsing INSERT data', 400, {input:data}, e)
         })
 
@@ -212,20 +197,23 @@ export class $Table<T extends $Env = any>{
         return res
     }
 
-    async update(data: UpdateParams&{setValues?: z.infer<typeof sqlValSchemaFile2>}) {
-        const setValues = data.setValues
-        if(setValues) for (const [key, val] of Object.entries(setValues)) { // todo
+    async update(data: Omit<UpdateParams,'setValues'>&{setValues?: z.infer<typeof sqlValSchemaFile2>}) {
+        if(data.setValues) for (const [key, val] of Object.entries(data.setValues)) { // todo
             if(Array.isArray(val)) throw new ProcessError('Array values not supported at the moment')
         }
-        // todo - make beforeUpdateParse
-        const {filesToUpload, filesToRef} = this.filesToUpload(setValues)
-
         const set = data.set
         if(set && this.fileFields) for (const [key, val] of Object.entries(set)) {
             if(this.fileFields.includes(key)) throw new ProcessError('File fields can only be set using setValues')
         }
 
-        const updateQuery = await parseUpdateQuery(data, this.jc).catch(e=>{
+        // todo - make beforeUpdateParse
+        const {filesToUpload, filesToRef, values} = data.setValues ? this.filesToUpload(data.setValues) : {}
+        const data2 = {
+            ...data,
+            setValues: values,
+        } as const
+
+        const updateQuery = await parseUpdateQuery(data2, this.jc).catch(e=>{
             throw new ProcessError('Error parsing UPDATE data', 400, {input:data}, e)
         })
 
@@ -315,6 +303,8 @@ export class $Table<T extends $Env = any>{
         return {items: res[0].results, total: (res[1].results[0] as any)?.total ?? -1}
     }
 
+    // hooks
+
     protected async onInsertParse(query: InsertQuery) {
         let v = Array.isArray(query.values) ? query.values : [query.values]
         if(v.length && v[0]) {
@@ -323,7 +313,7 @@ export class $Table<T extends $Env = any>{
                 const field = this.fields[key]
                 // if (!field) throw new ProcessError: 'Invalid field ' + key}) // this check is moved below.
                 if (!field) continue
-                if (field.usage && noInsertSetUsages.includes(field.usage)) throw new ProcessError('Cannot insert ' + key + ' field')
+                // if (field.usage && noInsertSetUsages.includes(field.usage)) throw new ProcessError('Cannot insert ' + key + ' field')
                 if (field.noInsert) throw new ProcessError('Cannot insert ' + key + ' field')
             }
             if (this.mapping.uid && this.data.autoSetUid) {
@@ -358,14 +348,16 @@ export class $Table<T extends $Env = any>{
             ext.onDeleteParse && await ext.onDeleteParse(query, this.jc.globals.auth?.admin??false)
         }
     }
+
     protected async onUpdateParse(query: UpdateQuery) {
         const setKeys = Object.keys(query.set)
         for (const key of setKeys) {
             const field = this.fields[key]
             if(!field) throw new ProcessError('Invalid field ' + key)
-            if(field.usage && noUpdateSetUsages.includes(field.usage)) throw new ProcessError('Cannot update ' + key + ' field')
+            // if(field.usage && noUpdateSetUsages.includes(field.usage)) throw new ProcessError('Cannot update ' + key + ' field')
             if(field.noUpdate) throw new ProcessError('Cannot update ' + key + ' field')
         }
+        if(this.mapping.updated) query.set[this.mapping.updated] = {q: 'CURRENT_TIMESTAMP'}
         if(query.returning) query.returning = this.checkColsWildcard(Array.isArray(query.returning) ? query.returning : [query.returning], this.data.allowWildcard ?? false)
 
         for (const ext of this.extensions) {
@@ -391,12 +383,15 @@ export class $Table<T extends $Env = any>{
     }
 
     // D1 Helpers
+
     private parseD1Error(e: D1Error){
         const msg: string = e?.errorMessage
         // todo check for other error types.
         // NOT NULL constraint failed: files.config: SQLITE_CONSTRAINT
         // FOREIGN KEY constraint failed: SQLITE_CONSTRAINT
+        // UNIQUE constraint failed: users.email: SQLITE_CONSTRAINT
         const errorMap = {
+            'UNIQUE constraint failed': 'A record with this value already exists.',
             'NOT NULL constraint failed': 'This field cannot be NULL.',
             'FOREIGN KEY constraint failed': 'Unable to find related record (Foreign Key).',
         } as Record<string, string>
@@ -449,12 +444,28 @@ export class $Table<T extends $Env = any>{
         return res.flatMap(r => Object.values(r)).filter(v => !!v) as string[]
     }
 
-    private filesToUpload(values: any, filesToUpload?: Record<string, File>, filesToRef?: string[]) {
+    private filesToUpload(values: z.infer<typeof sqlValSchemaFile3>, filesToUpload?: Record<string, File>, filesToRef?: string[]) {
         filesToUpload = filesToUpload ?? {} as Record<string, File>
         filesToRef = filesToRef ?? [] as string[]
-        if(!values || !this.fileFields) return {filesToUpload, filesToRef}
+        if(!values || !this.fileFields) return {filesToUpload, filesToRef, values: sqlValSchemaRecord.parse(values)}
+        const transformed: z.infer<typeof sqlValSchemaRecord> = {}
         for (const [key, val] of Object.entries(values)) {
-            if (!this.fileFields.includes(key) || !val) continue
+            const isFileField = this.fileFields.includes(key)
+
+            // ignore file field. This is done because file fields in html form set value to empty string when no file is set
+            if (isFileField && val === '') continue
+
+            if (!(val instanceof File)) {
+                transformed[key] = val
+            }
+            if (!isFileField || val === null || val === undefined) continue
+
+            // when deleting file, null should be passed. todo should we allow empty string as well? right now we are ignoring if empty string above
+            // if(val === '') {
+            //     transformed[key] = null
+            //     continue
+            // }
+
             if (typeof val === 'string') {
                 if(this.allowMultipleFileRef){
                     // todo check if file exists?
@@ -467,21 +478,26 @@ export class $Table<T extends $Env = any>{
                 }
 
                 // todo try to download file?
-                throw new ProcessError('Not supported yet')
+                throw new ProcessError('File URLs not supported. Set "allowMultipleFileRef" to refer to files from other records.')
             }
             if (val instanceof File) {
                 const name = normalizeFileName(val.name)
                 filesToUpload[name] = val
-                values[key] = name
+                transformed[key] = name
                 continue
             }
             throw new ProcessError('File or string expected in file field')
         }
-        return {filesToUpload, filesToRef}
+        return {filesToUpload, filesToRef, values: sqlValSchemaRecord.parse(transformed)}
     }
 
     get bucket(){
         return this.$db.bucket
+    }
+
+    fileRoute(key: string, recordId: string){
+        // todo hardcoded api path
+        return `/api/v1/files/${this.name}/${recordId}/${key}`
     }
 
     // todo record id like in pocketbase? not using right now because id can change which would break.
@@ -502,11 +518,7 @@ export class $Table<T extends $Env = any>{
             throw new HTTPException(500, {message: 'Failed to get file'});
         })
         if(!object) throw new HTTPException(404, {message: 'File not found'})
-        const headers = new Headers();
-        object.writeHttpMetadata(headers);
-        headers.set("etag", object.httpEtag);
-        object.customMetadata && Object.entries(object.customMetadata).map(([k, v]) => headers.set('DDB-'+k, v))
-        return this.jc.c.newResponse(object.body, {headers})
+        return object
     }
 
     protected async _uploadFiles(files: Record<string, File>){
@@ -570,7 +582,7 @@ export class $Table<T extends $Env = any>{
         const r2 = this.bucket
         const keys = files.map(f=>this.fileKey(f))
         if(!keys.length) return
-        // console.log('Deleting files', keys)
+        console.log('Deleting files', keys)
         return await r2.delete(keys).catch(e=>{
             console.error('Failed to delete files', keys, e)
             // todo mark for delete somehow in logs, since this error below will be ignored
@@ -580,12 +592,13 @@ export class $Table<T extends $Env = any>{
 
     checkColsWildcard(cols: string[], allowWildcard: boolean){
         const res = []
-        const hidden = this.jc.globals.auth?.admin ? [] : noSelectFieldsUsages.map(u=>this.fieldsUsage[u as TableFieldUsage]).filter(u=>!!u).flatMap(u=>Array.isArray(u) ? u : [u])
+        // const hidden = this.jc.globals.auth?.admin ? [] : this.data.fields.filter(f=>!f.noSelect).map(f=>f.name)
+        const isAdmin = !!this.jc.globals.auth?.admin
         // console.log('select ', cols, hidden)
         for (const col of cols) {
             if(col === '*') {
-                if(!allowWildcard || hidden.length) {
-                    res.push(...Object.keys(this.fields).filter(f => !hidden.includes(f)).map(s => ident(s, this.jc)))
+                if(!allowWildcard/* || hidden.length*/) {
+                    res.push(...Object.entries(this.fields).filter(f => isAdmin || !f[1].noSelect).map(s => ident(s[0], this.jc)))
                     continue;
                 }
                 res.push('*')
@@ -593,53 +606,45 @@ export class $Table<T extends $Env = any>{
             }
             if(col.includes('*') && col!=='COUNT(*)') throw new ProcessError('Invalid column ' + col)
             const column = col.split(' AS')[0]
-            if(hidden.includes(column)) throw new ProcessError('Cannot query ' + col)
+            // if(hidden.includes(column)) throw new ProcessError('Cannot query ' + col)
             res.push(col)
         }
         // console.log(res)
         return res
     }
 
-}
+    // Routing
 
-const maxFileNameLength = 100 - 7 // 7 is for random string
-export function normalizeFileName(name: string, suffix?: string){
-    const split = name.split('.')
-    const originalExt = split.length > 1 ? split.pop()! : ''
-    let cleanExt = originalExt.replace(/[^\w\.\*\-_\+\=\#]+/g, '')
-    if(!cleanExt) cleanExt = 'dat'
-    let cleanName = Snakecase(split.join('.').replace(/[^a-zA-Z0-9_\.]/g, '_'))
-    if(cleanName.length < 3) {
-        cleanName += randomString(5)
-    }else if(cleanName.length > maxFileNameLength){
-        cleanName = cleanName.substring(0, maxFileNameLength)
-    }
-    return `${cleanName}${suffix ?? ('_'+randomString(10))}.${cleanExt}`
-}
+    private router: LinearRouter<RawRouterHandlerFunction> | undefined
+    protected _routesInit = false
+    private routes: HttpRoute[] = []
 
-const snakecaseSplitRegex = '[\W_]+'
+    protected _initRoutes(){
+        if(!this.router) this.router = new LinearRouter()
+        if(this._routesInit) return this.router
 
-// Snakecase removes all non word characters and converts any english text into a snakecase.
-// "ABBREVIATIONS" are preserved, eg. "myTestDB" will become "my_test_db".
-export function Snakecase(str: string): string { // todo need to test
-    let result = ''
+        this.routes.push(
+            ...this.extensions.flatMap(e=>e.routes),
+        )
 
-    const words = str.split(new RegExp(snakecaseSplitRegex, 'g'))
-
-    words.forEach((word, i) => {
-        if (word == "") return;
-
-        if (result.length > 0) result += '_';
-
-        for (let j = 0; j < word.length; j++) {
-            const c = word[j]
-            if (c === c.toUpperCase() && j > 0 && word[j-1] !== word[j-1].toUpperCase()) {
-                result += "_"
-            }
-
-            result += c
+        for (const route of this.routes) {
+            this.router.add(route.method.toUpperCase(), route.path, this.$db.rawRouteHandler(route))
         }
-    })
+        this._routesInit = true
+        return this.router
+    }
 
-    return result.toLowerCase()
+    async route(path: string){
+        const router = this._initRoutes()
+        const match = router.match(this.$db.c.req.method, path)
+        const [handler, params] = match[0]?.[0] ?? [undefined]
+        if(!handler) return undefined
+        return await handler(params as Record<string, string>)
+    }
+
+    getRoutes(){
+        this._initRoutes()
+        return this.routes
+    }
+
 }

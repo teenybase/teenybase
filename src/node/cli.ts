@@ -9,13 +9,12 @@ import * as fs from 'node:fs'
 import path from 'path'
 import {escapeRegExp, normalizePath, readableRelative} from './utils'
 import {unstable_dev, UnstableDevOptions, UnstableDevWorker} from 'wrangler'
-import {DatabaseSettings, databaseSettingsSchema, validateSettingsChange} from '../types/config'
-import {alterTable, createTable, dropTable} from '../sql/schema/createTable'
+import {DatabaseSettings, databaseSettingsSchema} from '../types/config'
 import {execSync} from 'node:child_process'
 import dotenv from 'dotenv'
-import {TableData} from '../types/table'
 import {URL} from 'url'
 import {exportLocal} from './wrangler/export'
+import {generateMigrations} from '../sql/schema/generateMigrations'
 
 const adminTokenKey = 'ADMIN_SERVICE_TOKEN'
 const apiRouteKey = 'API_ROUTE'
@@ -181,28 +180,6 @@ class CliContext{
     }
 }
 
-function generateMigrations(nextConfig: DatabaseSettings, lastConfig: Partial<DatabaseSettings>|undefined, index = 0) {
-    const {config, changes} = validateSettingsChange(nextConfig, lastConfig)
-    if(!changes) return {migrations: [], config: config}
-    const name = (op: string, table: TableData) => `${String(index++).padStart(4, '0')}_${op}_table_${table.name}.sql`
-    const others = (table: TableData) => config.tables.filter((t) => t.name !== table.name)
-    const migrations = [
-        ...changes.create.map(item=>({
-            name: name('create', item),
-            ...createTable(item, others(item))
-        })),
-        ...changes.drop.map(item=>({
-            name: name('drop', item),
-            ...dropTable(item, others(item))
-        })),
-        ...changes.alter.map(item=>({
-            name: name('alter', item[0]),
-            ...alterTable(item, others(item[0]))
-        }))
-    ].filter(m=>m.sql.trim().length)
-    return {migrations, config}
-}
-
 function readMigrationsFolder(migrationsFolderPath: string) {
     // logger.info(`Reading Migrations folder: ${migrationsFolderPath}`)
 
@@ -291,7 +268,7 @@ function readSecretsFile(c: CliContext, throwError = true, apiRoute2?: string) {
     return {adminToken, apiRoute, secrets}
 }
 
-async function fetchWorker(c: CliContext, fPath: string, reqOptions?: RequestInit, logging = false, apiRoute2?: string) {
+async function fetchWorker(c: CliContext, fPath: string, reqOptions?: RequestInit, logging = false, apiRoute2?: string, parseJson = true) {
     const {adminToken, apiRoute} = readSecretsFile(c, true, apiRoute2)
     const fOptions = {
         method: reqOptions?.method ?? 'GET',
@@ -299,7 +276,7 @@ async function fetchWorker(c: CliContext, fPath: string, reqOptions?: RequestIni
         headers: {
             'Authorization': `Bearer ${adminToken}`,
             ...reqOptions?.headers,
-        }
+        } as any
     }
     let _fetch = fetch
     if (c.isLocal) {
@@ -312,9 +289,11 @@ async function fetchWorker(c: CliContext, fPath: string, reqOptions?: RequestIni
         fPath =  path.join(apiRoute, fPath)
     }
     if(logging){
-        c.logger.info(`Fetching ${fPath} ${reqOptions ? JSON.stringify(reqOptions) : ''}`)
+        c.logger.info(`Fetching ${fOptions.method.toUpperCase()}:${fPath}`)
+        if(fOptions.body) c.logger.info(fOptions.headers?.['Content-Type']==='application/json'?JSON.parse(fOptions.body as any):fOptions.body as any)
+        if(fOptions.headers) c.logger.debug(fOptions.headers as any)
     }else {
-        c.logger.debug(`Fetching ${fPath} ${reqOptions ? JSON.stringify(reqOptions) : ''}`)
+        c.logger.debug(`Fetching ${fPath} ${JSON.stringify(fOptions)}`)
     }
     const res = await _fetch(fPath, fOptions)
     const rest = await res.text()
@@ -328,7 +307,7 @@ async function fetchWorker(c: CliContext, fPath: string, reqOptions?: RequestIni
         throw new Error(`Failed to fetch ${fPath}. Status: ${res.status}, Response: ${message.slice(0, 1024)}`)
     }
     try {
-        return rest ? JSON.parse(rest) : null
+        return rest ? (parseJson ? JSON.parse(rest) : rest) : null
     }catch (e){
         throw new Error(`Failed to parse response from ${fPath}. Status: ${res.status}, Response: ${rest}`)
     }
@@ -358,6 +337,7 @@ function loadLocalPersistConfig(c: CliContext) {
             throw new Error(`Unable to read file ${readableRelative(localConfigPath || '')}\n${e?.message || e}\n\nThis file is not supposed to be manually edited. You may revert any changes, or delete the "${readableRelative(localPersist)}" directory and run again.`)
         }
         // write to migrations/config.json so that fetchDeployedMigrations below can use it in local dev server. if clean is true, this will be deleted.
+        if(!fs.existsSync(c.migrationsPath)) fs.mkdirSync(c.migrationsPath, {recursive: true})
         const configPath = path.join(c.migrationsPath, 'config.json')
         fs.writeFileSync(configPath, JSON.stringify(localConfig, null, 2))
         c.logger.info(`Config found in ${readableRelative(c.localPersistPath)}. Written to ${readableRelative(configPath)}`)
@@ -425,8 +405,8 @@ async function generateMigrationsDir(c: CliContext, clean = false, write = true)
         c.logger.info(`Migrations folder and config are up to date with the ${c.isLocal ? 'local' : 'remote'} deployment`)
     }
     // generate migrations for tables
-    const index = lastMigrations.length ? parseInt(lastMigrations[lastMigrations.length - 1].name.split('_')[0]) : 0
-    const {migrations: newMigrations, config: nextConfig_} = generateMigrations(config.config, lastConfig, index)
+    const index = lastMigrations.length ? parseInt(lastMigrations[lastMigrations.length - 1].name.split('_')[0])+1 : 0
+    const {migrations: newMigrations, config: nextConfig_, extraLogs} = generateMigrations(config.config, lastConfig, index)
     const comment = `Config generated by teenybase on ${new Date().toISOString()}. Do not modify this file.`
     const nextConfig = nextConfig_ ? {
         '//': comment,
@@ -502,6 +482,11 @@ async function generateMigrationsDir(c: CliContext, clean = false, write = true)
         const configPath = path.join(c.migrationsPath, 'next-config.json')
         fs.writeFileSync(configPath, JSON.stringify(nextConfig, null, 2))
         c.logger.info(`Config generated and written to - ${readableRelative(configPath)}`)
+        if(extraLogs?.length){
+            for (const log of extraLogs) {
+                c.logger.warn(log)
+            }
+        }
     }
 
     return {newMigrations, nextConfig, lastMigrations, lastConfig, currentConfig}
@@ -987,6 +972,7 @@ cli
 
                 loadLocalPersistConfig(c)
 
+                // this check is for first time when .local-persist/config.json also doesn't exist
                 const configPath = path.join(c.migrationsPath, 'config.json')
                 if(!fs.existsSync(c.migrationsPath) || !fs.existsSync(configPath)){
                     throw new Error(`Migrations or Config file not found. First run "teeny migrate ${c.isLocal ? '--local':'--remote'}" to generate and apply migrations to the ${c.isLocal ? 'local':'remote'}" database.`)
@@ -1139,24 +1125,43 @@ cli
     .command('exec <route>', 'execute a route on the worker with admin token')
     .option('-m, --method <method>', `[string] http method (default: GET)`)
     .option('-d, -b, --data, --body <body>', `[string] http body`)
+    .option('-y, --yes', `[boolean] skip confirmation. only for non-GET requests (default: false)`)
+    .option('-r, --raw', `[boolean] output raw response (default: false)`)
     .action(
         async (
             route: string,
-            options: GlobalCLIOptions & { method?: string, body?: string },
+            options: GlobalCLIOptions & { method?: string, body?: string, yes?: boolean, raw?: boolean },
         ) => {
             filterDuplicateOptions(options)
             const wranglerConfig = await parseWrangler(options.root, options)
             const c = new CliContext(options.root, options, wranglerConfig, "warn")
 
             try {
+                if(!options.yes && options.method && options.method?.toUpperCase() !== 'GET'){
+                    const res = await prompts({
+                        type: 'confirm',
+                        name: 'value',
+                        message: `Requesting "${route}" on the worker. This might change the database state.\nAre you sure you want to continue?`,
+                        initial: true,
+                    });
+                    if (!res.value) {
+                        throw new Error('Execution cancelled by user')
+                    }
+                }
+
                 const res = await fetchWorker(c, `/api/raw/v1/${route}`, {
                     method: options.method || 'GET',
                     body: options.body,
                     headers: {
                         'Content-Type': 'application/json',
                     }
-                }, true)
-                c.logger.info(res)
+                }, !options.raw, undefined, !options.raw)
+                if(!options.raw) {
+                    c.logger.info('Request completed. Response:')
+                    c.logger.info(res)
+                }else {
+                    console.log(res)
+                }
                 await c.stopLocal()
             } catch (e: any) {
                 createLogger(options.logLevel).error(

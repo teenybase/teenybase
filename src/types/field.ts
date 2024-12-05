@@ -1,13 +1,17 @@
 import {z} from 'zod'
 import {
-    dataTypeToSqlDataType, sqlDataTypeAliases,
-    sqlDataTypeToDataTypeDefaults, supportedTypesForSql,
+    dataTypeToSqlDataType,
+    sqlDataTypeAliases,
+    sqlDataTypeToDataTypeDefaults,
+    supportedTypesForSql,
     TableFieldDataType,
     TableFieldSqlDataType,
     TableFieldSqlDataType0,
     TableFieldSqlDataType1
 } from './dataTypes'
 import {DatabaseSettings} from './config'
+import {literalToQuery, logSQLQuery} from '../sql/build/query'
+import {SQLLiteral, SQLQuery, zSQLQueryOrLiteral} from './sql'
 
 export interface TableFieldData<TU=string> {
     name: string
@@ -20,18 +24,32 @@ export interface TableFieldData<TU=string> {
     autoIncrement?: boolean,
     unique?: boolean,
     notNull?: boolean,
-    default?: string, // raw sql
-    check?: string, // raw sql
-    foreignKey?: {table: string, column: string, onUpdate?: string, onDelete?: string},
+    default?: SQLLiteral | SQLQuery | string, // raw sql if string
+    check?: SQLLiteral | SQLQuery | string, // raw sql if string
+    foreignKey?: {
+        table: string,
+        column: string,
+        onUpdate?: ForeignKeyAction,
+        onDelete?: ForeignKeyAction,
+
+        // todo
+        // match?: string,
+        // defer
+    },
+    collate?: 'BINARY' | 'NOCASE' | 'RTRIM' | string; // todo
+    // updateTriggers?: Omit<SQLTrigger, 'updateOf' | 'event'>[],
 
     noUpdate?: boolean // value in this field cannot be updated.
     noInsert?: boolean // value in this field cannot be inserted.
+    noSelect?: boolean // value in this field cannot be get(except for admins).
 
     // this can be set to/after rename a field
     lastName?: string
     // todo
     // presentable
 }
+export type ForeignKeyAction = 'SET NULL' | 'SET DEFAULT' | 'CASCADE' | 'RESTRICT' | 'NO ACTION'
+export const zForeignKeyAction = z.enum(['SET NULL', 'SET DEFAULT', 'CASCADE', 'RESTRICT', 'NO ACTION'])
 
 export const tableFieldDataSchema = z.object({
     name: z.string(),
@@ -42,14 +60,16 @@ export const tableFieldDataSchema = z.object({
     autoIncrement: z.coerce.boolean().optional(),
     unique: z.coerce.boolean().optional(),
     notNull: z.coerce.boolean().optional(),
-    default: z.string().optional(),
-    check: z.string().optional(),
+    collate: z.string().optional(), // todo enum
+    default: zSQLQueryOrLiteral.or(z.string()).optional(),
+    check: zSQLQueryOrLiteral.or(z.string()).optional(),
     foreignKey: z.object({
         table: z.string(),
         column: z.string(),
-        onUpdate: z.string().optional(), // todo this should be enum
-        onDelete: z.string().optional(), // todo this should be enum
+        onUpdate: zForeignKeyAction.optional(),
+        onDelete: zForeignKeyAction.optional(),
     }).optional(),
+    // updateTriggers: z.array(zSQLTrigger.omit({updateOf: true, event: true})).optional(),
     noUpdate: z.coerce.boolean().optional(),
     noInsert: z.coerce.boolean().optional(),
     lastName: z.string().optional(),
@@ -73,6 +93,8 @@ export function validateFieldChange(field: TableFieldData|undefined, lastField: 
 
         return {drop: lastField}
     }
+
+    if(lastField && JSON.stringify(field) === JSON.stringify(lastField)) return {}
 
     const fPrefix = `Table Field ${tableName}:${field.name} - `
     field.sqlType = field.sqlType.toLowerCase()
@@ -127,13 +149,13 @@ export function validateFieldChange(field: TableFieldData|undefined, lastField: 
     if (field.autoIncrement !== lastField.autoIncrement) if(!allowFieldSchemaChange) throw new Error(fPrefix + `Field autoIncrement cannot be changed - ${field.autoIncrement} !== ${lastField.autoIncrement}`)
     if (field.unique !== lastField.unique) if(!allowFieldSchemaChange) throw new Error(fPrefix + `Field unique cannot be changed - ${field.unique} !== ${lastField.unique}`)
     if (field.notNull !== lastField.notNull) if(!allowFieldSchemaChange) throw new Error(fPrefix + `Field notNull cannot be changed - ${field.notNull} !== ${lastField.notNull}`)
-    if (field.default !== lastField.default) {
+    if (buildSql(field.default) !== buildSql(lastField.default)) {
         // todo try to parse and check valid sql string
-        if(!allowFieldSchemaChange) throw new Error(fPrefix + `Field default cannot be changed - ${field.default} !== ${lastField.default}`)
+        if(!allowFieldSchemaChange) throw new Error(fPrefix + `Field default cannot be changed - ${buildSql(field.default)} !== ${buildSql(lastField.default)}`)
     }
-    if (field.check !== lastField.check) {
+    if (buildSql(field.check) !== buildSql(lastField.check)) {
         // todo try to parse and check valid sql string
-        if(!allowFieldSchemaChange) throw new Error(fPrefix + `Field default cannot be changed - ${field.default} !== ${lastField.default}`)
+        if(!allowFieldSchemaChange) throw new Error(fPrefix + `Field default cannot be changed - ${buildSql(field.check)} !== ${buildSql(lastField.check)}`)
     }
     const foreignKey = JSON.stringify(field.foreignKey)
     const lastForeignKey = JSON.stringify(lastField.foreignKey)
@@ -154,4 +176,12 @@ export function validateFieldChange(field: TableFieldData|undefined, lastField: 
 
     const changes = JSON.stringify(field) !== JSON.stringify(lastField)
     return changes ? {alter: [field, lastField] as AlterField} : {}
+}
+
+// todo
+function buildSql(q?: SQLLiteral|SQLQuery|string){
+    if(typeof q === 'string'){
+
+    }
+    return q ? logSQLQuery(literalToQuery(typeof q === 'string' ? {q} : q, false)) : undefined
 }
