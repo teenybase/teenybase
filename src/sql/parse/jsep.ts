@@ -1,8 +1,12 @@
 import jsep from 'jsep'
-import {Context, Env} from 'hono'
 import {AuthContext} from '../../types/env'
 import {SQLLiteral, SQLQuery, sqlValSchema, tableColumnNameSchema} from '../../types/sql'
 import {literalToQuery} from '../build/query'
+import {FieldForeignKey, TableFieldData} from '../../types/field'
+import {isTableFieldUnique, TableData} from '../../types/table'
+import {SelectQuerySelect, SelectSubQuery} from '../build/select'
+import {fts5TableName} from '../schema/tableQueries'
+import {HonoRequest} from 'hono'
 
 let jsepSetup = false
 export function setupJsep(){
@@ -20,7 +24,10 @@ export function setupJsep(){
 
     // as operator
     jsep.addBinaryOp('as', 10);
-    jsep.addBinaryOp('=>', 10); // todo should we use : instead of => ?
+    jsep.addBinaryOp('=>', 10); // todo should we use : instead of =>. then we need to swap the order of the arguments (a=>b will be b:a) like in postgrest
+
+    // fts MATCH operator
+    jsep.addBinaryOp('@@', jsep.binary_ops['==']);
 
     // json operators - https://developers.cloudflare.com/d1/build-with-d1/query-json/#extract-values
     // The -> operator, which returns a JSON representation of the value.
@@ -54,14 +61,34 @@ export interface JsepGlobals{
     auth?: AuthContext
 }
 
+export const emptyGlobals = {
+    request: {
+        method: '',
+        url: {
+            href: '',
+            protocol: '',
+            host: '',
+            hostname: '',
+            port: '',
+            pathname: '',
+            search: '',
+            hash: '',
+            origin: ''
+        },
+        headers: {},
+        query: {}
+    },
+    auth: {uid: null, verified: false, admin: false, jwt: {}, email: null, role: null, meta: {}}
+} as const
+
 // Note, the user can access the whole context, so there shouldn't be any secret accessible from this object
-export function honoToJsep(c: Context): JsepGlobals{
-    const url = new URL(c.req.url)
+export function honoToJsep(req: HonoRequest, auth?: AuthContext): JsepGlobals{
+    const url = new URL(req.url)
     return {
         request: {
-            method: c.req.method,
+            method: req.method.toUpperCase(),
             url: {
-                href: c.req.url,
+                href: req.url,
                 protocol: url.protocol,
                 host: url.host,
                 hostname: url.hostname,
@@ -71,12 +98,12 @@ export function honoToJsep(c: Context): JsepGlobals{
                 hash: url.hash,
                 origin: url.origin,
             },
-            headers: c.req.header(),
-            query: c.req.query(),
+            headers: req.header(), // todo normalize header names
+            query: req.query(),
             // auth
             // admin - separate just to be safe
         },
-        auth: c.get('auth') ?? {uid: null, verified: false, admin: false, jwt: {}},
+        auth: auth ?? {uid: null, verified: false, admin: false, jwt: {}, email: null, role: null, meta: {}}
     }
 }
 
@@ -105,15 +132,19 @@ export function jsepParse(q: string, literals?: Record<string, any>){
     return tree
 }
 
+// jsep field info is preprocessed and columnified, that's why diff type
+export type JsepFieldType = Pick<TableFieldData, 'name'|'sqlType'>&{foreignKey?: Pick<FieldForeignKey, 'table'|'column'>, isUnique: boolean}
+
 export interface JsepContext{
-    tableName: string
-    allowedTables: Record<string, string[]>
+    tableName: string // columnified
+    allTables: Record<string, JsepFieldType[]>// columnified // table name to column name, type (with foreign key info)
+    // todo make this a set
+    allowedTables: Record<string, JsepFieldType[]>// columnified // table name to column name, type (with foreign key info). this could also include tables not in allTables like 'new'
     globals: JsepGlobals
     extras: Record<string, {
         literals: Record<string, SQLQuery|SQLLiteral>
         table?: string
     }> // extra literal objects
-    c: Context<Env>
     _checkColumns?: boolean
 
     // todo rename
@@ -125,16 +156,28 @@ export interface JsepContext{
     autoSimplifyExpr: boolean
 }
 
-export function createJsepContext(tableName: string, data: {fields: {name: string, noSelect?: boolean}[]}, c: Context, allowedTables?: string[], extras?: JsepContext['extras'], autoNullProps = true, autoSimplifyExpr = true): JsepContext{
+export function createJsepContext(tableName: string, tables: TableData[], globals: JsepGlobals, allowedTables?: string[], extras?: JsepContext['extras'], autoNullProps = true, autoSimplifyExpr = true): JsepContext{
     setupJsep()
-    const globals = honoToJsep(c)
-    const isAdmin = !!globals.auth?.admin
+    const isAdmin = globals.auth?.admin === true
+    const allTables = Object.fromEntries(tables.map(t=>[
+        columnify(t.name), t.fields
+            .filter(f=>isAdmin || !f.noSelect)
+            .map(f=>(<JsepFieldType>{
+                name: columnify(f.name),
+                sqlType: f.sqlType,
+                foreignKey: f.foreignKey ? {
+                    table: columnify(f.foreignKey.table),
+                    column: columnify(f.foreignKey.column),
+                } : undefined,
+                isUnique: isTableFieldUnique(f, t)
+            }))
+    ] as const))
     return {
         tableName: columnify(tableName),
         globals,
-        allowedTables: Object.fromEntries(allowedTables?.map(t=>[columnify(t), data.fields.filter(f=>isAdmin || !f.noSelect).map(f=>columnify(f.name))]) ?? []),
+        allTables,
+        allowedTables: Object.fromEntries(allowedTables?.map(t=>[columnify(t), allTables[columnify(t)]])??[]),
         extras: extras || {},
-        c,
         autoNullProps: autoNullProps,
         autoSimplifyExpr: autoSimplifyExpr,
     }
@@ -161,8 +204,9 @@ const operatorMapping = {
     'IN': 'IN',
     '!': 'NOT',
 
+
     // '&&': 'AND',
-    '||': '||', // || is string concatenation in sql
+    '||': '||', // || is string concatenation in sql, todo should we disable this since concat is also available
 
     '->': '->',
     '->>': '->>',
@@ -172,12 +216,16 @@ const operatorMapping = {
     // '>>': '>>',
     // '>>>': '>>>',
 
+    // as
     // '=>' : '', // dont uncomment, it must be explicitly parsed if required, see parseColumnList
     // 'as' : '', // dont uncomment
     // 'AS' : '', // dont uncomment
+
+    // fts5
+    // '@@': '@@', // dont uncomment, see BinaryOp
 } as const
 type FOperators = keyof typeof operatorMapping
-type BOperators = typeof operatorMapping[FOperators]
+type BOperators = typeof operatorMapping[FOperators] | 'MATCH'
 
 const functionMapping = {
     'lower': 'LOWER',
@@ -224,6 +272,9 @@ type BFunctions = typeof functionMapping[FFunctions]
 export function columnify(s: string){
     return `[${tableColumnNameSchema.parse(s)}]`
 }
+export function uncolumnify(s: string){
+    return s.trim().replace(/^\[(.*)\]$/, '$1');
+}
 
 export function resolveIdentifier(exp: jsep.Identifier, context: JsepContext) {
     if(exp.type !== 'Identifier') {
@@ -232,14 +283,15 @@ export function resolveIdentifier(exp: jsep.Identifier, context: JsepContext) {
     return ident(exp.name, context)
 }
 
-export function ident(exp: string, context: JsepContext) {
+export function ident(exp: string, context: JsepContext, table?: string) {
     // assume column
     const column = columnify(exp)
-    if(!context.allowedTables[context.tableName]?.includes(column) && context._checkColumns!==false ) {
-        // console.log(context.allowedTables, context.tableName, column)
-        throw new Error('Column not found ' + column + ' in ' + context.tableName)
+    if(!table) table = context.tableName
+    if(context._checkColumns!==false && !context.allowedTables[table]?.find(f=>f.name === column)) {
+        // console.log(context.allowedTables, table, column)
+        throw new Error('Column not found ' + column + ' in ' + table)
     }
-    return context.tableName + '.' + column
+    return table + '.' + column
 }
 
 
@@ -333,6 +385,7 @@ function applyLiteralOperator(l: SQLLiteral['l'], r: SQLLiteral['l'], operator: 
             // console.log('Simplified', l, operator, r, 'to', res.l)
             // return res
         }
+        // operator not supported for simplification
     } else {
         // todo both are objects or arrays or regexp
     }
@@ -406,7 +459,8 @@ export function applyBinaryOperator(left: SQLQuery | SQLLiteral, right: SQLQuery
     // console.log(left, operator, right)
     return {
         q: `${left1.q} ${operator} ${right1.q}${(operator.includes('LIKE') ? ` ESCAPE '\\'` : '')}`,
-        p: {...left1.p, ...right1.p}
+        p: {...left1.p, ...right1.p},
+        dependencies: [...(left1.dependencies || []), ...(right1.dependencies || [])]
     } as SQLQuery
 }
 
@@ -457,7 +511,8 @@ export function applyBoolJoinOperator(args: (SQLQuery | SQLLiteral)[], operator:
 
     return {
         q: args1.map(a=>a.q).join(` ${operator} `),
-        p: args1.reduce((acc, a)=>({...acc, ...a.p}), {})
+        p: args1.reduce((acc, a)=>({...acc, ...a.p}), {}),
+        dependencies: args1.reduce((acc, a)=>[...acc, ...(a.dependencies || [])], [] as Required<SQLQuery>['dependencies'])
     } as SQLQuery
 }
 
@@ -496,7 +551,8 @@ export function applyUnaryOperator(arg: SQLQuery | SQLLiteral, operator: BOperat
     const arg1 = literalToQuery(arg)
     return {
         q: `${operator} ${arg1.q}`,
-        p: arg1.p
+        p: arg1.p,
+        dependencies: arg1.dependencies
     } as SQLQuery
 }
 
@@ -515,9 +571,95 @@ export function treeToSql(tree: jsep.Expression, context: JsepContext): SQLQuery
     }
     if(tree.type === 'BinaryExpression') {
         const exp = tree as jsep.BinaryExpression
-        const left = treeToSql(exp.left, context)
-        const right = treeToSql(exp.right, context)
-        let operator = operatorMapping[exp.operator as keyof typeof operatorMapping]
+        let left = undefined as SQLQuery | SQLLiteral | undefined
+        let right= undefined as SQLQuery | SQLLiteral | undefined
+        let operator= undefined as BOperators | undefined
+
+        if(exp.operator === '@@'){
+            // fts5 match
+            // https://sqlite.org/fts5.html
+            // supported -
+            // tableName @@ 'search' === ftsTableName MATCH 'search'
+            // tableName.columnName @@ 'search' === ftsTableName.columnName MATCH 'search'
+            // columnName @@ 'search' === ftsTableName.columnName MATCH 'search'
+            // tableName @@ 'columnName:search' === ftsTableName MATCH 'columnName:search'
+            // todo also support accessing rank and order by rank in the select statement for fts results
+
+            let ftsTableName
+            let ftsColumnName = undefined as string | undefined
+            // left (Identifier or MemberExpression)
+            if(exp.left.type === 'Identifier'){
+                // table or column
+                const idn = exp.left as jsep.Identifier
+                // note - checking for table first. so if we have user column in user table, it will be treated as a table. use user.user for the column
+                const name = columnify(idn.name)
+                if(name === context.tableName){
+                    // check if table
+                    ftsTableName = columnify(fts5TableName(idn.name))
+                }else if (context.allowedTables[context.tableName]?.find(f => f.name === name)) {
+                    // check if column
+                    ftsTableName = columnify(fts5TableName(uncolumnify(context.tableName)))
+                    ftsColumnName = name
+                }else {
+                    throw new Error('Not supported - Invalid left side of @@ operator')
+                }
+            }else if(exp.left.type === 'MemberExpression'){
+                // table.column
+                const mem = exp.left as jsep.MemberExpression
+                if(mem.object.type !== 'Identifier') throw new Error('Not supported - Invalid left side of @@ operator, expected tableName.columnName')
+                const objName = (mem.object as jsep.Identifier).name
+                const tableName = columnify(objName)
+                // todo support other tables here?
+                if(tableName !== context.tableName) throw new Error('Not supported - Invalid left side of @@ operator, invalid table')
+                if(mem.property.type !== 'Identifier') throw new Error('Not supported - Invalid left side of @@ operator, expected tableName.columnName')
+                const columnName = columnify((mem.property as jsep.Identifier).name)
+                if(!context.allowedTables[tableName]?.find(f => f.name === columnName))
+                    throw new Error('Not supported - Invalid left side of @@ operator, table/column not found')
+                ftsTableName = columnify(fts5TableName(objName))
+                ftsColumnName = columnName
+            }else {
+                throw new Error('Not supported - Invalid left side of @@ operator')
+            }
+            // its checked if the table exists later
+            // if(!ftsTableName || !context.allowedTables[ftsTableName]) throw new Error('Not supported - FTS table not found')
+            if(!ftsTableName) throw new Error('Not supported - FTS table not found')
+
+            if(!ftsColumnName) {
+                left = {q: ftsTableName}
+            }else {
+                // todo check if column name in allowedTables
+                //todo use ident?
+                left = {q: `${ftsTableName}.${ftsColumnName}`}
+            }
+
+            // tells the builder to add join with fts table
+            left.dependencies = [{
+                type: 'fts',
+                table: context.tableName,
+                column: ftsColumnName
+            }]
+
+            // right (string Literal). todo support identifiers on right?
+            if(exp.right.type !== 'Literal' || typeof (exp.right as jsep.Literal).value !== 'string'){
+                throw new Error('Not supported - Invalid right side of @@ operator, only string supported at the moment.')
+            }
+
+            // todo should we check columns on right side?
+            // <query>     := [ [-] <colspec> :] [^] <phrase>
+            // <query>     := [ [-] <colspec> :] <neargroup>
+            // <query>     := [ [-] <colspec> :] ( <query> )
+            // <query>     := <query> AND <query>
+            // <query>     := <query> OR <query>
+            // <query>     := <query> NOT <query>
+            right = treeToSql(exp.right, context)
+
+            operator = 'MATCH'
+        }
+        // todo return somehow that we are using fts so that fts table can be joined in the select statement.
+
+        left = left ?? treeToSql(exp.left, context)
+        right = right ?? treeToSql(exp.right, context)
+        operator = operator ?? operatorMapping[exp.operator as keyof typeof operatorMapping]
         if(!operator){
             throw new Error(`Operator ${exp.operator} not supported`)
         }
@@ -551,7 +693,8 @@ export function treeToSql(tree: jsep.Expression, context: JsepContext): SQLQuery
                     if (extra.table) table = extra.table // replace new. with users. to match the current val in the table
                 }
                 const column = columnify(prop.name)
-                if (context.allowedTables[table]?.includes(column) || (context.tableName === table && context._checkColumns===false))
+                if (context.allowedTables[table]?.find(f => f.name === column)
+                    || (context.tableName === table && context._checkColumns===false))
                     return {q: `${table}.${column}`}
             }
         }
@@ -573,7 +716,7 @@ export function treeToSql(tree: jsep.Expression, context: JsepContext): SQLQuery
     }
     if(tree.type === 'CallExpression') {
         const exp = tree as jsep.CallExpression
-        if(exp.callee.type !== 'Identifier') throw new Error('Not supported, not an identifier')
+        if(exp.callee.type !== 'Identifier') throw new Error('Not supported, function caller not an identifier')
         const callee = exp.callee as jsep.Identifier
         const func = functionMapping[callee.name.toLowerCase() as keyof typeof functionMapping]
         if(!func) throw new Error(`Function ${callee.name} not supported`)
@@ -589,22 +732,25 @@ export function treeToSql(tree: jsep.Expression, context: JsepContext): SQLQuery
             `${func}(${args.map(a => a.q).join(', ')})`
         return {
             q: q,
-            p: args.reduce((acc, a) => ({...acc, ...a.p}), {})
+            p: args.reduce((acc, a) => ({...acc, ...a.p}), {}),
+            dependencies: args.reduce((acc, a) => [...acc, ...(a.dependencies || [])], [] as Required<SQLQuery>['dependencies'])
         }
     }
     // console.log(tree)
     throw new Error('Not Supported type - ' + tree.type)
 }
 
-export function parseColumnList(q: string|string[], context: JsepContext, allowExpr = false, allowAs = false, allowExpand = false): string[] {
+export function parseColumnList(q: string|string[]|jsep.Compound, context: JsepContext, allowExpr: boolean, allowAs: boolean, allowExpand?: false): string[];
+export function parseColumnList(q: string|string[]|jsep.Compound, context: JsepContext, allowExpr: boolean, allowAs: boolean, allowExpand: true): SelectQuerySelect[];
+export function parseColumnList(q: string|string[]|jsep.Compound, context: JsepContext, allowExpr = false, allowAs = false, allowExpand = false): SelectQuerySelect[] {
     if(Array.isArray(q)) q = q.join(', ')
     if(q === '*') return ['*']
-    let tree = jsepParse(q as string)
+    let tree = typeof q === 'string' ? jsepParse(q as string) : q
     if(tree.type !== 'Compound') {
         tree = {type: 'Compound', body: [tree]}
     }
     const exp = tree as jsep.Compound
-    const res = [] as string[]
+    const res = [] as SelectQuerySelect[]
     for (let item of exp.body) {
         if(!allowExpr) {
             if(allowAs) throw new Error('parseColumnList: allowAs must be false when allowExpr is false')
@@ -612,27 +758,83 @@ export function parseColumnList(q: string|string[], context: JsepContext, allowE
             res.push(resolveIdentifier(item as jsep.Identifier, context))
         }
         else {
-            let nameSql = ''
+            let asName = undefined as string|undefined
             if(allowAs && item.type === 'BinaryExpression'){
                 const exp1 = item as jsep.BinaryExpression
-                if(exp1.operator !== 'as' && exp1.operator !== '=>') throw new Error('Not supported, expected => or as')
-                if(exp1.right.type !== 'Identifier') throw new Error('Not supported, expected identifier')
-                item = exp1.left
-                nameSql = ' AS ' + columnify((exp1.right as jsep.Identifier).name)
+                if (!(exp1.operator !== 'as' && exp1.operator !== '=>')) {
+                    if (exp1.right.type !== 'Identifier') throw new Error('Not supported, expected identifier')
+                    item = exp1.left
+                    asName = columnify((exp1.right as jsep.Identifier).name)
+                } else {
+                    // throw new Error('Not supported, expected => or as')
+                }
             }
-            // // expanding functions tableName(column list)
-            // if(allowExpand && item.type === 'CallExpression'){
-            //
-            // }
+            // expanding functions tableName(column list) or tableName()
+            if(allowExpand && item.type === 'CallExpression' && (item as jsep.CallExpression).callee.type === 'Identifier'){
+                const exp = item as jsep.CallExpression
+                const callee = exp.callee as jsep.Identifier
+                const fkTableName = columnify(callee.name.toLowerCase())
+                const fkTable = context.allTables[fkTableName]
+                if(fkTable) {
+                    const tableName = context.tableName
+                    const table = context.allowedTables[tableName]
+                    // find the column that has the foreign key to fk_table
+                    const tColumn = table.find(f => f.foreignKey?.table === fkTableName)
+                    if (!tColumn) throw new Error('Foreign key not found ' + fkTableName)
+                    const fkColumn = tColumn.foreignKey!.column
+                    const fkColumnFull = fkTable.find(f => f.name === fkColumn)
+                    if (!fkColumnFull) throw new Error('Foreign key column not found ' + fkTableName + '.' + fkColumn)
+
+                    let fkSelectColumns // columns to query in the fk_table
+                    if (!exp.arguments.length) {
+                        // all columns. equivalent to table.*
+                        fkSelectColumns = fkTable.map(f => `${fkTableName}.${f.name}`)
+                    } else {
+                        const args: jsep.Compound = {
+                            type: 'Compound',
+                            body: exp.arguments
+                        }
+                        const context2: JsepContext = {
+                            ...context,
+                            tableName: fkTableName,
+                            allowedTables: {[fkTableName]: context.allTables[fkTableName]},
+                        }
+                        const allowNestedExpands = false // todo
+                        const allowExpressions = true // todo
+                        fkSelectColumns = parseColumnList(args, context2, allowExpressions, allowExpressions, allowExpressions && allowNestedExpands)
+                    }
+                    // todo join might be faster than subquery, but it wont be compatible with rules (probably)
+                    const q: SelectSubQuery = {
+                        selects: fkSelectColumns,
+                        from: fkTableName,
+                        where: {q: `${tableName}.${tColumn.name} = ${fkTableName}.${fkColumn}`},
+                        as: asName || fkTableName,
+                    }
+                    if (fkColumnFull.isUnique) q.limit = 1
+                    res.push(q)
+                    continue
+                }else {
+                    // throw new Error('Table not found ' + fkTableName)
+                }
+            }
+
             const sql = treeToSql(item, context)
             if((sql as SQLLiteral).l) throw new Error('Not supported - literal')
             const sql1 = sql as SQLQuery
             if(!sql1.q || (sql1.p && Object.keys(sql1.p).length)) {
                 // console.log(sql)
-                throw new Error('Not supported - params/invalid')
+                // todo should we support something like
+                //   select concat(title, ':', content) as full from posts
+                //   here we need to support params for the string ';'
+                throw new Error('Not supported - params(literals)/invalid')
             }
-            if(nameSql && sql1.q[sql1.q.length-1]==='*') throw new Error('Not supported, cannot use * with AS')
-            res.push(sql1.q + nameSql)
+            if(!sql1.q || (sql1.dependencies && sql1.dependencies.length)) {
+                // console.log(sql)
+                throw new Error('Not supported - has dependencies/invalid')
+            }
+            if(asName && sql1.q[sql1.q.length-1]==='*') throw new Error('Not supported, cannot use * with AS')
+            // res.push(sql1.q + asName ? (' AS ' + asName) : '')
+            res.push(!asName ? sql1.q : {q: sql1.q, as: asName})
         }
     }
     return res

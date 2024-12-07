@@ -9,7 +9,10 @@ export async function parseRequestBody<T = any>(req: Context['req']) {
     const cType = req.header('Content-Type')?.split(';')[0]
     // console.log(cType)
 
-    if(cType === undefined) throw new HTTPException(400, {message: 'Content-Type header required'})
+    if (cType === undefined) {
+        throw new HTTPException(400, {message: 'Content-Type header required'})
+        return null
+    }
     if (cType === 'application/json') {
         const body = await req.text()
         if(!body) return null

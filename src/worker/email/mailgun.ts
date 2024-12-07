@@ -20,8 +20,8 @@ export class MailgunHelper{
     constructor(bindings: MailgunBindings) {
         this.bindings = bindings
         if(bindings.MAILGUN_API_URL?.startsWith('https://')) this.baseUrl = bindings.MAILGUN_API_URL
-        else if(bindings.MAILGUN_API_URL) throw new HTTPException(400, {message: 'Invalid mailgun configuration'})
-        if(!this.bindings.MAILGUN_API_SERVER || !this.bindings.MAILGUN_API_KEY) throw new HTTPException(400, {message: 'Invalid mailgun configuration'})
+        else if(bindings.MAILGUN_API_URL) throw new HTTPException(400, {message: 'Invalid mailgun configuration - MAILGUN_API_URL must start with https://'})
+        if(!this.bindings.MAILGUN_API_SERVER || !this.bindings.MAILGUN_API_KEY) throw new HTTPException(400, {message: 'Invalid mailgun configuration - missing MAILGUN_API_SERVER or MAILGUN_API_KEY'})
     }
 
     async sendEmail({from, to, subject, html, tags}: MGSendEmailProps){

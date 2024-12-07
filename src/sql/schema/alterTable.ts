@@ -203,12 +203,25 @@ export function alterTable([table, lastTable, changes]: AlterTable, others: Tabl
     if(resetFts && !needsTableChange){ // fts and triggers are dropped and recreated on table change
         const lastFtsq = createFts5Query(lastTable)
         const ftsq = createFts5Query(table)
-        dropFts.push([lastFtsq.sqlRevert, lastFtsq.sql])
-        createFts.push([ftsq.sql, ftsq.sqlRevert])
+        if(lastFtsq) dropFts.push([lastFtsq.sqlRevert, lastFtsq.sql])
+        if(ftsq) createFts.push([ftsq.sql, ftsq.sqlRevert])
     }
 
     statements = [...dropTriggers, ...dropIndexes, ...dropFts, ...statements]
+    logs = [
+        // todo better logs
+        ...dropTriggers.map(t => `⚠ Trigger Dropped - ${t[0].split('TRIGGER')[1].split('ON')[0].trim()}`),
+        ...dropIndexes.map(t => `⚠ Index Dropped - ${t[0].split('INDEX')[1].split('ON')[0].trim()}`),
+        ...dropFts.map(t => `⚠ FTS Dropped for ${lastTable.name}`),
+        ...logs
+    ]
     statements.push(...createIndexes, ...createTriggers, ...createFts)
+    logs.push(
+        // todo better logs
+        ...createTriggers.map(t => `✔ Trigger Added - ${t[0].split('TRIGGER')[1].split('ON')[0].trim()}`),
+        ...createIndexes.map(t => `✔ Index Added - ${t[0].split('INDEX')[1].split('ON')[0].trim()}`),
+        ...createFts.map(t => `✔ FTS Added - ${t[0].split('VIRTUAL TABLE')[1].split(';')[0].trim()}`),
+    )
 
     return {sql: statements.map(s => s[0]).join('\n'), sqlRevert: statements.map(s => s[1]).join('\n'), logs}
 }

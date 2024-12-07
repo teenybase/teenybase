@@ -26,16 +26,7 @@ export interface TableFieldData<TU=string> {
     notNull?: boolean,
     default?: SQLLiteral | SQLQuery | string, // raw sql if string
     check?: SQLLiteral | SQLQuery | string, // raw sql if string
-    foreignKey?: {
-        table: string,
-        column: string,
-        onUpdate?: ForeignKeyAction,
-        onDelete?: ForeignKeyAction,
-
-        // todo
-        // match?: string,
-        // defer
-    },
+    foreignKey?: FieldForeignKey,
     collate?: 'BINARY' | 'NOCASE' | 'RTRIM' | string; // todo
     // updateTriggers?: Omit<SQLTrigger, 'updateOf' | 'event'>[],
 
@@ -47,6 +38,16 @@ export interface TableFieldData<TU=string> {
     lastName?: string
     // todo
     // presentable
+}
+export type FieldForeignKey = {
+    table: string,
+    column: string,
+    onUpdate?: ForeignKeyAction,
+    onDelete?: ForeignKeyAction,
+
+    // todo
+    // match?: string,
+    // defer
 }
 export type ForeignKeyAction = 'SET NULL' | 'SET DEFAULT' | 'CASCADE' | 'RESTRICT' | 'NO ACTION'
 export const zForeignKeyAction = z.enum(['SET NULL', 'SET DEFAULT', 'CASCADE', 'RESTRICT', 'NO ACTION'])

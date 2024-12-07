@@ -12,7 +12,7 @@ export class ProcessError extends HTTPException{
             ...this.input
         }
     }
-    constructor(public message: string, code: StatusCode = 400, public input?: any, cause?: any){
+    constructor(public message: string, code: StatusCode = 400, public input?: Record<string, any>, cause?: any){
         super(code, {message, cause})
     }
 }
@@ -22,10 +22,15 @@ export class D1Error extends Error{
         return {
             error: this.errorMessage,
             // cause: (this.cause as any)?.message ? (this.cause as any).message : this.cause,
-            ...this.input,
+            input: this.input,
+            ...this._data,
         }
     }
-    constructor(public message: string, public errorMessage: string, public cause: any, public input?: any){
+    private _data?: Record<string, any>
+    set data(d: Record<string, any>){
+        this._data = d
+    }
+    constructor(public message: string, public errorMessage: string, public cause: any, public input?: string){
         super(message)
     }
 }

@@ -6,6 +6,7 @@ import {databaseSettingsSchema} from '../types/config'
 import {$Database} from './$Database'
 import {HttpRoute, HttpRouteZod} from '../types/route'
 import {$DBExtension} from './$DBExtension'
+import {D1Query} from '../sql/build/d1'
 
 export interface DBMigration{
     id: number
@@ -34,13 +35,16 @@ export class MigrationHelper extends $DBExtension{
                 sql_revert TEXT DEFAULT NULL,
                 applied_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP NOT NULL
             )`.split('\n').map(l => l.trim()).join(' ')
-            await this.db.database.exec(sql)
+            // await this.db.database.exec(sql)
+            await this.db.runRaw({q: sql, v: []})
         }
     }
 
     async list() {
-        const res = await this.db.database.prepare(`SELECT id, name, sql, sql_revert FROM ${this.tableName}`).run<DBMigration>()
-        return res.results
+        const q = `SELECT id, name, sql, sql_revert FROM ${this.tableName}`
+        // const res = await this.db.database.prepare(q).run<DBMigration>()
+        const res = await this.db.runRaw<DBMigration>({q, v:[]})
+        return res
     }
 
     async apply(migrations: Omit<DBMigration, 'id'>[]) {
@@ -56,21 +60,23 @@ export class MigrationHelper extends $DBExtension{
             if(names.includes(m.name)) throw new Error(`Duplicate migration name ${m.name}`)
             names.push(m.name)
             // console.log(m.sql)
-            const qs = splitSqlQuery(m.sql).map(sql => sql ? this.db.database.prepare(sql) : undefined).filter(q=>!!q) as D1PreparedStatement[]
+            const qs = splitSqlQuery(m.sql).map(sql => sql ? {q:sql, v:[]} : undefined).filter(q=>!!q) as D1Query[]
             if(!qs.length) throw new Error(`Empty migration ${m.name}`)
             return [
-                ...qs,
-                this.db.database.prepare(`INSERT INTO ${this.tableName} (name, sql, sql_revert)
-                                 VALUES (?, ?, ?)`).bind(m.name, m.sql, m.sql_revert ?? null)
+                ...qs, {
+                    q: `INSERT INTO ${this.tableName} (name, sql, sql_revert) VALUES (?, ?, ?)`,
+                    v:[m.name, m.sql, m.sql_revert ?? null]
+                }
             ]
-        }).filter(q=>!!q) as D1PreparedStatement[]
+        }).filter(q=>!!q) as D1Query[]
         if(!prepared.length) return []
-        const res = await this.db.database.batch(prepared).catch(e => {
-            throw new Error(`Failed to apply migrations: ${JSON.stringify(prepared)}`)
+        const res = await this.db.transactionRaw(prepared).catch(e => {
+            throw new Error(`Failed to apply migrations: ${e}`)
         })
         const success = res.every(r => r.success)
         if (!success) {
             const error = res.find(r => !r.success)?.error
+            console.error(error)
             throw new Error(error || 'Failed to apply migrations')
         }
         return names

@@ -19,14 +19,7 @@ export class TableCrudExtension extends TableExtension<TableCrudExtensionData> {
     constructor(data: TableCrudExtensionData, table: $Table, jc: JsepContext) {
         super(data, table, jc)
         if (data.name !== TableCrudExtension.name) throw new HTTPException(500, {message: 'Invalid Configuration'})
-        // Object.assign(this.routes, {
-        //     'GET/select': async(body: any, p?: any)=>await this.table.select(body),
-        //     'POST/select': async(body: any, p?: any)=>await this.table.select(body),
-        //     'POST/update': async(body: any, p?: any)=>await this.table.update(body),
-        //     'POST/insert': async(body: any, p?: any)=>await this.table.insert(body),
-        //     'POST/delete': async(body: any, p?: any)=>await this.table.delete(body),
-        //     'GET/view/:id': async(body: any, p?: any)=> this.table.fieldsUsage.record_uid ? await this.table.view(body, z.string().min(1).max(255).parse(p.id)) : undefined,
-        // })
+
         const recordResponse = (schema?: z.ZodType)=>({
             '200': {
                 description: 'Success',
@@ -138,5 +131,6 @@ export class TableCrudExtension extends TableExtension<TableCrudExtensionData> {
                 }),
             })
         }
+
     }
 }

@@ -11,11 +11,17 @@ import {InternalKV} from './internalKV'
 import {$Env} from './env'
 import {JWTPayloadOp} from '../types/jwt'
 import {TableAuthExtensionData} from '../types/tableExtensions'
-import {createJsepContext} from '../sql/parse/jsep'
+import {createJsepContext, honoToJsep} from '../sql/parse/jsep'
 import {logSQLQuery} from '../sql/build/query'
-import {sqlQueryToD1Query} from '../sql/build/d1'
+import {D1Query, sqlQueryToD1Query} from '../sql/build/d1'
 import {z} from 'zod'
-import {D1PreparedStatement} from '@cloudflare/workers-types/2023-07-01/index'
+import type {
+    D1PreparedStatement,
+    // Blob, Headers, // dont import this
+    R2Conditional,
+    R2GetOptions, R2Object,
+    R2ObjectBody, R2PutOptions, ReadableStream
+} from '@cloudflare/workers-types/2023-07-01/index'
 import {MigrationHelper} from './migrationHelper'
 import {LinearRouter} from 'hono/router/linear-router'
 import {parseRequestBody} from './util/parseRequestBody'
@@ -38,8 +44,8 @@ export class $Database<T extends $Env = $Env>{
     kv: InternalKV
     extensions: $DBExtension[] = []
 
-    readonly database: D1Database
-    readonly storage?: R2Bucket
+    private readonly database: D1Database
+    private readonly storage?: R2Bucket
     public readonly c: Context<T>
     secretResolver
 
@@ -176,7 +182,8 @@ export class $Database<T extends $Env = $Env>{
         if (this.tables[name]) return this.tables[name]
         const tableData = this.settings.tables.find(t => t.name === name)
         if (!tableData) throw new HTTPException(404, {message: `Table not found - ${name}`})
-        const jc = createJsepContext(tableData.name, tableData, this.c, [tableData.name])
+        const globals = honoToJsep(this.c.req, this.auth)
+        const jc = createJsepContext(tableData.name, this.settings.tables, globals, [tableData.name])
         const table = new $Table(tableData, jc, this).initialize()
         this.tables[name] = table
         return table
@@ -187,57 +194,77 @@ export class $Database<T extends $Env = $Env>{
         return keys.map(k=>this.table(k))
     }
 
+    dryRunMode = false
     async run<T>(q: SQLQuery, err: string) {
-        if (this.c.env.RESPOND_WITH_QUERY_LOG) {
+        if (this.dryRunMode || this.c.env.RESPOND_WITH_QUERY_LOG) {
             this.queryLog.push(logSQLQuery(q))
         }
         if (!q.q) return []
         const d1Expr = sqlQueryToD1Query(q)
         // return await runD1Query<T>(this.d1, d1Expr, err)
-
-        const prepared = this.database.prepare(d1Expr.q).bind(...d1Expr.v)
-        // console.log('Running query:', query.q, query.v)
         const onErr = (er: any)=>{
             // console.error(er, err, d1Expr)
             const msg = er.message ? er.message.replace(/D1_ERROR: /g, '') : 'Unknown error'
             // throw new HTTPException(500, { message: err + ' - ' + msg, asd });
-            throw new D1Error(err || 'Unknown SQL Error', msg, er, logSQLQuery(q))
+            return new D1Error(err || 'Unknown SQL Error', msg, er, logSQLQuery(q))
         }
-        const res = await prepared.run<T>().catch(onErr)
-        if(!res) onErr({message: 'No result'})
-        if(!res.success) onErr(res.error)
+        if(this.dryRunMode) return [] // todo add dummy data?
+        return await this.runRaw<T>(d1Expr, onErr)
+    }
+
+    async runRaw<T>(d1Expr: D1Query, onErr?: (er: any) => any) {
+        if (this.dryRunMode) throw new Error('Running raw SQL is not allowed in dry run.')
+        if(!onErr) onErr = (er: any)=>er
+
+        const prepared = this.database.prepare(d1Expr.q).bind(...d1Expr.v)
+        // console.log('Running query:', query.q, query.v)
+        const res = await prepared.run<T>().catch((e)=>{
+            throw onErr(e)
+        })
+        if (!res) throw onErr({message: 'No result'})
+        else if (!res.success) throw onErr(res.error)
         // console.log('Query result:', res)
-        return res.results
-
-
+        else return res.results
     }
 
     async transaction(q: SQLQuery[], err: string) {
-        if (this.c.env.RESPOND_WITH_QUERY_LOG) {
+        if (this.dryRunMode || this.c.env.RESPOND_WITH_QUERY_LOG) {
             this.queryLog.push(q.map(q1 => logSQLQuery(q1)).join(';\n'))
         }
         const d1Expr = q.map(sqlQueryToD1Query)
         // return await runD1Transaction(this.d1, d1Expr, err)
-
-        const prepared = d1Expr.map(query=>query.q ? this.database.prepare(query.q).bind(...query.v) : null)
-        // console.log('Running batch queries:', qs)
         const onErr = (er: any)=>{
             // console.error(er, err, d1Expr)
             const msg = er.message ? er.message.replace(/D1_ERROR: /g, '') : 'Unknown error'
             // throw new HTTPException(500, { message: err??'Error running transaction' });
-            throw new D1Error(err || 'Unknown SQL Error(t)', msg, er, q.map(q1 => logSQLQuery(q1)).join(';\n'))
+            return new D1Error(err || 'Unknown SQL Error(t)', msg, er, q.map(q1 => logSQLQuery(q1)).join(';\n'))
         }
-        const p2 = prepared.filter(p=>!!p) as D1PreparedStatement[]
-        const res = p2.length ? await this.database.batch(p2).catch(onErr) : []
-        if(!res) onErr({message: 'No result'})
+        if(this.dryRunMode) return [] // todo add dummy data?
+        return await this.transactionRaw<T>(d1Expr, onErr)
+    }
+
+    async transactionRaw<T>(d1Expr: D1Query[], onErr?: (er: any) => any) {
+        if (this.dryRunMode) throw new Error('Running raw SQL is not allowed in dry run.')
+        if(!onErr) onErr = (er: any)=>er
+
+        const prepared = d1Expr.map(query => query.q ? this.database.prepare(query.q).bind(...query.v) : null)
+        // console.log('Running batch queries:', qs)
+
+        // todo proper error return for transaction
+
+        const p2 = prepared.filter(p => !!p) as D1PreparedStatement[]
+        const res = p2.length ? await this.database.batch<T>(p2).catch((e)=>{
+            throw onErr(e)
+        }) : []
+        if (!res) throw onErr({message: 'No result'})
 
         let ki = 0
-        const res2 = prepared.map((p, i)=>{
-            if(!p) return {
+        const res2 = prepared.map((p, i) => {
+            if (!p) return {
                 results: [],
                 success: true,
                 // meta: {},
-            } /*as D1Result*/
+            } as Omit<D1Result, 'meta'>
             const r = res[ki++]
             // if(!r) return null
             // if(!r.success) onErr(r.error)
@@ -247,16 +274,54 @@ export class $Database<T extends $Env = $Env>{
         return res2
     }
 
-    get bucket() {
+    private get bucket() {
         if (!this.storage) throw new HTTPException(500, {message: 'No bucket provided'});
         return this.storage
+    }
+
+    async headFileObject(key: string){
+        if(this.dryRunMode || this.c.env.RESPOND_WITH_QUERY_LOG)
+            this.queryLog.push('STORAGE: headFileObject: ' + key)
+        if(this.dryRunMode) throw new Error('headFile not supported in dry run mode')
+        return this.bucket.head(key)
+    }
+
+    // todo need to keep types in sync with cloudflare, enforce it someway in ts so it errors when cloudflare changes something
+    getFileObject(key: string, options?: R2GetOptions): Promise<R2ObjectBody | null>;
+    async getFileObject(key: string, options?: R2GetOptions & {
+        onlyIf: R2Conditional | Headers;
+    }): Promise<R2ObjectBody | R2Object | null>{
+        if(this.dryRunMode || this.c.env.RESPOND_WITH_QUERY_LOG)
+            this.queryLog.push('STORAGE: getFileObject: ' + key)
+        if(this.dryRunMode) throw new Error('getFile not supported in dry run mode')
+        return this.bucket.get(key, options)
+    }
+
+    async putFileObject(
+        key: string,
+        value: ReadableStream | ArrayBuffer | ArrayBufferView | string | null | Blob,
+        options?: R2PutOptions & {
+            onlyIf?: R2Conditional | Headers;
+        },
+    ): Promise<R2Object | null | {dummy: true}>{
+        if(this.dryRunMode || this.c.env.RESPOND_WITH_QUERY_LOG)
+            this.queryLog.push('STORAGE: putFileObject: ' + key) // todo add data about file?
+        if(this.dryRunMode) return {dummy: true}
+        return this.bucket.put(key, value, options)
+    }
+    async deleteFileObject(keys: string | string[]){
+        if(this.dryRunMode || this.c.env.RESPOND_WITH_QUERY_LOG)
+            this.queryLog.push('STORAGE: deleteFileObject: ' + keys)
+        if(this.dryRunMode) return
+        return this.bucket.delete(keys)
     }
 
     // Routing
 
     readonly _apiBase = '/api'
     readonly apiBase = this._apiBase + '/v1'
-    readonly apiTableBase = this.apiBase + '/table'
+    readonly apiTableSuffix = '/table'
+    readonly apiTableBase = this.apiBase + this.apiTableSuffix
     async route(path: string){
         if(!path.startsWith(this._apiBase+'/')) return undefined
 
@@ -331,6 +396,49 @@ export class $Database<T extends $Env = $Env>{
                 '404': {description: 'Not found'},
             },
         }),
+    }, {
+        method: 'get',
+        path: '/explain/*',
+        handler: {
+            raw: async () => {
+                if (!this.auth.admin || !this.c.env.RESPOND_WITH_QUERY_LOG) throw new HTTPException(403, {message: 'Forbidden'})
+                this.dryRunMode = true
+                const path = this.c.req.path.replace(this.apiBase, '').replace('/explain', '')
+                if(path.startsWith('/explain')) throw new Error('Cannot explain explain')
+                if(!path.startsWith(this.apiTableSuffix)) throw new Error('Not supported for this path')
+                const res = await this.route(this.apiBase + path)
+                const logs = this.queryLog
+                if(!res) return this.c.notFound()
+
+                // NOTE - Don't do explain query plan here, the queries in the log can be unsafe.
+                // if needed it can be done in the cli
+
+                const resBody = await res.text().catch(e=>({error: e}))
+                const resHeaders = {} as any
+                res.headers.forEach((v, k)=>resHeaders[k] = v)
+                return this.c.json({logs, result: res ? {
+                    status: res.status,
+                    body: resBody,
+                    headers: resHeaders,
+                } : null})
+            },
+        },
+        zod: () => ({
+            description: 'Explain route. Returns the list of sql statements and storage actions that will be executed',
+            request: {
+                params: z.object({route: z.string().min(1).max(255)}),
+                headers: z.object({authorization: z.string().min(1).max(255)}).describe('Admin Auth token')},
+            responses: {
+                '200': {
+                    description: 'Success',
+                    content: {'application/json': {schema: z.object({
+                        logs: z.array(z.string()),
+                        result: z.object({status: z.number(), body: z.string(), headers: z.record(z.string())}).optional(),
+                    })}},
+                },
+            },
+        })
+
     }]
     private router: LinearRouter<RawRouterHandlerFunction> | undefined
     protected _routesInit = false

@@ -1,7 +1,14 @@
 import {TableExtension} from './tableExtension'
 import {buildInsertQuery, InsertQuery} from '../sql/build/insert'
 import {extensions, ExtensionsKeys, TableExtensions} from './extensions'
-import {buildSelectQuery, SelectQuery} from '../sql/build/select'
+import {
+    appendJoin, appendOrderBy,
+    buildSelectQuery,
+    getSubSelectQueries,
+    SelectQuery,
+    SelectQueryJoin,
+    SelectQuerySelect
+} from '../sql/build/select'
 import {buildDeleteQuery, DeleteQuery} from '../sql/build/delete'
 import {buildUpdateQuery, UpdateQuery} from '../sql/build/update'
 import {HTTPException} from 'hono/http-exception'
@@ -17,13 +24,14 @@ import {D1Error, ProcessError} from './util/error'
 import {TableCrudExtension} from './extensions/tableCrudExtention'
 import {TableFieldData} from '../types/field'
 import {TableData} from '../types/table'
-import {columnify, ident, JsepContext} from '../sql/parse/jsep'
+import {columnify, ident, JsepContext, uncolumnify} from '../sql/parse/jsep'
 import {SQLQuery, sqlValSchemaFile2, sqlValSchemaFile3, sqlValSchemaRecord} from '../types/sql'
 import {$Env} from './env'
 import {tableFieldTypeToZod} from '../types/dataTypes'
 import {LinearRouter} from 'hono/router/linear-router'
 import {HttpRoute, RawRouterHandlerFunction} from '../types/route'
 import {normalizeFileName} from './util/string'
+import {fts5TableName} from '../sql/schema/tableQueries'
 
 export class $Table<T extends $Env = any>{
     extensions: TableExtension[] = []
@@ -170,6 +178,8 @@ export class $Table<T extends $Env = any>{
 
         await this.onInsertParse(query)
 
+        const sql = buildInsertQuery(query, this.jc.autoSimplifyExpr)
+
         // todo - make beforeInsert
         // will throw error on fail
         filesToRef && await this._refCheckFiles(filesToRef)
@@ -178,7 +188,6 @@ export class $Table<T extends $Env = any>{
         let res: any[] | null = null
         let err = null as any
         try {
-            const sql = buildInsertQuery(query, this.jc.autoSimplifyExpr)
             res = await this.run(sql, 'Failed to run insert query')
         }catch (e){
             console.error(e)
@@ -223,13 +232,14 @@ export class $Table<T extends $Env = any>{
         const fileFields = this.fileFields?.filter(f => updateQuery.set[f])
         const filesToDelete = fileFields ? await this.filesToDelete(updateQuery, fileFields) : undefined
 
+        const sql = buildUpdateQuery(updateQuery)
+
         // will throw error on fail
         filesToRef && await this._refCheckFiles(filesToRef)
         filesToUpload && await this._uploadFiles(filesToUpload)
 
         let res: any
         try {
-            const sql = buildUpdateQuery(updateQuery)
             res = await this.run(sql, 'Failed to run update query')
         }catch (e){
             res = null
@@ -276,6 +286,7 @@ export class $Table<T extends $Env = any>{
             // throw new ProcessErrore: 'Invalid query')
         })
         await this.onSelectParse(query)
+
         const sql = buildSelectQuery(query, this.jc.autoSimplifyExpr)
         // console.log(query, sql)
 
@@ -367,18 +378,80 @@ export class $Table<T extends $Env = any>{
 
     protected async onSelectParse(query: SelectQuery) {
         // console.log('query', query)
-        query.selects = this.checkColsWildcard(Array.isArray(query.selects) ? query.selects : [query.selects || '*'], this.data.allowWildcard ?? false)
 
+        // todo make data.allowSubqueries and check
+        const allowSubqueries = true
+
+        query.selects = this.checkColsWildcard(
+            Array.isArray(query.selects) ? query.selects : [query.selects || '*'],
+            this.data.allowWildcard ?? false, allowSubqueries)
+
+        this.handleSelectDeps(query)
+
+        // extensions
         for (const ext of this.extensions) {
             ext.onSelectParse && await ext.onSelectParse(query)
         }
+        await this.handleSelectSubQueries(query, allowSubqueries)
     }
 
     protected async onViewParse(query: SelectQuery, id: string) {
-        query.selects = this.checkColsWildcard(Array.isArray(query.selects) ? query.selects : [query.selects || '*'], this.data.allowWildcard ?? false)
+        // todo make data.allowSubqueries and check
+        const allowSubqueries = true
+
+        query.selects = this.checkColsWildcard(Array.isArray(query.selects) ? query.selects : [query.selects || '*'], this.data.allowWildcard ?? false, allowSubqueries)
+
+        this.handleSelectDeps(query)
 
         for (const ext of this.extensions) {
             ext.onViewParse && await ext.onViewParse(query, id)
+        }
+
+        await this.handleSelectSubQueries(query, allowSubqueries)
+    }
+
+    private handleSelectDeps(query: SelectQuery) {
+        // sql query dependencies. todo move to a function or extension
+        const allQueries = [query.where, query.having].flat()
+        for (const sqlQuery of allQueries) {
+            if(!sqlQuery) continue
+            const deps = (sqlQuery as SQLQuery).dependencies
+            if (!deps?.length) continue
+
+            for (const dep of deps) {
+                if (dep.type === 'fts') {
+                    const {table, column} = dep
+                    if (table !== this.jc.tableName) throw new ProcessError('Invalid FTS dependency table ' + table)
+                    if (!this.data.fullTextSearch || this.data.fullTextSearch.enabled === false) throw new ProcessError('FTS not available or disabled on table ' + table)
+                    if (column && !this.data.fullTextSearch.fields.map(f => columnify(f)).includes(column)) throw new ProcessError('Invalid FTS column ' + column)
+                    const content_rowid = this.data.fullTextSearch.content_rowid ?? 'rowid'
+                    // add join
+                    // SELECT main_table.uuid, main_table.content
+                    // FROM main_table
+                    // JOIN fts_table ON main_table.rowid = fts_table.rowid
+                    // WHERE fts_table MATCH 'search_term';
+                    const ftsTable = columnify(fts5TableName(this.name))
+                    const join: SelectQueryJoin = {
+                        table: ftsTable,
+                        on: {q: `${columnify(this.name)}.${content_rowid} = ${ftsTable}.rowid`},
+                    }
+                    appendJoin(query, join)
+                    appendOrderBy(query, `${ftsTable}.rank`)
+                    continue
+                }
+                throw new ProcessError('Invalid SQLQuery dependency type ' + dep.type)
+            }
+        }
+    }
+
+    private async handleSelectSubQueries(query: SelectQuery, allowSubqueries: boolean) {
+        const subQueries = getSubSelectQueries(query)
+        for (const subQuery of subQueries) {
+            if (!allowSubqueries) throw new ProcessError('Subqueries not allowed')
+            if (typeof subQuery.from !== 'string') throw new ProcessError('Subquery from must be a string')
+            const table = this.$db.table(uncolumnify(subQuery.from))
+            if (!table) throw new ProcessError('Subquery table not found')
+            await table.onSelectParse(subQuery) // todo use Promise.all? shouldnt matter actually
         }
     }
 
@@ -403,7 +476,7 @@ export class $Table<T extends $Env = any>{
         const mess = parts[0]
         if(column){
             const code = parts.pop()
-            e.input = {
+            e.data = {
                 [column]: {
                     code,
                     message: errorMap[mess] ?? mess,
@@ -491,10 +564,6 @@ export class $Table<T extends $Env = any>{
         return {filesToUpload, filesToRef, values: sqlValSchemaRecord.parse(transformed)}
     }
 
-    get bucket(){
-        return this.$db.bucket
-    }
-
     fileRoute(key: string, recordId: string){
         // todo hardcoded api path
         return `/api/v1/files/${this.name}/${recordId}/${key}`
@@ -512,8 +581,7 @@ export class $Table<T extends $Env = any>{
 
     async getFile(key: string, _recordId?: string){
         const fileKey = this.fileKey(key, _recordId)
-        const r2 = this.bucket
-        const object = await r2.get(fileKey).catch(e=> {
+        const object = await this.$db.getFileObject(fileKey).catch(e=> {
             console.error('Failed to get file', key, e)
             throw new HTTPException(500, {message: 'Failed to get file'});
         })
@@ -524,11 +592,10 @@ export class $Table<T extends $Env = any>{
     protected async _uploadFiles(files: Record<string, File>){
         const keys = Object.keys(files)
         if(!keys.length) return
-        const r2 = this.bucket
         console.log('Uploading files', keys, files)
         const promises = keys.map(async (key)=>{
             const file = files[key]
-            const res = await r2.put(this.fileKey(key), file, {
+            const res = await this.$db.putFileObject(this.fileKey(key), file, {
                 httpMetadata: {
                     contentType: file.type || 'application/octet-stream',
                     cacheControl: 'public, max-age=31536000', // 1 year
@@ -547,20 +614,28 @@ export class $Table<T extends $Env = any>{
             const errors = res.filter(r=>r.status === 'rejected').map((r: any)=>r.reason)
             console.error(errors)
             console.log('Deleting uploaded files', successful)
-            await r2.delete(successful.map(r=>r.key)).catch(e=>{
+            await this.$db.deleteFileObject(successful.map(r=>r.key)).catch(e=>{
                 console.error('Unable to delete some files after upload error', e)
                 // todo mark for delete somehow in logs
             })
             throw new HTTPException(500, { message: 'Failed to upload files' });
         }
     }
+
+    /**
+     * Checks that all files referenced in a query exist
+     * @param files
+     * @protected
+     */
     protected async _refCheckFiles(files: string[]){
         if(!files.length) return
+        // todo add support for dry run mode in database, it would fail if allowMultipleFileRef is true
+
         if(!this.allowMultipleFileRef) throw new HTTPException(500, { message: 'Multiple file references shouldn\'t be allowed' });
-        const r2 = this.bucket
         // console.log('Checking files', files)
+
         const promises = files.map(async (key)=>{
-            const res = await r2.head(this.fileKey(key)).catch(e=>{
+            const res = await this.$db.headFileObject(this.fileKey(key)).catch(e=>{
                 console.error('Failed to check file', e)
                 return undefined
             })
@@ -579,34 +654,56 @@ export class $Table<T extends $Env = any>{
     }
 
     protected async _deleteFiles(files: string[]){
-        const r2 = this.bucket
         const keys = files.map(f=>this.fileKey(f))
         if(!keys.length) return
         console.log('Deleting files', keys)
-        return await r2.delete(keys).catch(e=>{
+        return await this.$db.deleteFileObject(keys).catch(e=>{
             console.error('Failed to delete files', keys, e)
             // todo mark for delete somehow in logs, since this error below will be ignored
             throw new Error('Failed to delete files')
         })
     }
 
-    checkColsWildcard(cols: string[], allowWildcard: boolean){
+    // todo rename, as it also does other column checks
+    checkColsWildcard(cols: SelectQuerySelect[], allowWildcard: boolean, allowSubqueries?: false): string[];
+    checkColsWildcard(cols: SelectQuerySelect[], allowWildcard: boolean, allowSubqueries: true): SelectQuerySelect[];
+    checkColsWildcard(cols: SelectQuerySelect[], allowWildcard: boolean, allowSubqueries = false) {
         const res = []
         // const hidden = this.jc.globals.auth?.admin ? [] : this.data.fields.filter(f=>!f.noSelect).map(f=>f.name)
         const isAdmin = !!this.jc.globals.auth?.admin
         // console.log('select ', cols, hidden)
+        const aliases = new Set<string>()
+        const addAlias = (alias: string)=>{
+            if(aliases.has(alias)) throw new ProcessError('Duplicate field access ' + alias)
+            aliases.add(alias)
+        }
         for (const col of cols) {
             if(col === '*') {
                 if(!allowWildcard/* || hidden.length*/) {
-                    res.push(...Object.entries(this.fields).filter(f => isAdmin || !f[1].noSelect).map(s => ident(s[0], this.jc)))
+                    const fields = Object.entries(this.fields).filter(f => isAdmin || !f[1].noSelect)
+                    const fieldsSql = fields.map(s => ident(s[0], this.jc))
+                    res.push(...fieldsSql)
+                    fields.forEach(f=> addAlias(f[0]))
                     continue;
                 }
                 res.push('*')
+                addAlias('*')
                 continue
             }
-            if(col.includes('*') && col!=='COUNT(*)') throw new ProcessError('Invalid column ' + col)
-            const column = col.split(' AS')[0]
-            // if(hidden.includes(column)) throw new ProcessError('Cannot query ' + col)
+            if(typeof col === 'string' || typeof col.q === 'string') {
+                const strCol = typeof col === 'string' ? col : col.q
+                if (strCol.includes('*') && strCol !== 'COUNT(*)') throw new ProcessError('Invalid column ' + strCol)
+                const alias = typeof col !== 'string' ? col.as ?? strCol : strCol
+                addAlias(alias)
+                // const column = col.split(' AS')[0]
+                // if(hidden.includes(column)) throw new ProcessError('Cannot query ' + col)
+            }else {
+                if(!allowSubqueries) throw new ProcessError('Subqueries not allowed')
+                if(!col.as) throw new Error('Subquery must have an alias')
+                addAlias(col.as)
+                // subquery
+                // it will be checked in its own table
+            }
             res.push(col)
         }
         // console.log(res)

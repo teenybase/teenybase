@@ -41,10 +41,10 @@ export function logSQLQuery(query: SQLQuery): string{
 const literalMapping = {
     0: '0',
     1: '1',
-    true: 'true',
-    TRUE: 'true',
-    false: 'false',
-    FALSE: 'false',
+    true: '1',
+    TRUE: '1',
+    false: '0',
+    FALSE: '0',
     null: 'NULL',
     NULL: 'NULL',
 } as any
@@ -58,7 +58,8 @@ export function literalToQuery(l: SQLLiteral | SQLQuery | string, wrap = true): 
         return {
             // q: (!q || (q[0] === '(' && q[q.length - 1] === ')')) ? q : `(${q})`, // Note - this is wrong, since it could be like `(a) OR (b)` which should also be escaped.
             q: !q || !wrap ? q : `(${q})`, // tag - brackets
-            p: (l as SQLQuery).p
+            p: (l as SQLQuery).p,
+            dependencies: (l as SQLQuery).dependencies
         }
     }
     l1 = (isLiteral && typeof l === 'object') ? l1 : (l as string)

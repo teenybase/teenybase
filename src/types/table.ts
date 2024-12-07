@@ -64,6 +64,7 @@ export interface TableData<TF extends TableFieldData=TableFieldData, TE extends 
     extensions: TE[]
 
     fullTextSearch?: {
+        enabled?: boolean // default true
         fields: string[]
         // https://sqlite.org/fts5.html#fts5_table_creation_and_initialization
         tokenize?: string // tokenizer
@@ -105,6 +106,7 @@ export const tableDataSchema = z.object({
     extensions: z.array(z.record(z.any()).and(z.object({name: z.string()}))),
     lastName: tableColumnNameSchema.optional(),
     fullTextSearch: z.object({
+        enabled: z.coerce.boolean().optional(),
         fields: z.array(tableColumnNameSchema),
         tokenize: z.string().optional(),
         prefix: z.string().optional(),
@@ -309,7 +311,7 @@ export function validateTableChange(nextTable: TableData|undefined, lastTable: T
         if(!nextTable.fullTextSearch.fields.length) throw new Error(`Table ${nextTable.name} - Full text search fields must be set`)
         const invalidFields = nextTable.fullTextSearch.fields.filter(f=>!nextTable.fields.find(f2=>f2.name === f))
         if(invalidFields.length) throw new Error(`Table ${nextTable.name} - Invalid full text search fields - ${invalidFields.join(', ')}`)
-        if(nextTable.fullTextSearch.tokenize && !['simple', 'porter', 'unicode61', 'unicode61tokenize'].includes(nextTable.fullTextSearch.tokenize)) {
+        if(nextTable.fullTextSearch.tokenize && !['unicode61', 'ascii', 'porter', 'trigram'].includes(nextTable.fullTextSearch.tokenize)) {
             throw new Error(`Table ${nextTable.name} - Invalid tokenize value - ${nextTable.fullTextSearch.tokenize}`)
         }
         if(!nextTable.fullTextSearch.contentless && nextTable.fullTextSearch.content_rowid) {
@@ -328,9 +330,19 @@ export function validateTableChange(nextTable: TableData|undefined, lastTable: T
     for (const extension of extensions) {
         const parser = tableExtensionSchemas[extension.name as keyof typeof tableExtensionSchemas]
         const parsed = parser.parse(extension)
+        // todo parse rules and check if they are valid
     }
 
     if(!lastTable) return {create: nextTable}
     return {alter: [nextTable, lastTable, res] as AlterTable}
 }
 
+
+export function isTableFieldUnique(f: TableFieldData, t: TableData){
+    return f.unique || f.primary || !!t.indexes?.find(i=>{
+        if(!i.unique) return false
+        const fields = Array.isArray(i.fields) ? i.fields : [i.fields]
+        // split because it can have collate...
+        return !!fields.find(f1=>f1.split(' ')[0] === f.name)
+    })
+}

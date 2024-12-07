@@ -33,6 +33,12 @@ export const tableColumnNameSchema = z.string()
 export interface SQLQuery{
     q: string,
     p?: Record<string, z.infer<typeof sqlValSchema2>>
+
+    dependencies?: { // todo other types
+        type: 'fts',
+        table: string
+        column?: string
+    }[]
 }
 
 export function sqlRaw(q: string, p?: Record<string, z.infer<typeof sqlValSchema2>>): SQLQuery{
@@ -80,11 +86,11 @@ export const zSQLIndex = z.object({
 export interface SQLTrigger {
     // temp?: boolean
     name: string
-    event: 'INSERT' | 'DELETE' | 'UPDATE'/* | 'SELECT'*/
+    event: 'INSERT' | 'DELETE' | 'UPDATE'/* | 'SELECT'*/ | string
     /**
      * Default is BEFORE in sqlite
      */
-    seq?: 'BEFORE' | 'AFTER' | 'INSTEAD OF'
+    seq?: 'BEFORE' | 'AFTER' | 'INSTEAD OF' | string
     /**
      * Only for UPDATE event
      */

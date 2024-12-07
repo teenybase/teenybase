@@ -304,7 +304,7 @@ async function fetchWorker(c: CliContext, fPath: string, reqOptions?: RequestIni
             message = json.message || json.error || json
             if(logging) c.logger.error(`Failed to fetch ${fPath}. Status: ${res.status}, Response: ${message}\n${JSON.stringify(json, null, 2)}`)
         }catch (_e){}
-        throw new Error(`Failed to fetch ${fPath}. Status: ${res.status}, Response: ${message.slice(0, 1024)}`)
+        throw new Error(`Failed to fetch ${fPath}. Status: ${res.status}, Response: ${typeof message==='string' ? message.slice(0, 1024) : message}`)
     }
     try {
         return rest ? (parseJson ? JSON.parse(rest) : rest) : null
@@ -667,6 +667,9 @@ async function migrateAndDeploy(c: CliContext, clean: boolean, doMigrate: boolea
                 // make sure db is deployed and initial setup is done. Note - don't setup during first deployment.
                 await fetchWorker(c, '/api/v1/setup-db', {
                     method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json',
+                    }
                 }, false, deployRoute)
 
                 if (newMigrations?.length) {
@@ -1127,10 +1130,11 @@ cli
     .option('-d, -b, --data, --body <body>', `[string] http body`)
     .option('-y, --yes', `[boolean] skip confirmation. only for non-GET requests (default: false)`)
     .option('-r, --raw', `[boolean] output raw response (default: false)`)
+    .option('--explain', `[boolean] dry run and return the queries that will be executed (default: false)`)
     .action(
         async (
             route: string,
-            options: GlobalCLIOptions & { method?: string, body?: string, yes?: boolean, raw?: boolean },
+            options: GlobalCLIOptions & { method?: string, body?: string, yes?: boolean, raw?: boolean, explain?: boolean },
         ) => {
             filterDuplicateOptions(options)
             const wranglerConfig = await parseWrangler(options.root, options)
@@ -1149,7 +1153,10 @@ cli
                     }
                 }
 
-                const res = await fetchWorker(c, `/api/raw/v1/${route}`, {
+                const routePath = path.join(
+                    !options.explain ? '/api/v1/table/' : '/api/v1/explain/table/',
+                    route)
+                const res = await fetchWorker(c, routePath, {
                     method: options.method || 'GET',
                     body: options.body,
                     headers: {

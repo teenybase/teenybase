@@ -66,8 +66,12 @@ export function dropTriggerQuery(table: TableData, trigger: SQLTrigger){
     return `DROP TRIGGER IF EXISTS tgr_${table.name}_${trigger.name}`
 }
 
+export function fts5TableName(name: string){
+    return `fts5_${name}_idx`
+}
+
 export function createFts5Query(data: TableData){
-    if(!data.fullTextSearch) return {sql: '', sqlRevert: ''}
+    if(!data.fullTextSearch) return null
 
     let options = []
     if(data.fullTextSearch.tokenize) options.push(`tokenize=${data.fullTextSearch.tokenize}`)
@@ -78,14 +82,19 @@ export function createFts5Query(data: TableData){
     if(data.fullTextSearch.columnsize) options.push(`columnsize=${data.fullTextSearch.columnsize}`)
     if(data.fullTextSearch.detail) options.push(`detail=${data.fullTextSearch.detail}`)
 
-    let sql = `CREATE VIRTUAL TABLE ${data.name}_fts USING fts5(${[...data.fullTextSearch.fields, ...options].map(f=>f).join(', ')});`
-    let sqlRevert = `DROP TABLE IF EXISTS ${data.name}_fts;`
+    const tableName = fts5TableName(data.name)
+    let sql = `CREATE VIRTUAL TABLE ${tableName} USING fts5(${[...data.fullTextSearch.fields, ...options].map(f=>f).join(', ')});`
+    let sqlRevert = `DROP TABLE IF EXISTS ${tableName};`
     const fields = data.fullTextSearch.fields.map(f=>f.split(' ')[0]).filter(f=>f)
     const invalidFields = fields.filter(f=>!data.fields.find(f1=>f1.name === f))
     if(invalidFields.length) throw new Error(`Invalid fields for fts - ${invalidFields.join(', ')}`)
 
+    const rowId = data.fullTextSearch.content_rowid || 'rowid'
+    if(fields.includes(rowId)) throw new Error(`Invalid fields for fts - rowid/content_rowid cannot be included in fields`)
+
     // insert any existing data. this is required because of migrateTableQuery
-    sql += '\n' + `INSERT INTO ${data.name}_fts(${fields.join(', ')}) SELECT ${fields.join(', ')} FROM ${data.name};`
+    // INSERT INTO fts_idx(rowid, b, c) VALUES (new.a, new.b, new.c);
+    sql += '\n' + `INSERT INTO ${tableName}(rowid, ${fields.join(', ')}) SELECT ${rowId}, ${fields.join(', ')} FROM ${data.name};`
 
     // triggers
     // -- Create a table. And an external content fts5 table to index it.
@@ -103,14 +112,13 @@ export function createFts5Query(data: TableData){
     //   INSERT INTO fts_idx(fts_idx, rowid, b, c) VALUES('delete', old.a, old.b, old.c);
     //   INSERT INTO fts_idx(rowid, b, c) VALUES (new.a, new.b, new.c);
     // END;
-    const rowId = data.fullTextSearch.content_rowid || 'rowid'
-    sql += '\n' + `CREATE TRIGGER ${data.name}_fts_ai AFTER INSERT ON ${data.name} BEGIN INSERT INTO ${data.name}_fts(rowid, ${fields.join(', ')}) VALUES (new.${rowId}, new.${fields.join(', new.')}); END;`
-    sql += '\n' + `CREATE TRIGGER ${data.name}_fts_ad AFTER DELETE ON ${data.name} BEGIN INSERT INTO ${data.name}_fts(${fields.join(', ')}) VALUES ('delete', old.${rowId}, old.${fields.join(', old.')}); END;`
-    sql += '\n' + `CREATE TRIGGER ${data.name}_fts_au AFTER UPDATE ON ${data.name} BEGIN INSERT INTO ${data.name}_fts(${fields.join(', ')}) VALUES ('delete', old.${rowId}, old.${fields.join(', old.')}); INSERT INTO ${data.name}_fts(rowid, ${fields.join(', ')}) VALUES (new.${rowId}, new.${fields.join(', new.')}); END;`
+    sql += `\nCREATE TRIGGER ${tableName}_ai AFTER INSERT ON ${data.name} BEGIN INSERT INTO ${tableName}(rowid, ${fields.join(', ')}) VALUES (new.${rowId}, new.${fields.join(', new.')}); END;`
+    sql += `\nCREATE TRIGGER ${tableName}_ad AFTER DELETE ON ${data.name} BEGIN INSERT INTO ${tableName}(${fields.join(', ')}) VALUES ('delete', old.${rowId}, old.${fields.join(', old.')}); END;`
+    sql += `\nCREATE TRIGGER ${tableName}_au AFTER UPDATE ON ${data.name} BEGIN INSERT INTO ${tableName}(${fields.join(', ')}) VALUES ('delete', old.${rowId}, old.${fields.join(', old.')}); INSERT INTO ${tableName}(rowid, ${fields.join(', ')}) VALUES (new.${rowId}, new.${fields.join(', new.')}); END;`
 
-    sqlRevert = `DROP TRIGGER IF EXISTS ${data.name}_fts_au;` + sqlRevert
-    sqlRevert = `DROP TRIGGER IF EXISTS ${data.name}_fts_ad;` + sqlRevert
-    sqlRevert = `DROP TRIGGER IF EXISTS ${data.name}_fts_ai;` + sqlRevert
+    sqlRevert = `DROP TRIGGER IF EXISTS ${tableName}_au;\n` + sqlRevert
+    sqlRevert = `DROP TRIGGER IF EXISTS ${tableName}_ad;\n` + sqlRevert
+    sqlRevert = `DROP TRIGGER IF EXISTS ${tableName}_ai;\n` + sqlRevert
 
     return {sql, sqlRevert}
 }
@@ -138,8 +146,10 @@ export function createTableQuery(data: TableData, _rnd?: string, tempTableName?:
 
     if(data.fullTextSearch){
         const fts = createFts5Query(data)
-        sql2 += fts.sql
-        sqlRevert += fts.sqlRevert
+        if(fts) {
+            sql2 += fts.sql
+            sqlRevert += fts.sqlRevert
+        }
     }
 
     return {sql, sql2, sqlRevert}
