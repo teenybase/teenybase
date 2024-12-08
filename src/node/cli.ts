@@ -8,7 +8,7 @@ import {createLogger, Logger, LogLevel} from './logger'
 import * as fs from 'node:fs'
 import path from 'path'
 import {escapeRegExp, normalizePath, readableRelative} from './utils'
-import {unstable_dev, UnstableDevOptions, UnstableDevWorker} from 'wrangler'
+import {unstable_dev, Unstable_DevOptions, Unstable_DevWorker} from 'wrangler'
 import {DatabaseSettings, databaseSettingsSchema} from '../types/config'
 import {execSync} from 'node:child_process'
 import dotenv from 'dotenv'
@@ -68,15 +68,15 @@ const localPersist = '.local-persist'
 
 declare type RequestInfo = string | URL | Request
 class CliContext{
-    localWorker: UnstableDevWorker|undefined
+    localWorker: Unstable_DevWorker|undefined
     readonly migrationsPath: string
     get isLocal(){
         return !this.options.remote
     }
     public root: string
     public logger: Logger
-    public devServerLogLevel: UnstableDevOptions['logLevel']
-    constructor(root: string|undefined, public options: GlobalCLIOptions, public wranglerConfig: WranglerConfigRet, devServerLogLevel: UnstableDevOptions['logLevel'] = "none") {
+    public devServerLogLevel: Unstable_DevOptions['logLevel']
+    constructor(root: string|undefined, public options: GlobalCLIOptions, public wranglerConfig: WranglerConfigRet, devServerLogLevel: Unstable_DevOptions['logLevel'] = "none") {
         this.logger = createLogger(options.logLevel)
         this.root = normalizePath(root ? path.resolve(root) : process.cwd())
         this.migrationsPath = path.join(this.root, wranglerConfig.migrations)
@@ -138,7 +138,7 @@ class CliContext{
         }
     }
 
-    private _startingPromise: Promise<UnstableDevWorker>|undefined
+    private _startingPromise: Promise<Unstable_DevWorker>|undefined
     async startLocal(){
         if(this.localWorker) return this.localWorker
         if(this._startingPromise) return await this._startingPromise

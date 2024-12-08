@@ -5,6 +5,7 @@ import {literalToQuery} from './query'
 
 // data in this is expected to be safe already.
 export type UpdateQuery = {
+    type?: 'UPDATE'
     table: string
     set: Record<string, SQLQuery|SQLLiteral>
     where?: SelectWhere
@@ -21,10 +22,6 @@ export const UPDATE_NEW_COL_ID = columnify('new')
 export function buildUpdateQuery(query: UpdateQuery, simplify = true, allowAllWhere = true): SQLQuery {
     const p = { ...query.params }
     let q = `UPDATE ${query.table} SET `
-
-    // const hasNew = true
-    // const hasNew = query.where?.q.includes(newCol+'.')
-    // let newRow = ''
 
     let where = ''
     if(query.where){
@@ -46,35 +43,11 @@ export function buildUpdateQuery(query: UpdateQuery, simplify = true, allowAllWh
         const key = setKeys[i]
         const set = literalToQuery(query.set[key])
         if(i > 0) q += ', '
-        // if(!hasNew)
-            q += `${columnify(key)} = ${set.q}`
-        // else{
-        //     q += `${key} = ${newCol}.${key}`
-        //     newRow += (i > 0 ? ', ' : '') + set.q + ' AS ' + key
-        // }
+
+        q += `${columnify(key)} = ${set.q}`
         Object.assign(p, set.p)
 
-        // todo - this is an issue we have to do a proper replace or this will replace this string also.
-        //  like - if a ~ '[new].[col]'
-        //  it will be replaced with a ~ 'value', which is wrong
-        //  the replace has to be resolved in jsep
-        // where = where.replaceAll(UPDATE_NEW_COL_ID+'.'+key, set.q)
     }
-
-    // if(hasNew){
-        // UPDATE my_table
-        // SET column1 = value1, column2 = value1, ...
-        // WHERE column1 = [new].[column1]
-        // replace [new].[column1] with value1 using string replace
-
-        // q += ' FROM ('
-        // q += 'SELECT ' + newRow
-
-        // q += ' FROM ' + query.table
-        // if (query.where) q += ' WHERE ' + query.where.q
-
-        // q += ') AS ' + newCol
-    // }
 
     if (where) {
         q += ' WHERE ' + where

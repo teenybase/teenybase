@@ -1,12 +1,15 @@
 import {TableExtension} from '../tableExtension'
 import {z} from 'zod'
-import {$Table} from '../$Table'
+import {
+    $Table,
+    tableDeleteSchema,
+    tableInsertSchema,
+    tableSelectSchema,
+    tableUpdateSchema,
+    tableViewSchema
+} from '../$Table'
 import {JsepContext} from '../../sql/parse/jsep'
 import {HTTPException} from 'hono/http-exception'
-import {selectSchema} from '../../sql/parse/select'
-import {updateSchema} from '../../sql/parse/update'
-import {insertSchema} from '../../sql/parse/insert'
-import {deleteSchema} from '../../sql/parse/delete'
 
 interface TableCrudExtensionData {
     name: 'crud'
@@ -34,7 +37,7 @@ export class TableCrudExtension extends TableExtension<TableCrudExtensionData> {
             method: 'get',
             zod: ()=>({
                 description: 'Select records',
-                request: {query: selectSchema},
+                request: {query: tableSelectSchema},
                 responses: recordResponse(),
             }),
         })
@@ -46,7 +49,7 @@ export class TableCrudExtension extends TableExtension<TableCrudExtensionData> {
                 description: 'Select records',
                 request: {body: {
                     required: true,
-                    content: {'application/json': {schema: selectSchema}},
+                    content: {'application/json': {schema: tableSelectSchema}},
                 }},
                 responses: recordResponse(),
             }),
@@ -57,7 +60,7 @@ export class TableCrudExtension extends TableExtension<TableCrudExtensionData> {
             method: 'get',
             zod: ()=>({
                 description: 'Select records with total count',
-                request: {query: selectSchema},
+                request: {query: tableSelectSchema},
                 responses: recordResponse(z.object({
                     items: z.array(this.table.zodSchema.or(z.record(z.string(), z.unknown()))),
                     total: z.number().min(0).or(z.literal(-1)),
@@ -72,7 +75,7 @@ export class TableCrudExtension extends TableExtension<TableCrudExtensionData> {
                 description: 'Select records with total count',
                 request: {body: {
                     required: true,
-                    content: {'application/json': {schema: selectSchema}},
+                    content: {'application/json': {schema: tableSelectSchema}},
                 }},
                 responses: recordResponse(z.object({
                     items: z.array(this.table.zodSchema.or(z.record(z.string(), z.unknown()))),
@@ -88,7 +91,7 @@ export class TableCrudExtension extends TableExtension<TableCrudExtensionData> {
                 description: 'Update records',
                 request: {body: {
                     required: true,
-                    content: {'application/json': {schema: updateSchema}},
+                    content: {'application/json': {schema: tableUpdateSchema}},
                 }},
                 responses: recordResponse(),
             }),
@@ -101,7 +104,7 @@ export class TableCrudExtension extends TableExtension<TableCrudExtensionData> {
                 description: 'Update records',
                 request: {body: {
                     required: true,
-                    content: {'application/json': {schema: insertSchema}},
+                    content: {'application/json': {schema: tableInsertSchema}},
                 }},
                 responses: recordResponse(),
             }),
@@ -114,7 +117,7 @@ export class TableCrudExtension extends TableExtension<TableCrudExtensionData> {
                 description: 'Update records',
                 request: {body: {
                     required: true,
-                    content: {'application/json': {schema: deleteSchema}},
+                    content: {'application/json': {schema: tableDeleteSchema}},
                 }},
                 responses: recordResponse(),
             }),
@@ -126,7 +129,7 @@ export class TableCrudExtension extends TableExtension<TableCrudExtensionData> {
                 method: 'get',
                 zod: () => ({
                     description: 'View record',
-                    request: {params: z.object({id: z.string().min(1).max(255)}), query: selectSchema.pick({select: true})},
+                    request: {params: z.object({id: z.string().min(1).max(255)}), query: tableViewSchema},
                     responses: recordResponse(),
                 }),
             })

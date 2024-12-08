@@ -5,9 +5,10 @@ import {literalToQuery} from './query'
 export type SelectWhere = (SQLQuery|SQLLiteral) | ((SQLQuery|SQLLiteral)[]) // if array, all expressions are joined by AND
 
 // data in this is expected to be safe already.
-export type SelectQuerySelect1 = {q: string, as: string}
+export type SelectQuerySelect1 = SQLQuery & {as: string}
 export type SelectQuerySelect = (string|(SelectSubQuery&{q?: undefined})|SelectQuerySelect1)
 export type SelectQuery = {
+    type?: 'SELECT'
     selects?: (string | SelectQuerySelect)[]
     distinct?: boolean
     selectOption?: string
@@ -101,17 +102,20 @@ export function buildSelectQuery(query: SelectQuery|SelectSubQuery, simplify = t
         const subQueryJsonArray = subQueryJson && query.limit !== 1
 
         let selectQ = selects.map(select=>{
-            if(typeof select === 'string' || typeof select.q === 'string') {
+            const isStr = typeof select === 'string'
+            if(isStr || typeof select.q === 'string') {
+                if(!isStr && select.p) Object.assign(p, select.p)
                 if(subQueryJson){
-                    const name = typeof select === 'string' ? select : select.as
-                    const q = typeof select === 'string' ? select : select.q
+                    const name = isStr ? select : select.as
+                    if(!name) throw new Error('Expand/Subquery selects must have an AS property')
+                    const q = isStr ? select : select.q
                     // [users].[email] -> email
                     const printableName = uncolumnify(name.split('.').pop()!)
                     const lit = literalToQuery({l: printableName})
                     Object.assign(p, lit.p)
                     return lit.q + ','  + q
                 }
-                return typeof select === 'string' ? select : (select.q + ' AS ' + select.as)
+                return isStr ? select : (select.q + (select.as ? (' AS ' + select.as) : ''))
             }
             else{
                 const col = select as SelectQuery

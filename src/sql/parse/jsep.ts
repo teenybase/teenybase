@@ -9,11 +9,55 @@ import {fts5TableName} from '../schema/tableQueries'
 import {HonoRequest} from 'hono'
 
 let jsepSetup = false
+
+
 export function setupJsep(){
     if(jsepSetup) return
     jsepSetup = true
-    // LIKE operator
+
+
+// 	binary_ops: {
+// 		'||': 1, '??': 1,
+// 		'&&': 2, '|': 3, '^': 4, '&': 5,
+// 		'==': 6, '!=': 6, '===': 6, '!==': 6,
+// 		'<': 7, '>': 7, '<=': 7, '>=': 7,
+// 		'<<': 8, '>>': 8, '>>>': 8,
+// 		'+': 9, '-': 9,
+// 		'*': 10, '/': 10, '%': 10,
+// 		'**': 11,
+// 	},
+// 	unary_ops: {
+// 		'-': 1,
+// 		'!': 1,
+// 		'~': 1,
+// 		'+': 1
+// 	},
+    // https://www.sqlite.org/lang_expr.html
+
+    // remove
+    jsep.removeBinaryOp('||') // readded for concat with diff precedence
+    jsep.removeBinaryOp('??') // todo?
+    jsep.removeBinaryOp('&&') // todo - not allowed because || is concat
+    jsep.removeBinaryOp('|') // readded with diff precedence
+    jsep.removeBinaryOp('&') // readded with diff precedence
+    jsep.removeBinaryOp('^')
+    jsep.removeBinaryOp('>>')
+    jsep.removeBinaryOp('<<')
+    jsep.removeBinaryOp('>>>')
+    jsep.removeBinaryOp('**')
+
     jsep.removeUnaryOp('~');
+    jsep.removeUnaryOp('+');
+    jsep.removeUnaryOp('-');
+    jsep.removeUnaryOp('!');
+
+    jsep.addBinaryOp('|', 1) // OR
+    jsep.addBinaryOp('&', 2) // AND
+    jsep.addUnaryOp('!'/*, 4*/); // NOT
+
+    jsep.addBinaryOp('||', 12) // concat
+
+    // LIKE operator
     jsep.addBinaryOp('~', jsep.binary_ops['==']);
     jsep.addBinaryOp('!~', jsep.binary_ops['==']);
 
@@ -35,10 +79,16 @@ export function setupJsep(){
     jsep.addBinaryOp('->', 11);
     jsep.addBinaryOp('->>', 11);
 
-    // jsep.addLiteral('all', '*')
+    // todo these are in sqlite
+    // jsep.addUnaryOp('~', 14);
+    // jsep.addUnaryOp('+', 14);
+    // jsep.addUnaryOp('-', 14);
 
-    // jsep.removeBinaryOp('+')
-    // jsep.addUnaryOp('+')
+    // for eg order by
+    jsep.addUnaryOp('+');
+    jsep.addUnaryOp('-');
+
+    // jsep.addLiteral('all', '*')
 }
 
 export interface JsepGlobals{
@@ -740,8 +790,8 @@ export function treeToSql(tree: jsep.Expression, context: JsepContext): SQLQuery
     throw new Error('Not Supported type - ' + tree.type)
 }
 
-export function parseColumnList(q: string|string[]|jsep.Compound, context: JsepContext, allowExpr: boolean, allowAs: boolean, allowExpand?: false): (string|SelectQuerySelect1)[];
 export function parseColumnList(q: string|string[]|jsep.Compound, context: JsepContext, allowExpr: boolean, allowAs?: false, allowExpand?: false): string[];
+export function parseColumnList(q: string|string[]|jsep.Compound, context: JsepContext, allowExpr: boolean, allowAs: true, allowExpand?: false): (string|SelectQuerySelect1)[];
 export function parseColumnList(q: string|string[]|jsep.Compound, context: JsepContext, allowExpr: boolean, allowAs: boolean, allowExpand: true): SelectQuerySelect[];
 export function parseColumnList(q: string|string[]|jsep.Compound, context: JsepContext, allowExpr = false, allowAs = false, allowExpand = false): SelectQuerySelect[] {
     if(Array.isArray(q)) q = q.join(', ')
@@ -770,17 +820,30 @@ export function parseColumnList(q: string|string[]|jsep.Compound, context: JsepC
                     // throw new Error('Not supported, expected => or as')
                 }
             }
-            // expanding functions tableName(column list) or tableName()
+            // expanding/subquery (function syntax)
+            //  `tableName(column1, column2)`
+            //  `tableName()` - all columns
+            //  `columnName(column1, column2)` - columnName is the column that has foreign key to some table
             if(allowExpand && item.type === 'CallExpression' && (item as jsep.CallExpression).callee.type === 'Identifier'){
                 const exp = item as jsep.CallExpression
+                const tableName = context.tableName
+                const table = context.allowedTables[tableName]
                 const callee = exp.callee as jsep.Identifier
-                const fkTableName = columnify(callee.name.toLowerCase())
-                const fkTable = context.allTables[fkTableName]
+                const fkTableOrColumnName = columnify(callee.name.toLowerCase())
+                let fkTable = context.allTables[fkTableOrColumnName]
+                let fkTableName = fkTableOrColumnName
+                let tColumn
+                if(!fkTable){
+                    // check columns
+                    tColumn = table.find(f => f.name === fkTableOrColumnName && f.foreignKey)
+                    if(tColumn) {
+                        fkTableName = tColumn.foreignKey!.table
+                        fkTable = context.allTables[tColumn.foreignKey!.table]
+                    }
+                }
                 if(fkTable) {
-                    const tableName = context.tableName
-                    const table = context.allowedTables[tableName]
                     // find the column that has the foreign key to fk_table
-                    const tColumn = table.find(f => f.foreignKey?.table === fkTableName)
+                    if (!tColumn) tColumn = table.find(f => f.foreignKey?.table === fkTableName)
                     if (!tColumn) throw new Error('Foreign key not found ' + fkTableName)
                     const fkColumn = tColumn.foreignKey!.column
                     const fkColumnFull = fkTable.find(f => f.name === fkColumn)
@@ -809,25 +872,24 @@ export function parseColumnList(q: string|string[]|jsep.Compound, context: JsepC
                         selects: fkSelectColumns,
                         from: fkTableName,
                         where: {q: `${tableName}.${tColumn.name} = ${fkTableName}.${fkColumn}`},
-                        as: asName || fkTableName,
+                        as: asName || fkTableOrColumnName,
                     }
                     if (fkColumnFull.isUnique) q.limit = 1
                     res.push(q)
                     continue
                 }else {
-                    // throw new Error('Table not found ' + fkTableName)
+                    // throw new Error('Table or Column not found ' + fkTableName)
                 }
             }
 
             const sql = treeToSql(item, context)
-            if((sql as SQLLiteral).l) throw new Error('Not supported - literal')
+            if((sql as SQLLiteral).l) throw new Error('Not supported - literal in column list')
             const sql1 = sql as SQLQuery
-            if(!sql1.q || (sql1.p && Object.keys(sql1.p).length)) {
-                // console.log(sql)
-                // todo should we support something like
-                //   select concat(title, ':', content) as full from posts
-                //   here we need to support params for the string ';'
-                throw new Error('Not supported - params(literals)/invalid')
+            if(!sql1.q){
+                throw new Error('Not supported - invalid column')
+            }
+            if(!asName && (sql1.p && Object.keys(sql1.p).length)) {
+                throw new Error('Not supported - Expressions must have an alias(AS or =>)')
             }
             if(!sql1.q || (sql1.dependencies && sql1.dependencies.length)) {
                 // console.log(sql)
@@ -835,7 +897,7 @@ export function parseColumnList(q: string|string[]|jsep.Compound, context: JsepC
             }
             if(asName && sql1.q[sql1.q.length-1]==='*') throw new Error('Not supported, cannot use * with AS')
             // res.push(sql1.q + asName ? (' AS ' + asName) : '')
-            res.push(!asName ? sql1.q : {q: sql1.q, as: asName})
+            res.push(!asName ? sql1.q : {q: sql1.q, as: asName, p: sql1.p})
         }
     }
     return res

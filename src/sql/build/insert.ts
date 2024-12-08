@@ -6,6 +6,7 @@ import {literalToQuery} from './query'
 
 // data in this is expected to be safe already.
 export type InsertQuery = {
+    type?: 'INSERT'
     table: string
     values: Record<string, SQLQuery|SQLLiteral> | (Record<string, SQLQuery|SQLLiteral>[])
     returning?: (string|SelectQuerySelect1)[] // todo subqueries

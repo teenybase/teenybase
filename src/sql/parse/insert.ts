@@ -1,5 +1,12 @@
 import {z} from 'zod'
-import {sqlExprSchema, sqlExprSchemaRecord, SQLLiteral, SQLQuery, sqlValSchemaRecord} from '../../types/sql'
+import {
+    sqlExprSchema,
+    sqlExprSchemaRecord,
+    SQLLiteral,
+    SQLQuery,
+    sqlValSchemaFile2, sqlValSchemaFile3,
+    sqlValSchemaRecord
+} from '../../types/sql'
 import {JsepContext, parseColumnList} from './jsep'
 import {recordToSqlExpressions, recordToSqlValues} from './parse'
 import {InsertQuery} from '../build/insert'
@@ -9,7 +16,6 @@ export const insertSchema = z.object({
     expr: sqlExprSchemaRecord.or(z.array(sqlExprSchemaRecord)).optional(),
     returning: z.array(sqlExprSchema).or(sqlExprSchema).optional()
 })
-
 export type InsertParams = z.infer<typeof insertSchema>
 
 export async function parseInsertQuery(q: InsertParams, jc: JsepContext){

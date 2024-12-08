@@ -4,7 +4,7 @@ import {SQLIndex, SQLTrigger, tableColumnNameSchema, zSQLIndex, zSQLTrigger} fro
 import {DatabaseSettings} from './config'
 import {TableFieldUsageRecord} from '../worker/usages'
 import {tableExtensionSchemas} from './tableExtensions'
-import {indexName, migrateTableQuery} from '../sql/schema/tableQueries'
+import {indexName} from '../sql/schema/tableQueries'
 
 export interface TableData<TF extends TableFieldData=TableFieldData, TE extends TableExtensionData=TableExtensionData>{
     // id: string

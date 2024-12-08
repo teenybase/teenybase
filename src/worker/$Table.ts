@@ -12,10 +12,10 @@ import {
 import {buildDeleteQuery, DeleteQuery} from '../sql/build/delete'
 import {buildUpdateQuery, UpdateQuery} from '../sql/build/update'
 import {HTTPException} from 'hono/http-exception'
-import {parseUpdateQuery, UpdateParams} from '../sql/parse/update'
-import {InsertParams, parseInsertQuery} from '../sql/parse/insert'
-import {parseSelectQuery, SelectParams} from '../sql/parse/select'
-import {DeleteParams, parseDeleteQuery} from '../sql/parse/delete'
+import {parseUpdateQuery, UpdateParams, updateSchema} from '../sql/parse/update'
+import {InsertParams, insertSchema, parseInsertQuery} from '../sql/parse/insert'
+import {parseSelectQuery, SelectParams, selectSchema} from '../sql/parse/select'
+import {DeleteParams, deleteSchema, parseDeleteQuery} from '../sql/parse/delete'
 import {z} from 'zod'
 import {TableFieldUsage} from './usages'
 import {generateUid, randomString} from '../security/random'
@@ -131,7 +131,7 @@ export class $Table<T extends $Env = any>{
 
     // crud
 
-    async delete(data: DeleteParams) {
+    async delete(data: TableDeleteParams) {
         const query = await parseDeleteQuery(data, this.jc).catch(e=>{
             throw new ProcessError('Error parsing DELETE data', 400, {input: data}, e)
         })
@@ -152,7 +152,7 @@ export class $Table<T extends $Env = any>{
         return res
     }
 
-    async insert(data: Omit<InsertParams, 'values'>&{values: z.infer<typeof sqlValSchemaFile3>}) {
+    async insert(data: TableInsertParams) {
         // console.error('insert', data)
         const values = Array.isArray(data.values) ? data.values : [data.values]
         let filesToUpload = {} as Record<string, File>
@@ -207,7 +207,7 @@ export class $Table<T extends $Env = any>{
         return res
     }
 
-    async update(data: Omit<UpdateParams,'setValues'>&{setValues?: z.infer<typeof sqlValSchemaFile2>}) {
+    async update(data: TableUpdateParams) {
         if(data.setValues) for (const [key, val] of Object.entries(data.setValues)) { // todo
             if(Array.isArray(val)) throw new ProcessError('Array values not supported at the moment')
         }
@@ -240,9 +240,12 @@ export class $Table<T extends $Env = any>{
         filesToUpload && await this._uploadFiles(filesToUpload)
 
         let res: any
+        let err = null as any
         try {
             res = await this.run(sql, 'Failed to run update query')
         }catch (e){
+            console.error(e)
+            err = e
             res = null
         }
 
@@ -250,7 +253,7 @@ export class $Table<T extends $Env = any>{
         // if error, delete uploaded files
         if(res === null){
             if(filesToUpload) await this._deleteFiles(Object.keys(filesToUpload))
-            throw new HTTPException(500, { message: 'Failed to update' });
+            throw (err ?? new HTTPException(500, { message: 'Failed to update' }))
         }
 
         // todo - make onUpdate
@@ -262,7 +265,7 @@ export class $Table<T extends $Env = any>{
         return res
     }
 
-    async view(data: { select?: string }, id: string) {
+    async view(data: TableViewParams, id: string) {
         if(!this.mapping.uid) throw new HTTPException(404, {message: 'Not supported without uidField.'})
         const query = await parseSelectQuery({
             where: `${this.data.name}.${this.mapping.uid}='${id}'`,
@@ -279,9 +282,9 @@ export class $Table<T extends $Env = any>{
         return res[0]
     }
 
-    async select(data: SelectParams): Promise<any[]>
-    async select(data: SelectParams, countTotal: boolean): Promise<{ items: any[], total: number }>
-    async select(data: SelectParams, countTotal?: boolean) {
+    async select(data: TableSelectParams): Promise<any[]>
+    async select(data: TableSelectParams, countTotal: boolean): Promise<{ items: any[], total: number }>
+    async select(data: TableSelectParams, countTotal?: boolean) {
         const query = await parseSelectQuery(data, this.jc).catch(e=>{
             throw new ProcessError('Error parsing SELECT data', 400, {input:data}, e)
             // throw new ProcessErrore: 'Invalid query')
@@ -369,7 +372,7 @@ export class $Table<T extends $Env = any>{
             // if(field.usage && noUpdateSetUsages.includes(field.usage)) throw new ProcessError('Cannot update ' + key + ' field')
             if(field.noUpdate) throw new ProcessError('Cannot update ' + key + ' field')
         }
-        if(this.mapping.updated) query.set[this.mapping.updated] = {q: 'CURRENT_TIMESTAMP'}
+        // if(this.mapping.updated) query.set[this.mapping.updated] = {q: 'CURRENT_TIMESTAMP'}
         if(query.returning) query.returning = this.checkColsWildcard(Array.isArray(query.returning) ? query.returning : [query.returning], this.data.allowWildcard ?? false)
 
         for (const ext of this.extensions) {
@@ -746,3 +749,14 @@ export class $Table<T extends $Env = any>{
     }
 
 }
+
+export const tableDeleteSchema = deleteSchema
+export type TableDeleteParams = DeleteParams
+export const tableInsertSchema = insertSchema.and(z.object({values: sqlValSchemaFile3}))
+export type TableInsertParams =z.infer<typeof tableInsertSchema>
+export const tableUpdateSchema = updateSchema.and(z.object({setValues: sqlValSchemaFile2}))
+export type TableUpdateParams = z.infer<typeof tableUpdateSchema>
+export const tableSelectSchema = selectSchema
+export type TableSelectParams = SelectParams
+export const tableViewSchema = selectSchema.pick({select: true})
+export type TableViewParams = z.infer<typeof tableViewSchema>

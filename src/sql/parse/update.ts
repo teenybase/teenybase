@@ -22,8 +22,15 @@ export async function parseUpdateQuery(q: UpdateParams, jc: JsepContext) {
         updateData.setValues ? recordToSqlValues(updateData.setValues) : {}
 
     if(!Object.keys(set).length) throw new Error('Update query must have set or setValues with at least one field')
+
+    // note -
+    //  since we are replacing as literal,
+    //  its possible to have queries like
+    //  `new.owner = notes.owner` will become `[notes].[owner] = [notes].[owner]`
+    //  todo - so this should be simplified to true.
+
     // allows new.* in where and rule
-    const jc2: JsepContext = {
+    const contextWithNew: JsepContext = {
         ...jc, extras: { ...jc.extras,
         [UPDATE_NEW_COL_ID]: {
             table: jc.tableName,
@@ -32,10 +39,10 @@ export async function parseUpdateQuery(q: UpdateParams, jc: JsepContext) {
     }
     const updateQuery: UpdateQuery = {
         table: jc.tableName,
-        where: updateData.where ? queryToSqlQuery(updateData.where, jc2) : undefined,
+        where: updateData.where ? queryToSqlQuery(updateData.where, contextWithNew) : undefined,
         returning: updateData.returning ? parseColumnList(updateData.returning, jc, true, true) : undefined,
         set,
-        contextWithNew: jc2,
+        contextWithNew: contextWithNew,
         // join
     }
 

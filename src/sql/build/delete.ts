@@ -3,6 +3,7 @@ import {SQLQuery} from '../../types/sql'
 
 // data in this is expected to be safe already.
 export type DeleteQuery = {
+    type?: 'DELETE'
     table: string
     where?: SelectWhere
     returning?: (string|SelectQuerySelect1)[] // todo subqueries

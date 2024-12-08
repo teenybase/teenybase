@@ -112,9 +112,19 @@ export function createFts5Query(data: TableData){
     //   INSERT INTO fts_idx(fts_idx, rowid, b, c) VALUES('delete', old.a, old.b, old.c);
     //   INSERT INTO fts_idx(rowid, b, c) VALUES (new.a, new.b, new.c);
     // END;
-    sql += `\nCREATE TRIGGER ${tableName}_ai AFTER INSERT ON ${data.name} BEGIN INSERT INTO ${tableName}(rowid, ${fields.join(', ')}) VALUES (new.${rowId}, new.${fields.join(', new.')}); END;`
-    sql += `\nCREATE TRIGGER ${tableName}_ad AFTER DELETE ON ${data.name} BEGIN INSERT INTO ${tableName}(${fields.join(', ')}) VALUES ('delete', old.${rowId}, old.${fields.join(', old.')}); END;`
-    sql += `\nCREATE TRIGGER ${tableName}_au AFTER UPDATE ON ${data.name} BEGIN INSERT INTO ${tableName}(${fields.join(', ')}) VALUES ('delete', old.${rowId}, old.${fields.join(', old.')}); INSERT INTO ${tableName}(rowid, ${fields.join(', ')}) VALUES (new.${rowId}, new.${fields.join(', new.')}); END;`
+    sql += `
+CREATE TRIGGER ${tableName}_ai AFTER INSERT ON ${data.name} BEGIN
+    INSERT INTO ${tableName}(rowid, ${fields.join(', ')}) VALUES (new.${rowId}, new.${fields.join(', new.')});
+END;`
+    sql += `
+CREATE TRIGGER ${tableName}_ad AFTER DELETE ON ${data.name} BEGIN
+    INSERT INTO ${tableName}(${tableName}, rowid, ${fields.join(', ')}) VALUES ('delete', old.${rowId}, old.${fields.join(', old.')});
+END;`
+    sql += `
+CREATE TRIGGER ${tableName}_au AFTER UPDATE ON ${data.name} BEGIN
+    INSERT INTO ${tableName}(${tableName}, rowid, ${fields.join(', ')}) VALUES ('delete', old.${rowId}, old.${fields.join(', old.')});
+    INSERT INTO ${tableName}(rowid, ${fields.join(', ')}) VALUES (new.${rowId}, new.${fields.join(', new.')});
+END;`
 
     sqlRevert = `DROP TRIGGER IF EXISTS ${tableName}_au;\n` + sqlRevert
     sqlRevert = `DROP TRIGGER IF EXISTS ${tableName}_ad;\n` + sqlRevert
