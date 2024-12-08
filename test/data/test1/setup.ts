@@ -8,7 +8,7 @@ export async function setup(){
         name: '1000_Fill_Dummy_Data.sql',
         sql: dummyData
     }])
-    return generated.config satisfies DatabaseSettings
+    return structuredClone(generated.config satisfies DatabaseSettings)
 }
 
 export const dummyData = `

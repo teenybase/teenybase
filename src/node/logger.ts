@@ -78,7 +78,7 @@ export function createLogger(
     const {
         prefix = '[teeny]',
         allowClearScreen = true,
-        console = globalThis.console,
+        console = (globalThis as any).console,
     } = options
     const thresh = LogLevels[level]
     const canClearScreen =

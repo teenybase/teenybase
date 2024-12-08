@@ -1,27 +1,27 @@
 {
     "name": "teenybase",
-    "version": "0.0.1",
+    "version": "0.0.2",
     "type": "module",
     "bin": {
         "teeny": "bin/teeny.js"
     },
     "scripts": {
         "run-pack": "npm pack",
+        "build": "npm run build-ts && npm run ts-node && npm run js-node",
+        "test": "npm run check && npm run test-check && npm run vitest && npm run vitest-worker",
+        "watch": "concurrently -n \"r,ts,js\" \"npm run build-ts -- -w --preserveWatchOutput\" \"npm run ts-node -- -w --preserveWatchOutput\" \"npm run js-node -- --watch\"",
+
         "prepack": "npm run build",
-        "dev": "npx tsx ./wrangler_dev.ts",
-        "deploy-release": "bash ./scripts/release.sh",
-        "deploy-worker": "wrangler deploy --minify",
-        "cf-typegen": "wrangler types --env-interface CloudflareBindings",
-        "test": "npm run check && npm run test-check && npm run vitest",
-        "vitest": "vitest run",
+        "prepublishOnly": "npm run test",
+        "vitest": "vitest run --exclude test/worker",
+        "vitest-worker": "vitest run -r test/worker",
         "check": "tsc -p tsconfig.json --pretty --noEmit",
         "build-ts": "tsc -p tsconfig.json --pretty",
         "ts-node": "tsc -p src/node/tsconfig.json --pretty",
         "js-node": "esbuild src/node/cli.ts --bundle --outfile=dist/node/cli.js --platform=node --format=esm --packages=external --sourcemap",
-        "build": "npm run build-ts && npm run ts-node && npm run js-node",
-        "watch": "concurrently -n \"r,ts,js\" \"npm run build-ts -- -w --preserveWatchOutput\" \"npm run ts-node -- -w --preserveWatchOutput\" \"npm run js-node -- --watch\"",
         "test-check": "tsc -p test/tsconfig.json --pretty --noEmit",
-        "build-runtime-esbuild-temp": "esbuild src/worker/index.ts --bundle --outfile=dist/worker/index.js --format=esm --sourcemap"
+        "build-runtime-esbuild-temp": "esbuild src/worker/index.ts --bundle --outfile=dist/worker/index.js --format=esm --sourcemap",
+        "run-publish": "git diff --quiet master -- && npm publish"
     },
     "exports": {
         ".": {
