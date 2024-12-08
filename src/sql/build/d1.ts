@@ -22,7 +22,7 @@ export function sqlQueryToD1Query(query: SQLQuery): D1Query{
         }
         q = q.replace('{:'+key+'}', '?')
 
-        // for d1
+        // for d1. todo, should this be moved to literalToQuery
         if(v !== null && (typeof v === 'object' || Array.isArray(v))) {
             v = JSON.stringify(v)
         }

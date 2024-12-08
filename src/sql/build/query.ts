@@ -10,7 +10,14 @@ export function logSQLQuery(query: SQLQuery): string{
     let q = query.q.trim()
     if(params?.length) {
         for (const [k, val] of params) {
-            q = q.replaceAll('{:' + k + '}', JSON.stringify(val))
+            let v = val
+
+            // for d1. todo, should this be moved to literalToQuery
+            if(v !== null && (typeof v === 'object' || Array.isArray(v))) {
+                v = JSON.stringify(v)
+            }
+
+            q = q.replaceAll('{:' + k + '}', JSON.stringify(v))
         }
     }
     return q
@@ -70,7 +77,7 @@ export function literalToQuery(l: SQLLiteral | SQLQuery | string, wrap = true): 
     const rnd = 'f'+Math.random().toString(36).substring(7)
     return {
         q: '{:'+rnd+'}',
-        p: { [rnd]: l1 } // is object check required?
+        p: { [rnd]: l1 } // todo is object check required? right now it's done in sqlQueryToD1Query
     }
 }
 

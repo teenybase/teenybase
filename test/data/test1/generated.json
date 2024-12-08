@@ -1,0 +1,204 @@
+{
+  "migrations": [
+    {
+      "name": "0000_create_table_users.sql",
+      "sql": "CREATE TABLE users (\n\tid INTEGER PRIMARY KEY AUTOINCREMENT, \n\tname TEXT NOT NULL, \n\temail TEXT UNIQUE NOT NULL, \n\tuid TEXT UNIQUE NOT NULL, \n\tpass_hash TEXT NOT NULL, \n\tcreated TIMESTAMP DEFAULT CURRENT_TIMESTAMP, \n\tupdated TIMESTAMP DEFAULT CURRENT_TIMESTAMP\n);\nCREATE INDEX idx_users_name ON users (name);\nCREATE TRIGGER tgr_users_raise_on_created_update BEFORE UPDATE OF created ON users BEGIN SELECT RAISE(FAIL, 'Cannot update created column') WHERE OLD.created != NEW.created; END;\nCREATE TRIGGER tgr_users_update_updated_on_update AFTER UPDATE ON users BEGIN UPDATE users SET updated = CURRENT_TIMESTAMP WHERE id = NEW.id AND OLD.updated = NEW.updated; END;",
+      "sqlRevert": "DROP TABLE IF EXISTS users;",
+      "logs": [
+        "✔ Table Created - users"
+      ]
+    },
+    {
+      "name": "0001_create_table_files.sql",
+      "sql": "CREATE TABLE files (\n\tid INTEGER PRIMARY KEY AUTOINCREMENT, \n\tname TEXT NOT NULL, \n\turl TEXT NOT NULL, \n\tmetadata JSON CHECK(json_valid(metadata)), \n\tuser_id INTEGER REFERENCES users(id) ON DELETE CASCADE, \n\tcreated TIMESTAMP DEFAULT CURRENT_TIMESTAMP\n);\nCREATE INDEX idx_files_name ON files (name);\nCREATE INDEX idx_files_user_id ON files (user_id);",
+      "sqlRevert": "DROP TABLE IF EXISTS files;",
+      "logs": [
+        "✔ Table Created - files"
+      ]
+    }
+  ],
+  "config": {
+    "tables": [
+      {
+        "name": "users",
+        "r2Base": "users",
+        "allowWildcard": false,
+        "fields": [
+          {
+            "name": "id",
+            "sqlType": "integer",
+            "type": "integer",
+            "usage": "record_uid",
+            "primary": true,
+            "autoIncrement": true,
+            "noUpdate": true,
+            "noInsert": true
+          },
+          {
+            "name": "name",
+            "sqlType": "text",
+            "type": "text",
+            "notNull": true
+          },
+          {
+            "name": "email",
+            "sqlType": "text",
+            "type": "email",
+            "unique": true,
+            "notNull": true
+          },
+          {
+            "name": "uid",
+            "sqlType": "text",
+            "type": "text",
+            "unique": true,
+            "notNull": true
+          },
+          {
+            "name": "pass_hash",
+            "sqlType": "text",
+            "type": "text",
+            "notNull": true
+          },
+          {
+            "name": "created",
+            "sqlType": "timestamp",
+            "type": "date",
+            "usage": "record_created",
+            "default": {
+              "q": "CURRENT_TIMESTAMP"
+            },
+            "noUpdate": true,
+            "noInsert": true
+          },
+          {
+            "name": "updated",
+            "sqlType": "timestamp",
+            "type": "date",
+            "usage": "record_updated",
+            "default": {
+              "q": "CURRENT_TIMESTAMP"
+            },
+            "noUpdate": true,
+            "noInsert": true
+          }
+        ],
+        "indexes": [
+          {
+            "fields": "name"
+          }
+        ],
+        "triggers": [
+          {
+            "name": "raise_on_created_update",
+            "event": "UPDATE",
+            "seq": "BEFORE",
+            "updateOf": "created",
+            "body": {
+              "q": "SELECT RAISE(FAIL, 'Cannot update created column') WHERE OLD.created != NEW.created"
+            }
+          },
+          {
+            "name": "update_updated_on_update",
+            "event": "UPDATE",
+            "seq": "AFTER",
+            "body": {
+              "q": "UPDATE users SET updated = CURRENT_TIMESTAMP WHERE id = NEW.id AND OLD.updated = NEW.updated"
+            }
+          }
+        ],
+        "autoSetUid": false,
+        "extensions": [
+          {
+            "name": "rules",
+            "listRule": "true",
+            "viewRule": "true",
+            "createRule": "true",
+            "updateRule": "true",
+            "deleteRule": "true"
+          }
+        ]
+      },
+      {
+        "name": "files",
+        "r2Base": "files",
+        "fields": [
+          {
+            "name": "id",
+            "sqlType": "integer",
+            "type": "integer",
+            "usage": "record_uid",
+            "primary": true,
+            "autoIncrement": true,
+            "noUpdate": true,
+            "noInsert": true
+          },
+          {
+            "name": "name",
+            "sqlType": "text",
+            "type": "text",
+            "notNull": true
+          },
+          {
+            "name": "url",
+            "sqlType": "text",
+            "type": "url",
+            "notNull": true
+          },
+          {
+            "name": "metadata",
+            "sqlType": "json",
+            "type": "json",
+            "check": {
+              "q": "json_valid(metadata)"
+            }
+          },
+          {
+            "name": "user_id",
+            "sqlType": "integer",
+            "type": "relation",
+            "foreignKey": {
+              "table": "users",
+              "column": "id",
+              "onDelete": "CASCADE"
+            }
+          },
+          {
+            "name": "created",
+            "sqlType": "timestamp",
+            "type": "date",
+            "usage": "record_created",
+            "default": {
+              "q": "CURRENT_TIMESTAMP"
+            },
+            "noUpdate": true,
+            "noInsert": true
+          }
+        ],
+        "indexes": [
+          {
+            "fields": "name"
+          },
+          {
+            "fields": "user_id"
+          }
+        ],
+        "autoSetUid": false,
+        "extensions": [
+          {
+            "name": "rules",
+            "listRule": "true",
+            "viewRule": "true",
+            "createRule": "true",
+            "updateRule": "true",
+            "deleteRule": "true"
+          }
+        ]
+      }
+    ],
+    "jwtSecret": "asdadqdihxwdsuhcwhc0cwe8hnwcw",
+    "appUrl": "https://localhost",
+    "version": 0
+  },
+  "extraLogs": []
+}

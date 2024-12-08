@@ -20,6 +20,7 @@ export function honoErrorHandler<T extends $Env>(err: Error | HTTPResponseError,
             ...(isZodError ? err.issues : null),
             ...(err as ProcessError).data as any
         } : undefined,
+        // todo zoderror.format()
         queries: c.env.RESPOND_WITH_QUERY_LOG ? $db?.queryLog : undefined,
     }, {
         status,

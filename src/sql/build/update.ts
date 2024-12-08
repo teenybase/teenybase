@@ -1,5 +1,5 @@
 import {columnify, JsepContext} from '../parse/jsep'
-import {buildSelectWhere, SelectWhere} from './select'
+import {buildSelectWhere, joinReturning, SelectQuerySelect1, SelectWhere} from './select'
 import {SQLLiteral, SQLQuery} from '../../types/sql'
 import {literalToQuery} from './query'
 
@@ -8,7 +8,7 @@ export type UpdateQuery = {
     table: string
     set: Record<string, SQLQuery|SQLLiteral>
     where?: SelectWhere
-    returning?: string[]
+    returning?: (string|SelectQuerySelect1)[] // todo subqueries
     contextWithNew?: JsepContext, // has extras object with new. data
 
     // params
@@ -81,7 +81,7 @@ export function buildUpdateQuery(query: UpdateQuery, simplify = true, allowAllWh
     }
 
     if (query.returning?.length) {
-        q += ' RETURNING ' + query.returning.join(', ')
+        q += ' RETURNING ' + joinReturning(query.returning, p)
     }
 
     q += ';\n'

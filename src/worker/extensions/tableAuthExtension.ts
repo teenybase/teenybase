@@ -17,16 +17,22 @@ import {generateUid, randomString} from '../../security/random'
 import {SQLLiteral, SQLQuery, sqlValSchema} from '../../types/sql'
 import {passwordProcessors} from '../util/passwordProcessors'
 import {InsertParams} from '../../sql/parse/insert'
+import {Context} from 'hono'
 
 type UserFields = {
     emailVerified?: boolean
-    password?: string
     id: string
-    passwordSalt?: string
     email?: string
     username?: string
     audience?: string[] // roles
     metadata?: string
+    // password?: string
+    // passwordSalt?: string
+}
+
+type UserFieldsAdmin = UserFields & {
+    password?: string
+    passwordSalt?: string
 }
 
 const SALT_LENGTH = 20
@@ -52,7 +58,8 @@ export class TableAuthExtension extends TableExtension<TableAuthExtensionData> {
     readonly mapping
     private jwtSecret: string
 
-    constructor(data: TableAuthExtensionData, table: $Table, jc: JsepContext) {
+    // todo remove c from here
+    constructor(data: TableAuthExtensionData, table: $Table, jc: JsepContext, private c: Context) {
         super(tableAuthDataSchema.parse(data), table, jc)
         if (data.name !== TableAuthExtension.name) throw new HTTPException(500, {message: 'Invalid Configuration'})
         if(!this.table.mapping.uid) throw new HTTPException(500, {message: 'Invalid Configuration - id field required'})
@@ -183,7 +190,7 @@ export class TableAuthExtension extends TableExtension<TableAuthExtensionData> {
         if(this.mapping.emailVerified) {
             ret.verified = user.emailVerified
             if(!user.emailVerified && this.data.autoSendVerificationEmail){
-                this.jc.c.executionCtx.waitUntil(this._requestVerification(user))
+                this.c.executionCtx.waitUntil(this._requestVerification(user))
             }
         }
 
@@ -200,12 +207,12 @@ export class TableAuthExtension extends TableExtension<TableAuthExtensionData> {
         if(!user) throw new HTTPException(400, {message: 'User not found'})
 
         await this._requestVerification(user)
-        return this.jc.c.json({success: true})
+        return this.c.json({success: true})
     }
 
     confirmRequiresAuth = true  // todo make setting
     async confirmVerification(){
-        const data = await parseRequestBody(this.jc.c.req)
+        const data = await parseRequestBody(this.c.req)
         if (!data) throw new HTTPException(400, {message: 'Usage: POST /auth/confirm-verification {data} in JSON/FormData'})
         // console.log(data.token)
         const token = jwtTokenSchema.parse(data.token)
@@ -220,13 +227,13 @@ export class TableAuthExtension extends TableExtension<TableAuthExtensionData> {
             token: await this.createLoginToken(user),
             record: this._userToFields(user),
         } as any
-        return this.jc.c.json(ret)
+        return this.c.json(ret)
     }
 
     async requestPasswordReset(){
         if(!this.mapping.email || !this.mapping.password) throw new HTTPException(500, {message: 'Invalid Configuration'})
 
-        const data = await parseRequestBody(this.jc.c.req)
+        const data = await parseRequestBody(this.c.req)
         if(!data) throw new HTTPException(400, {message: 'Usage: POST /auth/request-password-reset {data} in JSON/FormData'})
 
         const record = recordToSqlValues(data)
@@ -240,12 +247,12 @@ export class TableAuthExtension extends TableExtension<TableAuthExtensionData> {
 
         await this._requestPasswordReset(user)
 
-        return this.jc.c.json({success: true})
+        return this.c.json({success: true})
     }
 
     async confirmPasswordReset(){
         if(!this.mapping.email || !this.mapping.password) throw new HTTPException(500, {message: 'Invalid Configuration'})
-        const data = await parseRequestBody(this.jc.c.req)
+        const data = await parseRequestBody(this.c.req)
         if (!data) throw new HTTPException(400, {message: 'Usage: POST /auth/confirm-password-reset {data} in JSON/FormData'})
         const token = jwtTokenSchema.parse(data.token)
         if(!token) throw new HTTPException(400, {message: 'Token required'})
@@ -260,7 +267,7 @@ export class TableAuthExtension extends TableExtension<TableAuthExtensionData> {
             token: await this.createLoginToken(user),
             record: this._userToFields(user),
         } as any
-        return this.jc.c.json(ret)
+        return this.c.json(ret)
     }
 
     async loginWithPassword(data?: Record<string, z.infer<typeof sqlValSchema>>){
@@ -277,7 +284,7 @@ export class TableAuthExtension extends TableExtension<TableAuthExtensionData> {
             await new Promise((r)=>setTimeout(r, Math.random()*200)) // todo
             return new HTTPException(400, {message: 'Invalid username or password'})
         }
-        const user = username ? await this.findUser(username) : null
+        const user = username ? await this.findUser(username, false, true) : null
 
         if(!user) throw await invalid()
 
@@ -298,7 +305,7 @@ export class TableAuthExtension extends TableExtension<TableAuthExtensionData> {
             record: this._userToFields(user),
         }
         if(this.mapping.emailVerified && !user.emailVerified) ret.verified = false
-        // return this.jc.c.json(ret)
+        // return this.c.json(ret)
         return ret
     }
 
@@ -306,7 +313,7 @@ export class TableAuthExtension extends TableExtension<TableAuthExtensionData> {
      * validates token from google, github etc or refreshes the token
      */
     async loginWithToken(){
-        const tok = this.jc.c.req.header('Authorization')?.replace(/^Bearer /, '')
+        const tok = this.c.req.header('Authorization')?.replace(/^Bearer /, '')
         if (!tok) throw new HTTPException(400, {message: 'Authorization header required'})
         const payload = await this.table.$db.jwt.decodeAuth(tok, this.jwtSecret, false).catch(() => null)
         if (!payload) throw new HTTPException(401, {message: 'Unauthorized'})
@@ -332,7 +339,7 @@ export class TableAuthExtension extends TableExtension<TableAuthExtensionData> {
         const ret = {token} as {token: string, verified?: false}
         if(this.mapping.emailVerified && !res.emailVerified) ret.verified = false
         // todo return record like loginWithPassword?
-        return this.jc.c.json(ret)
+        return this.c.json(ret)
     }
 
     async changePassword(){
@@ -340,11 +347,11 @@ export class TableAuthExtension extends TableExtension<TableAuthExtensionData> {
 
         const email = this.jc.globals.auth?.email
         if(!this.jc.globals.auth?.uid || !email) throw new HTTPException(401, {message: 'Unauthorized'})
-        const data = await this.jc.c.req.json()
+        const data = await this.c.req.json()
         if (!data) throw new HTTPException(400, {message: 'Usage: POST /auth/change-password {data} in JSON'})
 
         const record = recordToSqlValues(data)
-        const res = await this.findUser(email)
+        const res = await this.findUser(email, false, true)
         if(!res) throw new HTTPException(400, {message: 'Invalid user'})
 
         const salt = res.passwordSalt || ''
@@ -360,7 +367,7 @@ export class TableAuthExtension extends TableExtension<TableAuthExtensionData> {
         const res2 = await this.updateUser(res.id, {password: password})
         if(!res2 || res2.id !== res.id) throw new HTTPException(500, {message: 'Failed to update password'})
 
-        return this.jc.c.json({success: true})
+        return this.c.json({success: true})
     }
 
 // todo
@@ -374,7 +381,7 @@ export class TableAuthExtension extends TableExtension<TableAuthExtensionData> {
     // refresh token
 
 
-    private async createLoginToken(res: UserFields, rc = 0) {
+    private async createLoginToken(res: UserFieldsAdmin, rc = 0) {
         const data = {
             cid: this.table.data.name,
             user: res.username, // todo: should this be added?
@@ -392,9 +399,12 @@ export class TableAuthExtension extends TableExtension<TableAuthExtensionData> {
     /**
      * @param loginId - username or email
      * @param emailOnly
+     * @param asAdmin -
      * @private
      */
-    private async findUser(loginId: string, emailOnly: boolean = false) {
+    private async findUser(loginId: string, emailOnly?: boolean, asAdmin?: false): Promise<UserFields|null>;
+    private async findUser(loginId: string, emailOnly: boolean, asAdmin: true): Promise<UserFieldsAdmin|null>;
+    private async findUser(loginId: string, emailOnly: boolean = false, asAdmin = false) {
         const username = (!emailOnly && this.mapping.username) ? `${ident(this.mapping.username, this.jc)} = {:loginId}` : null
         const email = this.mapping.email ? `${ident(this.mapping.email, this.jc)} = {:loginId}` : null
         if(!username && !email) throw new HTTPException(500, {message: 'Invalid Configuration'})
@@ -404,12 +414,12 @@ export class TableAuthExtension extends TableExtension<TableAuthExtensionData> {
                 q: (username && email) ? `${username} OR ${email}` : email || username!,
                 p: {loginId: loginId}
             },
-            selects: this._userFields(),
+            selects: this._userFields(true, asAdmin),
             limit: 1,
         })
 
         const res = await this.table.run(select, 'Failed to find user')
-        return this._fieldsToUser(res[0])
+        return this._fieldsToUser(res[0], true)
     }
     private async getUser(id: string) {
         const select = buildSelectQuery({
@@ -484,19 +494,21 @@ export class TableAuthExtension extends TableExtension<TableAuthExtensionData> {
         return this._fieldsToUser(res[0])
     }
 
-    private _fieldsToUser(res: any): UserFields|null {
+    private _fieldsToUser(res: any, asAdmin?: false): UserFields|null;
+    private _fieldsToUser(res: any, asAdmin?: true): UserFieldsAdmin|null;
+    private _fieldsToUser(res: any, asAdmin: boolean = false): UserFieldsAdmin|null {
         return res ? {
             id: res[this.mapping.uid],
             username: this.mapping.username ? res[this.mapping.username] : undefined,
             email: this.mapping.email ? res[this.mapping.email] : undefined,
-            password: this.mapping.password ? res[this.mapping.password] : undefined,
-            passwordSalt: this.mapping.passwordSalt ? res[this.mapping.passwordSalt] : undefined,
+            password: asAdmin && this.mapping.password ? res[this.mapping.password] : undefined,
+            passwordSalt: asAdmin && this.mapping.passwordSalt ? res[this.mapping.passwordSalt] : undefined,
             emailVerified: this.mapping.emailVerified ? Boolean(res[this.mapping.emailVerified]) : undefined,
             audience: this.mapping.audience ? this.mapping.audience.map((f) => res[f]).filter(v=>v) : undefined,
             metadata: this.mapping.metadata ? JSON.parse(res[this.mapping.metadata]) : undefined,
         } : null
     }
-    private _userToFields(user: UserFields) {
+    private _userToFields(user: UserFields|UserFieldsAdmin) {
         const res = {
             [this.mapping.uid]: user.id,
         } as Record<string, z.infer<typeof sqlValSchema>>
@@ -509,14 +521,21 @@ export class TableAuthExtension extends TableExtension<TableAuthExtensionData> {
         return res
     }
 
-    private _userFields(identifier = true){
+    private _userFields(identifier = true, asAdmin = false){
         const f = [
             this.mapping.uid, this.mapping.username, this.mapping.email,
             this.mapping.password, this.mapping.passwordSalt,
             this.mapping.emailVerified, ...this.mapping.audience??[],
             this.mapping.metadata,
-        ].filter(v => v) as string[]
-        return !identifier ? f : f.map(v => ident(v, this.jc))
+        ].filter(v => {
+            const f = v ? this.table.fields[v]:undefined
+            return f && (!f.noSelect || asAdmin)
+        }) as string[]
+        const jc = !asAdmin ? this.jc : {
+            ...this.jc,
+            _checkColumns: !asAdmin, // todo see if we can pass asAdmin(or something) and that would include the password columns
+        }
+        return !identifier ? f : f.map(v => ident(v, jc))
     }
 
     private _kvVerificationSentKey = (user: UserFields)=> '@email_verification_sent_at_' + this.table.name + user.id
@@ -714,7 +733,7 @@ export class TableAuthExtension extends TableExtension<TableAuthExtensionData> {
                     q: `${ident(this.mapping.password, this.jc)} = ${currentQ.q}`,
                     p: currentQ.p
                 }
-                // const simplify = this.jc.c.req.header('$DB_TEST_PARSE_SIMPLIFY_DISABLE') !== 'true'
+                // const simplify = this.c.req.header('$DB_TEST_PARSE_SIMPLIFY_DISABLE') !== 'true'
                 // query.where = query.where ? applyBinaryOperator(query.where, where, 'AND', simplify) : where
                 appendWhere(query, where)
             } else {

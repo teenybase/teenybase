@@ -34,5 +34,5 @@ export const updatedTrigger: SQLTrigger = {
     name: "update_updated_on_update",
     seq: "AFTER",
     event: "UPDATE",
-    body: sql`UPDATE users SET updated = CURRENT_TIMESTAMP WHERE id = NEW.id`,
+    body: sql`UPDATE users SET updated = CURRENT_TIMESTAMP WHERE id = NEW.id AND OLD.updated = NEW.updated`,
 }

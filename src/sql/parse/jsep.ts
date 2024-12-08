@@ -4,7 +4,7 @@ import {SQLLiteral, SQLQuery, sqlValSchema, tableColumnNameSchema} from '../../t
 import {literalToQuery} from '../build/query'
 import {FieldForeignKey, TableFieldData} from '../../types/field'
 import {isTableFieldUnique, TableData} from '../../types/table'
-import {SelectQuerySelect, SelectSubQuery} from '../build/select'
+import {SelectQuerySelect, SelectQuerySelect1, SelectSubQuery} from '../build/select'
 import {fts5TableName} from '../schema/tableQueries'
 import {HonoRequest} from 'hono'
 
@@ -740,7 +740,8 @@ export function treeToSql(tree: jsep.Expression, context: JsepContext): SQLQuery
     throw new Error('Not Supported type - ' + tree.type)
 }
 
-export function parseColumnList(q: string|string[]|jsep.Compound, context: JsepContext, allowExpr: boolean, allowAs: boolean, allowExpand?: false): string[];
+export function parseColumnList(q: string|string[]|jsep.Compound, context: JsepContext, allowExpr: boolean, allowAs: boolean, allowExpand?: false): (string|SelectQuerySelect1)[];
+export function parseColumnList(q: string|string[]|jsep.Compound, context: JsepContext, allowExpr: boolean, allowAs?: false, allowExpand?: false): string[];
 export function parseColumnList(q: string|string[]|jsep.Compound, context: JsepContext, allowExpr: boolean, allowAs: boolean, allowExpand: true): SelectQuerySelect[];
 export function parseColumnList(q: string|string[]|jsep.Compound, context: JsepContext, allowExpr = false, allowAs = false, allowExpand = false): SelectQuerySelect[] {
     if(Array.isArray(q)) q = q.join(', ')

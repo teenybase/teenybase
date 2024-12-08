@@ -98,7 +98,8 @@ export class $Table<T extends $Env = any>{
         this.extensions.push(new TableCrudExtension({name: 'crud'}, this, jc))
         for (const ext of data.extensions) {
             const extClass = (extensions as any)[ext.name]
-            if (extClass) this.extensions.push(new extClass(ext as any, this, jc))
+            // todo dont pass $db.c here, remove dep from TableAuthExtension
+            if (extClass) this.extensions.push(new extClass(ext as any, this, jc, $db.c))
             else throw new ProcessError('Invalid extension ' + ext.name + ' for table ' + data.name, 500)
         }
 

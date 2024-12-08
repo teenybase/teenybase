@@ -1,11 +1,11 @@
-import {buildSelectWhere, SelectQuery, SelectWhere} from './select'
+import {buildSelectWhere, joinReturning, SelectQuery, SelectQuerySelect1, SelectWhere} from './select'
 import {SQLQuery} from '../../types/sql'
 
 // data in this is expected to be safe already.
 export type DeleteQuery = {
     table: string
     where?: SelectWhere
-    returning?: string[]
+    returning?: (string|SelectQuerySelect1)[] // todo subqueries
 
     // params
     params?: Record<string, any>
@@ -31,7 +31,7 @@ export function buildDeleteQuery(query: DeleteQuery, simplify = true, allowAllWh
     }
 
     if (query.returning?.length) {
-        q += ' RETURNING ' + query.returning.join(', ')
+        q += ' RETURNING ' + joinReturning(query.returning, p)
     }
 
     q += ';\n'

@@ -1,6 +1,6 @@
 import {UPDATE_NEW_COL_ID} from './update'
 import {columnify} from '../parse/jsep'
-import {buildSelectWhere, SelectQuery, SelectWhere} from './select'
+import {buildSelectWhere, joinReturning, SelectQuery, SelectQuerySelect1, SelectWhere} from './select'
 import {SQLLiteral, SQLQuery} from '../../types/sql'
 import {literalToQuery} from './query'
 
@@ -8,7 +8,7 @@ import {literalToQuery} from './query'
 export type InsertQuery = {
     table: string
     values: Record<string, SQLQuery|SQLLiteral> | (Record<string, SQLQuery|SQLLiteral>[])
-    returning?: string[]
+    returning?: (string|SelectQuerySelect1)[] // todo subqueries
     where?: SelectWhere
     // todo add orConflict to rest api
     or?: 'ABORT' | 'FAIL' | 'IGNORE' | 'REPLACE' | 'ROLLBACK'
@@ -75,7 +75,7 @@ export function buildInsertQuery(query: InsertQuery, simplify = true, allowAllWh
     }
 
     if (query.returning?.length) {
-        q += ' RETURNING ' + query.returning.join(', ')
+        q += ' RETURNING ' + joinReturning(query.returning, p)
     }
 
     q += ';\n'

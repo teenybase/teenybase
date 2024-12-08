@@ -127,7 +127,7 @@ export const zSQLTrigger = z.object({
     name: tableColumnNameSchema,
     event: z.enum(['INSERT', 'DELETE', 'UPDATE']),
     seq: z.enum(['BEFORE', 'AFTER', 'INSTEAD OF']).optional(),
-    updateOf: z.array(tableColumnNameSchema).optional(),
+    updateOf: tableColumnNameSchema.or(z.array(tableColumnNameSchema)).optional(),
     forEach: z.enum(['ROW']).optional(),
     body: zSQLQuery.or(z.array(zSQLQuery)),
     when: zSQLQuery.optional(),

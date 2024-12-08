@@ -8,7 +8,7 @@ export type SelectWhere = (SQLQuery|SQLLiteral) | ((SQLQuery|SQLLiteral)[]) // i
 export type SelectQuerySelect1 = {q: string, as: string}
 export type SelectQuerySelect = (string|(SelectSubQuery&{q?: undefined})|SelectQuerySelect1)
 export type SelectQuery = {
-    selects?: string | SelectQuerySelect[]
+    selects?: (string | SelectQuerySelect)[]
     distinct?: boolean
     selectOption?: string
     where?: SelectWhere
@@ -70,6 +70,18 @@ export function buildSelectWhere(queryWhere: SelectWhere, simplify: boolean) {
     return literalToQuery(q, true)
 }
 
+
+// todo subquery and merge with selects
+export function joinReturning(returning: (string|SelectQuerySelect1)[], p: Record<string, any>): string {
+    return returning.map(select=>{
+        if(typeof select === 'string' || typeof select.q === 'string') {
+            return typeof select === 'string' ? select : (select.q + ' AS ' + select.as)
+        }else {
+            // todo subquery
+            throw new Error('Invalid returning')
+        }}).join(', ')
+}
+
 // https://www.sqlite.org/lang_select.html
 export function buildSelectQuery(query: SelectQuery|SelectSubQuery, simplify = true, allowAllWhere = true): SQLQuery { // todo make property for allowAllWhere in table settings
     const inSubquery = !!(query as SelectSubQuery).as
@@ -95,10 +107,9 @@ export function buildSelectQuery(query: SelectQuery|SelectSubQuery, simplify = t
                     const q = typeof select === 'string' ? select : select.q
                     // [users].[email] -> email
                     const printableName = uncolumnify(name.split('.').pop()!)
-                    const lit = {l: printableName}
-                    const litQ = literalToQuery(lit)
-                    Object.assign(p, litQ.p)
-                    return litQ.q + ','  + q
+                    const lit = literalToQuery({l: printableName})
+                    Object.assign(p, lit.p)
+                    return lit.q + ','  + q
                 }
                 return typeof select === 'string' ? select : (select.q + ' AS ' + select.as)
             }

@@ -12,8 +12,9 @@ import {
 import {DatabaseSettings} from './config'
 import {literalToQuery, logSQLQuery} from '../sql/build/query'
 import {SQLLiteral, SQLQuery, zSQLQueryOrLiteral} from './sql'
+import {TableFieldUsage} from '../worker/usages'
 
-export interface TableFieldData<TU=string> {
+export interface TableFieldData<TU=TableFieldUsage|string> {
     name: string
     sqlType: string | TableFieldSqlDataType // sql
     type: string | keyof typeof TableFieldDataType // ours
@@ -49,7 +50,7 @@ export type FieldForeignKey = {
     // match?: string,
     // defer
 }
-export type ForeignKeyAction = 'SET NULL' | 'SET DEFAULT' | 'CASCADE' | 'RESTRICT' | 'NO ACTION'
+export type ForeignKeyAction = 'SET NULL' | 'SET DEFAULT' | 'CASCADE' | 'RESTRICT' | 'NO ACTION' | string
 export const zForeignKeyAction = z.enum(['SET NULL', 'SET DEFAULT', 'CASCADE', 'RESTRICT', 'NO ACTION'])
 
 export const tableFieldDataSchema = z.object({
@@ -73,6 +74,7 @@ export const tableFieldDataSchema = z.object({
     // updateTriggers: z.array(zSQLTrigger.omit({updateOf: true, event: true})).optional(),
     noUpdate: z.coerce.boolean().optional(),
     noInsert: z.coerce.boolean().optional(),
+    noSelect: z.coerce.boolean().optional(),
     lastName: z.string().optional(),
 })
 
@@ -131,7 +133,7 @@ export function validateFieldChange(field: TableFieldData|undefined, lastField: 
     if (!lastField) {
         // todo handle field creation
 
-        if(field.default){
+        if(field.default !== undefined){
             // todo try to parse and check valid sql string
         }
         if(field.check){

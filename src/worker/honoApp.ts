@@ -34,6 +34,5 @@ export function teenyHono<T extends $Env=$Env>(createDb: (c: Context<T>)=>$Datab
 
     // todo mailgun webhook
 
-
     return app
 }
