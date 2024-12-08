@@ -1,7 +1,6 @@
 import {HTTPException} from 'hono/http-exception'
 import {z} from 'zod'
 import splitSqlQuery from './wrangler/d1/splitter'
-import {D1PreparedStatement} from '@cloudflare/workers-types/2023-07-01/index'
 import {databaseSettingsSchema} from '../types/config'
 import {$Database} from './$Database'
 import {HttpRoute, HttpRouteZod} from '../types/route'
@@ -64,14 +63,14 @@ export class MigrationHelper extends $DBExtension{
             if(!qs.length) throw new Error(`Empty migration ${m.name}`)
             return [
                 ...qs, {
-                    q: `INSERT INTO ${this.tableName} (name, sql, sql_revert) VALUES (?, ?, ?)`,
-                    v:[m.name, m.sql, m.sql_revert ?? null]
+                    q: `INSERT INTO ${this.tableName} (name, sql, sql_revert, applied_at) VALUES (?, ?, ?, CURRENT_TIMESTAMP)`,
+                    v: [m.name, m.sql, m.sql_revert ?? null]
                 }
             ]
         }).filter(q=>!!q) as D1Query[]
         if(!prepared.length) return []
         const res = await this.db.transactionRaw(prepared).catch(e => {
-            throw new Error(`Failed to apply migrations: ${e}`)
+            throw e
         })
         const success = res.every(r => r.success)
         if (!success) {

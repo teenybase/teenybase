@@ -11,7 +11,7 @@
         "test": "npm run check && npm run test-check && npm run vitest && npm run vitest-worker",
         "watch": "concurrently -n \"r,ts,js\" \"npm run build-ts -- -w --preserveWatchOutput\" \"npm run ts-node -- -w --preserveWatchOutput\" \"npm run js-node -- --watch\"",
 
-        "prepack": "npm run build",
+        "prepare": "npm run build",
         "prepublishOnly": "npm run test",
         "vitest": "vitest run --exclude test/worker",
         "vitest-worker": "vitest run -r test/worker",
@@ -21,7 +21,7 @@
         "js-node": "esbuild src/node/cli.ts --bundle --outfile=dist/node/cli.js --platform=node --format=esm --packages=external --sourcemap",
         "test-check": "tsc -p test/tsconfig.json --pretty --noEmit",
         "build-runtime-esbuild-temp": "esbuild src/worker/index.ts --bundle --outfile=dist/worker/index.js --format=esm --sourcemap",
-        "run-publish": "git diff --quiet master -- && npm publish"
+        "run-publish": "git diff --quiet origin/master -- && npm publish && git tag v$(node -p \"require('./package.json').version\") && git push --tags"
     },
     "exports": {
         ".": {

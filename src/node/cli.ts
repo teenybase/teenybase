@@ -607,7 +607,7 @@ async function migrateAndDeploy(c: CliContext, clean: boolean, doMigrate: boolea
                         throw new Error(`Unknown error - Worker is already deployed but no settings and migrations found at ${envSec.apiRoute}`)
                     }
                     // first time deploy
-                    const message = `About to deploy the worker for the first time and upload all the secrets in prodVars with the name ${workerName} in cloudflare account ${cfAccountId}, continue?\nMake sure 'wrangler login' has been run before continuing. This will run 'wrangler deploy' and 'wrangler secret bulk'. `
+                    const message = `About to deploy the worker for the first time and upload all the secrets in ${prodVars} with the name ${workerName} in cloudflare account ${cfAccountId}, continue?\nMake sure 'wrangler login' has been run before continuing. This will run 'wrangler deploy' and 'wrangler secret bulk'. `
                     const res = await prompts({
                         type: 'confirm',
                         name: 'value',
@@ -711,8 +711,6 @@ async function migrateAndDeploy(c: CliContext, clean: boolean, doMigrate: boolea
                     }
                 }
 
-                c.logger.info('Removing next-config.json')
-                fs.unlinkSync(path.join(c.migrationsPath, 'next-config.json'))
             }
 
             // todo deploy first and rollback if migration fails
@@ -729,6 +727,10 @@ async function migrateAndDeploy(c: CliContext, clean: boolean, doMigrate: boolea
                         fs.writeFileSync(localConfigPath, JSON.stringify(nextConfig, null, 2))
                     }
                 }
+            }
+            if(nextConfig) {
+                c.logger.info('Removing next-config.json')
+                fs.unlinkSync(path.join(c.migrationsPath, 'next-config.json'))
             }
 
             if(!c.isLocal && !currentDeployments.length){
@@ -888,7 +890,7 @@ cli
     )
 
 
-// deploy worker
+// deploy secrets
 cli
     .command('secrets', 'deploy worker and optionally apply migrations. This is same as migrate command but with different defaults')
     .option(

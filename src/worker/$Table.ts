@@ -752,9 +752,9 @@ export class $Table<T extends $Env = any>{
 
 export const tableDeleteSchema = deleteSchema
 export type TableDeleteParams = DeleteParams
-export const tableInsertSchema = insertSchema.and(z.object({values: sqlValSchemaFile3}))
-export type TableInsertParams =z.infer<typeof tableInsertSchema>
-export const tableUpdateSchema = updateSchema.and(z.object({setValues: sqlValSchemaFile2}))
+export const tableInsertSchema = insertSchema.omit({values: true}).and(z.object({values: sqlValSchemaFile3}))
+export type TableInsertParams = z.infer<typeof tableInsertSchema>
+export const tableUpdateSchema = updateSchema.omit({setValues: true}).and(z.object({setValues: sqlValSchemaFile2}))
 export type TableUpdateParams = z.infer<typeof tableUpdateSchema>
 export const tableSelectSchema = selectSchema
 export type TableSelectParams = SelectParams
