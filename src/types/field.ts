@@ -94,6 +94,10 @@ export function validateFieldChange(field: TableFieldData|undefined, lastField: 
         const fkCheck = settings?.tables.find(t=>t.fields.find(f=>f.foreignKey && (f.foreignKey.table === tableName && f.foreignKey.column === lastField.name)))
         if(fkCheck) throw new Error(`Field ${tableName}:${lastField.name} - Field cannot be dropped - used in ${fkCheck.name}`)
 
+        // check if field is used in full text search
+        const ftCheck = settings?.tables.find(t=>t.name === tableName && t.fullTextSearch?.fields.includes(lastField.name))
+        if(ftCheck) throw new Error(`Field ${tableName}:${lastField.name} - Field cannot be dropped - used in full text search`)
+
         return {drop: lastField}
     }
 

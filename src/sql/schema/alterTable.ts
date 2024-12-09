@@ -113,9 +113,7 @@ export function alterTable([table, lastTable, changes]: AlterTable, others: Tabl
 
             logs.push(`⚠ Field Renamed - ${tableName}.${lastField.name} -> ${field.name}`)
 
-            // todo rename the column in indexes, triggers, views
         }
-
 
         // for other changes we need to create a new temp table, copy data, drop old table and rename back
         // see point 7 here - https://www.sqlite.org/lang_altertable.html

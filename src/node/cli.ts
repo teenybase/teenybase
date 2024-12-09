@@ -555,7 +555,7 @@ async function migrateAndDeploy(c: CliContext, clean: boolean, doMigrate: boolea
             fs.writeFileSync(path.join(c.migrationsPath, 'config.json'), JSON.stringify(nextConfig, null, 2))
         }
 
-        let deployed = false
+        // let deployed = false
 
         const shouldDeploy = !!nextConfig || newMigrations?.length || forceDeploy
         if(shouldDeploy) {
@@ -604,46 +604,66 @@ async function migrateAndDeploy(c: CliContext, clean: boolean, doMigrate: boolea
                         throw new Error(`Worker is not deployed. API route(${apiRouteKey}) found in secrets file(${c.isLocal ? devVars : prodVars}). Remove it and rerun to deploy a new worker.`)
                     }
                     if(currentDeployments.length){
-                        throw new Error(`Unknown error - Worker is already deployed but no settings and migrations found at ${envSec.apiRoute}`)
-                    }
-                    // first time deploy
-                    const message = `About to deploy the worker for the first time and upload all the secrets in ${prodVars} with the name ${workerName} in cloudflare account ${cfAccountId}, continue?\nMake sure 'wrangler login' has been run before continuing. This will run 'wrangler deploy' and 'wrangler secret bulk'. `
-                    const res = await prompts({
-                        type: 'confirm',
-                        name: 'value',
-                        message: message,
-                        initial: true,
-                    });
-                    if (!res.value) {
-                        throw new Error('First time deployment cancelled by user')
-                    }
-
-                    try {
-                        c.logger.info('Deploying worker for the first time')
-                        // at this point, migrations/config.json should contain the nextConfig
-                        let route = wranglerDeploy(c, true)
-                        if(!route){
-                            // check if there is custom domain in wrangler config
-                            // { pattern = "subdomain.example.com", custom_domain = true }
-                            const customDomain = c.wranglerConfig.config.config.routes.find((r: any)=>r.custom_domain)?.pattern
-                            if(customDomain) route = `https://${customDomain}`
+                        // worker is deployed but setup is not run and migrations not applied.
+                        // throw new Error(`Unknown error - Worker is already deployed but no settings and migrations found at ${envSec.apiRoute}`)
+                        const message = `Worker is already deployed but no settings and migrations found at ${envSec.apiRoute}`
+                        const res = await prompts({
+                            type: 'confirm',
+                            name: 'value',
+                            message: message + '\nDo you want to continue and re-deploy the worker and apply migrations from scratch?',
+                            initial: false,
+                        });
+                        if (!res.value) {
+                            throw new Error(`Unknown error - Worker is already deployed but no settings and migrations found at ${envSec.apiRoute}`)
                         }
-                        if(!route){
-                            c.logger.error('Unknown error after deploying worker. Deployment route not found.')
-                        }else deployRoute = route
-                    }catch (e) {
-                        // c.logger.error('Unknown error when deploying worker, secrets during first deployment.')
-                        throw e
-                    }
-                    // secrets
-                    try {
-                        deploySecrets(c, envSec.secrets)
-                    }catch (e) {
-                        c.logger.error(`Unknown error when deploying worker, secrets during first deployment. Cannot continue. First, run "teeny secrets-deploy" then set the ${apiRouteKey} in ${prodVars} and rerun the command to migrate.`)
-                        throw e
+                    }else {
+                        // first time deploy
+                        const message = `About to deploy the worker for the first time and upload all the secrets in ${prodVars} with the name ${workerName} in cloudflare account ${cfAccountId}, continue?\nMake sure 'wrangler login' has been run before continuing. This will run 'wrangler deploy' and 'wrangler secret bulk'. `
+                        const res = await prompts({
+                            type: 'confirm',
+                            name: 'value',
+                            message: message,
+                            initial: true,
+                        });
+                        if (!res.value) {
+                            throw new Error('First time deployment cancelled by user')
+                        }
+
+                        try {
+                            c.logger.info('Deploying worker for the first time')
+                            // at this point, migrations/config.json should contain the nextConfig
+                            const configNoTables = {
+                                ...nextConfig, tables: []
+                            } as DatabaseSettings
+                            // write without tables first
+                            fs.writeFileSync(path.join(c.migrationsPath, 'config.json'), JSON.stringify(configNoTables, null, 2))
+                            let route = wranglerDeploy(c, true)
+                            if (!route) {
+                                // check if there is custom domain in wrangler config
+                                // { pattern = "subdomain.example.com", custom_domain = true }
+                                const customDomain = c.wranglerConfig.config.config.routes.find((r: any) => r.custom_domain)?.pattern
+                                if (customDomain) route = `https://${customDomain}`
+                            }
+                            if (!route) {
+                                c.logger.error('Unknown error after deploying worker. Deployment route not found.')
+                            } else deployRoute = route
+                        } catch (e) {
+                            // c.logger.error('Unknown error when deploying worker, secrets during first deployment.')
+                            throw e
+                        } finally {
+                            // revert config to nextConfig
+                            fs.writeFileSync(path.join(c.migrationsPath, 'config.json'), JSON.stringify(nextConfig, null, 2))
+                        }
+                        // secrets
+                        try {
+                            deploySecrets(c, envSec.secrets)
+                        } catch (e) {
+                            c.logger.error(`Unknown error when deploying worker, secrets during first deployment. Cannot continue. First, run "teeny secrets-deploy" then set the ${apiRouteKey} in ${prodVars} and rerun the command to migrate.`)
+                            throw e
+                        }
                     }
 
-                    deployed = true
+                    // deployed = true
                 } else {
                     // local deploy, nothing to do with wrangler
                     if(nextConfig) {
@@ -714,7 +734,7 @@ async function migrateAndDeploy(c: CliContext, clean: boolean, doMigrate: boolea
             }
 
             // todo deploy first and rollback if migration fails
-            if (!deployed/* && (nextConfig || newMigrations?.length || forceDeploy)*/) {
+            if (true /*!deployed*//* && (nextConfig || newMigrations?.length || forceDeploy)*/) {
                 if (!c.isLocal) {
                     wranglerDeploy(c)
                 } else {
