@@ -1,5 +1,7 @@
+import {$Database} from './$Database'
+
 export class InternalKV {
-    constructor(private db: D1Database, readonly tableName = '_ddb_internal_kv') {
+    constructor(private db: $Database<any>, readonly tableName = '_ddb_internal_kv') {
     }
 
     async setup(version: number){
@@ -9,21 +11,22 @@ export class InternalKV {
                 key TEXT PRIMARY KEY,
                 value TEXT NOT NULL
             )`.split('\n').map(l => l.trim()).join(' ')
-            const res = await this.db.exec(sql)
+            await this.db.rawSQL({q: sql, v: []})
         }
     }
 
     async get<T = string>(key: string, field?: string) {
         const rnd = '_' + Math.random().toString(36).substring(7)
         const q = `SELECT (${field || 'value'}) as ${rnd} FROM ${this.tableName} WHERE key = ?`
-        const res = await this.db.prepare(q).bind(key).first()
-        return res ? res[rnd] as T : null
+        const res = await this.db.rawSQL<any>({q, v: [key]})
+        return res?.[0] ? res[0][rnd] as T : null
     }
 
     async get2<T>(key: string, ...fields: string[]) {
         const q = `SELECT value, ${fields.join(', ')} FROM ${this.tableName} WHERE key = ?`
-        const res = await this.db.prepare(q).bind(key).first()
-        return res ? res as { value: string } & T : null
+        // const res = await this.db.prepare(q).bind(key).first()
+        const res = await this.db.rawSQL<{ value: string } & T>({q, v: [key]})
+        return res?.[0] || null
     }
 
     async set(key: string, value: string | { sql: string }) {
@@ -32,7 +35,7 @@ export class InternalKV {
         // console.log(q)
         const b = [key]
         if(!s) b.push(value)
-        await this.db.prepare(q).bind(...b).run()
+        await this.db.rawSQL({q, v: b})
     }
     async setSql(key: string, value: string) {
         return await this.set(key, {sql: value})

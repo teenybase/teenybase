@@ -708,27 +708,39 @@ async function migrateAndDeploy(c: CliContext, clean: boolean, doMigrate: boolea
                 c.logger.info(`Syncing ${migrations.length} migrations, with ${newMigrations?.length || 0} new migrations`)
                 // logger.info(migrations.map((m) => ` - ${m.name}`).join('\n'))
 
-                // todo ideally apply migrations should be done directly by wrangler/cloudflare api and not through this route.
-                //  note - we are not using wrangler because it has a different schema for migrations table without the sql code.
-                const json = await fetchWorker(c, '/api/v1/migrations', {
-                    method: 'POST',
-                    headers: {'Content-Type': 'application/json'},
-                    body: JSON.stringify({migrations, settings: nextConfig || lastConfig}),
-                }, false, deployRoute)
-                if (!json.applied?.length) {
-                    if (newMigrations?.length) {
-                        throw new Error(`Unable to apply ${newMigrations.length} new migrations`)
+                try {
+                    // todo ideally apply migrations should be done directly by wrangler/cloudflare api and not through this route.
+                    //  note - we are not using wrangler because it has a different schema for migrations table without the sql code.
+                    const json = await fetchWorker(c, '/api/v1/migrations', {
+                        method: 'POST',
+                        headers: {'Content-Type': 'application/json'},
+                        body: JSON.stringify({migrations, settings: nextConfig || lastConfig}),
+                    }, false, deployRoute)
+                    if (!json.applied?.length) {
+                        if (newMigrations?.length) {
+                            throw new Error(`Unable to apply ${newMigrations.length} new migrations`)
+                        }
+                        c.logger.warn('No migrations applied')
+                    } else {
+                        c.logger.info(`Applied ${json.applied.length} migrations successfully`)
+                        c.logger.info(json.applied.map((m: any) => ` ✅ ${m}`).join('\n'))
+                        if (newMigrations?.length !== json.applied.length) {
+                            // this should never happen actually since they are applied as batch
+                            const unapplied = newMigrations?.filter(m => !json.applied.includes(m.name)) ?? []
+                            c.logger.error(unapplied.map((m) => ` ❌ ${m.name}`).join('\n'))
+                            throw new Error(`Unknown error - Only ${json.applied.length} of ${newMigrations?.length} new migrations applied`)
+                        }
                     }
-                    c.logger.warn('No migrations applied')
-                } else {
-                    c.logger.info(`Applied ${json.applied.length} migrations successfully`)
-                    c.logger.info(json.applied.map((m: any) => ` ✅ ${m}`).join('\n'))
-                    if (newMigrations?.length !== json.applied.length) {
-                        // this should never happen actually since they are applied as batch
-                        const unapplied = newMigrations?.filter(m => !json.applied.includes(m.name)) ?? []
-                        c.logger.error(unapplied.map((m) => ` ❌ ${m.name}`).join('\n'))
-                        throw new Error(`Unknown error - Only ${json.applied.length} of ${newMigrations?.length} new migrations applied`)
-                    }
+                }catch (e: any){
+                    // const message = `Failed to apply migrations: ${e?.message??e}\n\nDo you want to deploy the worker anyway()?`
+                    // const res = await prompts({
+                    //     type: 'confirm',
+                    //     name: 'value',
+                    //     message: message,
+                    //     initial: false,
+                    // });
+                    // if (!res.value)
+                    throw e
                 }
 
             }

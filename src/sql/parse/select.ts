@@ -5,7 +5,7 @@ import {
     parseColumnListOrder,
 } from './jsep'
 import {queryToSqlQuery} from './parse'
-import {sqlColListSchema2, sqlColListSchemaOrder2, sqlExprSchema} from '../../types/sql'
+import {sqlColListSchema2, sqlColListSchemaOrder2, sqlExprSchema, SQLQuery} from '../../types/sql'
 import {SelectQuery} from '../build/select'
 
 export const selectSchema = z.object({
@@ -39,5 +39,11 @@ export async function parseSelectQuery(q: SelectParams, jc: JsepContext){
         // selectOption: selectData
         // join
     }
+    let readOnly = !select.selects || select.selects?.every(s=>typeof s==='string' || s._readOnly)
+    readOnly = readOnly && !!(Array.isArray(select.where) ? select.where.every(s=>!s.q || s._readOnly) : (!select.where?.q || select.where?._readOnly))
+    // todo having
+
+    if(readOnly) select._readOnly = true
+
     return select
 }

@@ -5,7 +5,12 @@ import {$Env} from './env'
 import {$Database} from './$Database'
 import {logger} from 'hono/logger'
 
-export function teenyHono<T extends $Env=$Env>(createDb: (c: Context<T>)=>$Database<T>, app?: Hono<T>, options: {logger: boolean, cors: boolean} = {logger: true, cors: true}){
+export function teenyHono<T extends $Env=$Env>(
+    createDb: (c: Context<T>)=>Promise<$Database<T>>,
+    app?: Hono<T>,
+    options: {logger: boolean, cors: boolean} = {logger: true, cors: true},
+    beforeRoute?: (c: Context<T>)=>Promise<Response|undefined>
+){
     app = app ?? new Hono<T>()
 
     app.onError(honoErrorHandler)
@@ -25,10 +30,14 @@ export function teenyHono<T extends $Env=$Env>(createDb: (c: Context<T>)=>$Datab
 
     // $db init
     app.use('*', async (c, next) => {
-        c.set('$db', createDb(c))
+        c.set('$db', await createDb(c))
         return next()
     })
-    app.use('/api/*', async (c: Context<$Env>, next) => {
+    app.use('/api/*', async (c, next) => {
+        if(beforeRoute) {
+            const res = await beforeRoute(c)
+            if(res) return res
+        }
         return (await c.get('$db').route(c.req.path)) ?? await next()
     })
 

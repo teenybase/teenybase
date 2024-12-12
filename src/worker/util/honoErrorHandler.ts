@@ -12,15 +12,18 @@ export function honoErrorHandler<T extends $Env>(err: Error | HTTPResponseError,
     const isZodError = err instanceof ZodError
     const status = isHTTP ? err.status || 500 : (isD1Error || isZodError) ? 400 : 500
     console.error(`Request Error: ${status}`)
-    console.error(err)
+    console.error(err, (err as any).status)
+    if(isHTTP && err.res) {
+        return err.res
+    }
     return c.json({
         code: status,
         message: isZodError ? 'Validation Error' : ((isHTTP || !c.env || c.env.RESPOND_WITH_ERRORS || isD1Error) ? (err.message) : 'Internal server error'),
         data: c.env.RESPOND_WITH_ERRORS ? {
-            ...(isZodError ? err.issues : null),
+            ...(isZodError ? err.format() : null),
             ...(err as ProcessError).data as any
         } : undefined,
-        // todo zoderror.format()
+        issues: isZodError ? (err as ZodError).issues : undefined,
         queries: c.env.RESPOND_WITH_QUERY_LOG ? $db?.queryLog : undefined,
     }, {
         status,

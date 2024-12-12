@@ -1,4 +1,4 @@
-import {$Table} from './$Table'
+import {$Table, TableSelectParams} from './$Table'
 import {Context} from 'hono'
 import {HTTPException} from 'hono/http-exception'
 import {decode} from '@tsndr/cloudflare-worker-jwt'
@@ -11,7 +11,7 @@ import {InternalKV} from './internalKV'
 import {$Env} from './env'
 import {JWTPayloadOp} from '../types/jwt'
 import {TableAuthExtensionData} from '../types/tableExtensions'
-import {createJsepContext, honoToJsep} from '../sql/parse/jsep'
+import {columnify, createJsepContext, honoToJsep, ident} from '../sql/parse/jsep'
 import {logSQLQuery} from '../sql/build/query'
 import {D1Query, sqlQueryToD1Query} from '../sql/build/d1'
 import {z} from 'zod'
@@ -28,6 +28,10 @@ import {parseRequestBody} from './util/parseRequestBody'
 import {HttpRoute, RawRouterHandlerFunction} from '../types/route'
 import {$DBExtension} from './$DBExtension'
 import {SQLQuery} from '../types/sql'
+import {buildDeleteQuery, DeleteQuery} from '../sql/build/delete'
+import {buildInsertQuery, InsertQuery} from '../sql/build/insert'
+import {buildUpdateQuery, UpdateQuery} from '../sql/build/update'
+import {buildSelectQuery, SelectQuery} from '../sql/build/select'
 
 export class $Database<T extends $Env = $Env>{
     protected readonly tables: Record<string, $Table<T>> = {}
@@ -35,7 +39,7 @@ export class $Database<T extends $Env = $Env>{
     auth: AuthContext = {
         jwt: {}, verified: false, admin: false,
         uid: null, role: null, email: null,
-        meta: {}, cid: null
+        meta: {}, cid: null, superadmin: false,
     }
     readonly queryLog: string[] = []
 
@@ -44,8 +48,6 @@ export class $Database<T extends $Env = $Env>{
     kv: InternalKV
     extensions: $DBExtension[] = []
 
-    private readonly database: D1Database
-    private readonly storage?: R2Bucket
     public readonly c: Context<T>
     secretResolver
 
@@ -83,12 +85,14 @@ export class $Database<T extends $Env = $Env>{
 
         const jwtSecret = this.secretResolver.resolve(this.settings.jwtSecret)
         if (!jwtSecret?.length) throw new HTTPException(500, {message: 'Invalid configuration - jwt secret is required'})
+        this.adminJwtSecret = this.secretResolver.resolve(this.c.env.ADMIN_JWT_SECRET ?? '')
         this.jwt = new JWTTokenHelper(jwtSecret, this.settings.jwtIssuer, this.settings.jwtAlgorithm)
-        this.kv = new InternalKV(this.database, this.settings._kvTableName)
+        this.kv = new InternalKV(this, this.settings._kvTableName)
     }
 
     // setup db etc
     async setup() {
+        if(!this.auth.superadmin) throw new HTTPException(this.auth.uid ? 403 : 401, {message: 'Unauthorized'})
         const version = 0
         if(version >= 0) {
             //
@@ -108,9 +112,17 @@ export class $Database<T extends $Env = $Env>{
             return
         }
         if(!tok) {
-            const auth = this.c.req.header('Authorization')
-            const isBearer = auth && auth.startsWith('Bearer ')
-            tok = auth ? isBearer ? auth.slice(7) : auth : ''
+            for (const extension of this.extensions) {
+                if(extension.getAuthToken) tok = await extension.getAuthToken()
+                if(tok) break
+            }
+
+            // bearer
+            if(!tok) {
+                const auth = this.c.req.header('Authorization')
+                const isBearer = auth && auth.startsWith('Bearer ')
+                tok = auth ? isBearer ? auth.slice(7) : auth : ''
+            }
 
             if (!tok) return
             // if(!isBearer) {
@@ -119,27 +131,17 @@ export class $Database<T extends $Env = $Env>{
             // }
         }
 
-
-        let jwtSecret = this.secretResolver.resolve(this.c.env.ADMIN_JWT_SECRET ?? '')
+        let jwtSecret = this.adminJwtSecret
 
         // todo hack, remove
         if (this.c.env.ADMIN_SERVICE_TOKEN && tok === this.c.env.ADMIN_SERVICE_TOKEN) {
-            if (!jwtSecret) throw new HTTPException(500, {message: 'Invalid configuration - ADMIN_JWT_SECRET not set'})
-            const tokenDuration = 3 * 60 * 60 // 3 hours
-            const data = {
-                sub: 'admin@example.com',
-                id: '00000000000000000',
-                meta: {},
-                aud: "authenticated",
-                verified: true,
-                admin: true,
-            } as any
-            tok = await this.jwt.createJwtToken(data, jwtSecret, tokenDuration)
+            tok = await this.generateAdminToken("superadmin", tok)
         }
+        // console.log('init', tok)
 
         let payload = null as JWTPayloadOp | null
         try {
-            payload = tok ? decode(tok).payload as JWTPayloadOp | null : null
+            payload = typeof tok === 'string' ? decode(tok).payload as JWTPayloadOp | null : null
         } catch (e) {
         }
         if (!payload) return
@@ -153,10 +155,12 @@ export class $Database<T extends $Env = $Env>{
 
         if (!jwtSecret?.length) throw new HTTPException(401, {message: 'Invalid jwt'})
 
+        // console.log('init', payload, jwtSecret)
         payload = await this.jwt.decodeAuth(tok!, jwtSecret, false, undefined, payload).catch(e => {
             // console.error(e)
             return null
         })
+        // console.log('init', payload)
 
         if (!payload) return
         const aud = Array.isArray(payload.aud) ? (payload.aud.length === 1 ? payload.aud[0] : payload.aud) : payload.aud
@@ -166,16 +170,41 @@ export class $Database<T extends $Env = $Env>{
             email: payload.verified ? payload.sub : '',
             jwt: payload,
             role: aud ?? null,
-            verified: Boolean(payload.verified) ?? false,
+            verified: Boolean(payload.verified ?? false),
             meta: payload.meta ?? {},
-            admin: Boolean(payload.admin) ?? false,
+            admin: Boolean(payload.admin ?? false),
+            superadmin: false,
         } satisfies AuthContext
 
         // todo
         if (this.auth.cid && this.auth.admin) {
-            throw new HTTPException(403, {message: 'Forbidden'})
+            throw new HTTPException(401, {message: 'Unauthorized'})
+        }
+        if(this.auth.admin){
+            const role = Array.isArray(this.auth.role) ? this.auth.role : [this.auth.role]
+            const viewer = role.includes('viewer')
+            const editor = role.includes('editor') || role.includes('admin')
+            const superadmin = role.includes('superadmin')
+            if(!editor && !superadmin) this.readOnlyMode = true
+            if(!viewer && !editor && !superadmin) this.dryRunMode = true
+            if(superadmin) this.auth.superadmin = true
         }
         this.c.set('auth', this.auth)
+    }
+
+    async generateAdminToken(role: string, tok?: string) {
+        if(tok !== this.c.env.ADMIN_SERVICE_TOKEN && !this.auth.superadmin) throw new HTTPException(401, {message: 'Unauthorized'})
+        if (!this.adminJwtSecret) throw new HTTPException(500, {message: 'Invalid configuration - ADMIN_JWT_SECRET not set'})
+        const tokenDuration = 3 * 60 * 60 // 3 hours
+        const data = {
+            sub: 'admin@' + this.settings.appUrl.trim().replace(/^https?:\/\//, ''),
+            id: 'superuser',
+            meta: {},
+            aud: role,
+            verified: true,
+            admin: true,
+        } as any
+        return await this.jwt.createJwtToken(data, this.adminJwtSecret, tokenDuration)
     }
 
     table(name: string) {
@@ -194,8 +223,218 @@ export class $Database<T extends $Env = $Env>{
         return keys.map(k=>this.table(k))
     }
 
+    readonly _apiBase = '/api'
+    readonly apiBase = this._apiBase + '/v1'
+    readonly apiTableSuffix = '/table'
+    readonly apiTableBase = this.apiBase + this.apiTableSuffix
+    async route(path: string){
+        if(!path.startsWith(this._apiBase+'/')) return undefined
+
+        await this.initAuth() // load from bearer auth header
+
+        if(path.startsWith(this.apiTableBase+'/')) {
+            const p = path.replace(this.apiTableBase, '').split('/')
+            const table = this.table(p[1]) // starts with /
+            return table.route('/'+p.slice(2).join('/'))
+        }
+        if(path.startsWith(this.apiBase)) return await this._route(path.replace(this.apiBase, ''))
+        return undefined
+    }
+
+    rawRouteHandler(route: HttpRoute): RawRouterHandlerFunction{
+        return async(params)=>{
+            if(typeof route.handler === 'function') {
+                const data = await parseRequestBody(this.c.req)
+                const res = await route.handler(data, params)
+                if (res) return this.c.json(res)
+                throw new ProcessError('Not found', 404)
+            }else {
+                return route.handler.raw(params)
+            }
+        }
+    }
+
+    // crud
+
+    async rawDelete(table: $Table, query: OptionalOmit<DeleteQuery, 'table'>, filesToDelete?: string[]){
+        if(this.readOnlyMode) throw new ProcessError('DELETE not allowed in read only mode')
+
+        if((query as DeleteQuery).table && (query as DeleteQuery).table !== table.jc.tableName) throw new ProcessError('Invalid table')
+
+        const sql = buildDeleteQuery({...query, table: table.jc.tableName}, table.jc.autoSimplifyExpr)
+
+        // todo make beforeDelete
+        const res = await this.run(sql, 'Failed to run delete query', table)
+
+        // todo make onDelete
+        // ignore error on fail
+        if(filesToDelete && table.autoDeleteR2Files){
+            await this._deleteFiles(filesToDelete, table).catch(()=>{})
+        }
+        return res
+    }
+
+    async rawInsert(table: $Table, query: OptionalOmit<InsertQuery, 'table'>, filesToUpload?: Record<string, File>, filesToRef?: string[]){
+        if(this.readOnlyMode) throw new ProcessError('INSERT not allowed in read only mode')
+
+        if((query as InsertQuery).table && (query as InsertQuery).table !== table.jc.tableName) throw new ProcessError('Invalid table')
+
+        const sql = buildInsertQuery({...query, table: table.jc.tableName}, table.jc.autoSimplifyExpr)
+
+        // todo - make beforeInsert
+        // will throw error on fail
+        filesToRef && await this._refCheckFiles(filesToRef, table)
+        filesToUpload && await this._uploadFiles(filesToUpload, table)
+
+        let res: any[] | null = null
+        let err = null as any
+        try {
+            res = await this.run(sql, 'Failed to run insert query', table)
+        }catch (e){
+            console.error(e)
+            err = e
+            res = null
+        }
+
+        // todo - make onInsertFail
+        // if error, delete uploaded files
+        if(res === null){
+            // TODO: its possible that some rows are not inserted because of where/rule in sql. those files need to be deleted. same in update and delete. we need to add a force returning clause with id? or can we use some other metadata
+            if(filesToUpload) await this._deleteFiles(Object.keys(filesToUpload), table)
+            throw (err ?? new HTTPException(500, { message: 'Failed to insert' }))
+        }
+
+        return res
+    }
+
+    async rawUpdate(table: $Table, query: OptionalOmit<UpdateQuery, 'table'>, filesToUpload?: Record<string, File>, filesToRef?: string[], filesToDelete?: string[]){
+        if(this.readOnlyMode) throw new ProcessError('UPDATE not allowed in read only mode')
+
+        if((query as UpdateQuery).table && (query as UpdateQuery).table !== table.jc.tableName) throw new ProcessError('Invalid table')
+
+        const sql = buildUpdateQuery({...query, table: table.jc.tableName}, table.jc.autoSimplifyExpr)
+
+        // todo - make beforeUpdate
+
+        // will throw error on fail
+        filesToRef && await this._refCheckFiles(filesToRef, table)
+        filesToUpload && await this._uploadFiles(filesToUpload, table)
+
+        let res: any
+        let err = null as any
+        try {
+            res = await this.run(sql, 'Failed to run update query', table)
+        }catch (e){
+            console.error(e)
+            err = e
+            res = null
+        }
+
+        // todo - make onUpdateFail
+        // if error, delete uploaded files
+        if(res === null){
+            if(filesToUpload) await this._deleteFiles(Object.keys(filesToUpload), table)
+            throw (err ?? new HTTPException(500, { message: 'Failed to update' }))
+        }
+
+        // todo - make onUpdate
+        // ignore error on fail
+        if(filesToDelete && table.autoDeleteR2Files){
+            await this._deleteFiles(filesToDelete, table).catch(()=>{})
+        }
+
+        return res
+    }
+
+    async rawSelect<T=any>(table: $Table, query: OptionalOmit<SelectQuery, 'from'>): Promise<T[]>
+    async rawSelect<T=any>(table: $Table, query: OptionalOmit<SelectQuery, 'from'>, countTotal: boolean): Promise<{ items: T[], total: number }>
+    async rawSelect<T=any>(table: $Table, query: OptionalOmit<SelectQuery, 'from'>, countTotal?: boolean){
+        if((query as SelectQuery).from && (query as SelectQuery).from !== table.jc.tableName) throw new ProcessError('Invalid from table')
+        const sql = buildSelectQuery({...query, from: table.jc.tableName}, table.jc.autoSimplifyExpr)
+        // console.log(query, sql)
+
+        if(!countTotal) {
+            const res = await this.run(sql, 'Failed to run select query', table)
+            // console.log(res)
+            return countTotal === undefined ? res : {items: res, total: -1}
+        }
+
+        const countField = table.mapping.uid ? ident(table.mapping.uid, table.jc) : '*'
+        // const countField = table.mapping.uid ? `DISTINCT ${table.data.name}.${columnify(table.mapping.uid)}` : '*'
+
+        const countQuery = buildSelectQuery({
+            ...query,
+            from: table.jc.tableName,
+            selects: [`count(${countField}) as total`],
+            limit: undefined,
+            offset: undefined,
+            orderBy: undefined,
+            groupBy: undefined,
+            distinct: false,
+        }, table.jc.autoSimplifyExpr)
+
+        const res = await this.transaction([sql, countQuery], 'Failed to run select query', table)
+
+        return {items: res[0].results, total: (res[1].results[0] as any)?.total ?? -1}
+    }
+
+    async rawSQL<T>(d1Expr: D1Query, onErr?: (er: any) => any) {
+        return this._rawSQL<T>(d1Expr, onErr, false)
+    }
+
+    async rawSQLTransaction<T>(d1Expr: D1Query[], onErr?: (er: any) => any) {
+        return this._rawSQLTransaction<T>(d1Expr, onErr, false)
+    }
+
+    async headFileObject(key: string){
+        if(this.dryRunMode || this.c.env.RESPOND_WITH_QUERY_LOG)
+            this.queryLog.push('STORAGE: headFileObject: ' + key)
+        if(this.dryRunMode) throw new Error('headFile not supported in dry run mode')
+        return this.bucket.head(key)
+    }
+
+    // todo need to keep types in sync with cloudflare, enforce it someway in ts so it errors when cloudflare changes something
+    getFileObject(key: string, options?: R2GetOptions): Promise<R2ObjectBody | null>;
+    async getFileObject(key: string, options?: R2GetOptions & {
+        onlyIf: R2Conditional | Headers;
+    }): Promise<R2ObjectBody | R2Object | null>{
+        if(this.dryRunMode || this.c.env.RESPOND_WITH_QUERY_LOG)
+            this.queryLog.push('STORAGE: getFileObject: ' + key)
+        if(this.dryRunMode) throw new Error('getFile not supported in dry run mode')
+        return this.bucket.get(key, options)
+    }
+
+    async putFileObject(
+        key: string,
+        value: ReadableStream | ArrayBuffer | ArrayBufferView | string | null | Blob,
+        options?: R2PutOptions & {
+            onlyIf?: R2Conditional | Headers;
+        },
+    ): Promise<R2Object | null | {dummy: true}>{
+        if(this.dryRunMode || this.c.env.RESPOND_WITH_QUERY_LOG)
+            this.queryLog.push('STORAGE: putFileObject: ' + key) // todo add data about file?
+        if(this.dryRunMode) return {dummy: true}
+        if(this.readOnlyMode) throw new Error('putFile not allowed in read only mode')
+        return this.bucket.put(key, value, options)
+    }
+
+    async deleteFileObject(keys: string | string[]){
+        if(this.dryRunMode || this.c.env.RESPOND_WITH_QUERY_LOG)
+            this.queryLog.push('STORAGE: deleteFileObject: ' + keys)
+        if(this.dryRunMode) return
+        if(this.readOnlyMode) throw new Error('deleteFile not allowed in read only mode')
+        return this.bucket.delete(keys)
+    }
+
+
     dryRunMode = false
-    async run<T>(q: SQLQuery, err: string) {
+    readOnlyMode = false
+
+    private readonly database: D1Database
+    private readonly storage?: R2Bucket
+    private adminJwtSecret: string
+
+    private async run<T>(q: SQLQuery, err: string, table?: $Table) {
         if (this.dryRunMode || this.c.env.RESPOND_WITH_QUERY_LOG) {
             this.queryLog.push(logSQLQuery(q))
         }
@@ -206,14 +445,32 @@ export class $Database<T extends $Env = $Env>{
             // console.error(er, err, d1Expr)
             const msg = er.message ? er.message.replace(/D1_ERROR: /g, '') : 'Unknown error'
             // throw new HTTPException(500, { message: err + ' - ' + msg, asd });
-            return new D1Error(err || 'Unknown SQL Error', msg, er, logSQLQuery(q))
+            const e = new D1Error(err || 'Unknown SQL Error', msg, er, logSQLQuery(q))
+            return table?.parseD1Error(e) ?? e
         }
         if(this.dryRunMode) return [] // todo add dummy data?
-        return await this.runRaw<T>(d1Expr, onErr)
+        return await this._rawSQL<T>(d1Expr, onErr, q._readOnly)
+    }
+    private async transaction(q: SQLQuery[], err: string, table?: $Table) {
+        if (this.dryRunMode || this.c.env.RESPOND_WITH_QUERY_LOG) {
+            this.queryLog.push(q.map(q1 => logSQLQuery(q1)).join(';\n'))
+        }
+        const d1Expr = q.map(sqlQueryToD1Query)
+        // return await runD1Transaction(this.d1, d1Expr, err)
+        const onErr = (er: any)=>{
+            // console.error(er, err, d1Expr)
+            const msg = er.message ? er.message.replace(/D1_ERROR: /g, '') : 'Unknown error'
+            // throw new HTTPException(500, { message: err??'Error running transaction' });
+            const e = new D1Error(err || 'Unknown SQL Error(t)', msg, er, q.map(q1 => logSQLQuery(q1)).join(';\n'))
+            return table?.parseD1Error(e) ?? e
+        }
+        if(this.dryRunMode) return [] // todo add dummy data?
+        return await this._rawSQLTransaction<T>(d1Expr, onErr, q.every(q1=>q1._readOnly))
     }
 
-    async runRaw<T>(d1Expr: D1Query, onErr?: (er: any) => any) {
-        if (this.dryRunMode) throw new Error('Running raw SQL is not allowed in dry run.')
+    private async _rawSQL<T>(d1Expr: D1Query, onErr?: (er: any) => any, readOnly = false) {
+        if (this.readOnlyMode && !readOnly) throw new ProcessError('Running raw SQL is not allowed in read only mode.')
+        if (this.dryRunMode) throw new ProcessError('Running raw SQL is not allowed in dry run.')
         if(!onErr) onErr = (er: any)=>er
 
         const prepared = this.database.prepare(d1Expr.q).bind(...d1Expr.v)
@@ -226,25 +483,9 @@ export class $Database<T extends $Env = $Env>{
         // console.log('Query result:', res)
         else return res.results
     }
-
-    async transaction(q: SQLQuery[], err: string) {
-        if (this.dryRunMode || this.c.env.RESPOND_WITH_QUERY_LOG) {
-            this.queryLog.push(q.map(q1 => logSQLQuery(q1)).join(';\n'))
-        }
-        const d1Expr = q.map(sqlQueryToD1Query)
-        // return await runD1Transaction(this.d1, d1Expr, err)
-        const onErr = (er: any)=>{
-            // console.error(er, err, d1Expr)
-            const msg = er.message ? er.message.replace(/D1_ERROR: /g, '') : 'Unknown error'
-            // throw new HTTPException(500, { message: err??'Error running transaction' });
-            return new D1Error(err || 'Unknown SQL Error(t)', msg, er, q.map(q1 => logSQLQuery(q1)).join(';\n'))
-        }
-        if(this.dryRunMode) return [] // todo add dummy data?
-        return await this.transactionRaw<T>(d1Expr, onErr)
-    }
-
-    async transactionRaw<T>(d1Expr: D1Query[], onErr?: (er: any) => any) {
-        if (this.dryRunMode) throw new Error('Running raw SQL is not allowed in dry run.')
+    private async _rawSQLTransaction<T>(d1Expr: D1Query[], onErr?: (er: any) => any, readOnly = false) {
+        if (this.readOnlyMode && !readOnly) throw new ProcessError('Running raw SQL is not allowed in read only mode.')
+        if (this.dryRunMode) throw new ProcessError('Running raw SQL is not allowed in dry run.')
         if(!onErr) onErr = (er: any)=>er
 
         const prepared = d1Expr.map(query => query.q ? this.database.prepare(query.q).bind(...query.v) : null)
@@ -279,86 +520,114 @@ export class $Database<T extends $Env = $Env>{
         return this.storage
     }
 
-    async headFileObject(key: string){
-        if(this.dryRunMode || this.c.env.RESPOND_WITH_QUERY_LOG)
-            this.queryLog.push('STORAGE: headFileObject: ' + key)
-        if(this.dryRunMode) throw new Error('headFile not supported in dry run mode')
-        return this.bucket.head(key)
+    // table specific file handling
+
+    /**
+     * Checks that all files referenced in a query exist
+     * @param files
+     * @param table
+     * @protected
+     */
+    protected async _refCheckFiles(files: string[], table: $Table){
+        if(!files.length) return
+
+        // todo add support for dry run mode, it would fail if allowMultipleFileRef is true
+        if(!table.allowMultipleFileRef) throw new ProcessError('Multiple file references shouldn\'t be allowed')
+        // console.log('Checking files', files)
+
+        const promises = files.map(async (key)=>{
+            const res = await this.headFileObject(table.fileKey(key)).catch(e=>{
+                console.error('Failed to check file', e)
+                return undefined
+            })
+            if(res === undefined) throw new ProcessError('Failed to check file ' + key)
+            return res
+        })
+        const res = await Promise.allSettled(promises)
+        const hasError = res.some(r=>r.status === 'rejected')
+        const successful = res.filter(r=>r.status === 'fulfilled').map((r)=>r.value)
+        if(!successful.length || hasError) {
+            throw new ProcessError('Failed to check files')
+        }
+        if(successful.includes(null)){
+            throw new ProcessError('File not found ' + files[successful.indexOf(null)])
+        }
     }
 
-    // todo need to keep types in sync with cloudflare, enforce it someway in ts so it errors when cloudflare changes something
-    getFileObject(key: string, options?: R2GetOptions): Promise<R2ObjectBody | null>;
-    async getFileObject(key: string, options?: R2GetOptions & {
-        onlyIf: R2Conditional | Headers;
-    }): Promise<R2ObjectBody | R2Object | null>{
-        if(this.dryRunMode || this.c.env.RESPOND_WITH_QUERY_LOG)
-            this.queryLog.push('STORAGE: getFileObject: ' + key)
-        if(this.dryRunMode) throw new Error('getFile not supported in dry run mode')
-        return this.bucket.get(key, options)
+    protected async _uploadFiles(files: Record<string, File>, table: $Table){
+        const keys = Object.keys(files)
+        if(!keys.length) return
+        console.log('Uploading files', keys, files)
+        const promises = keys.map(async (key)=>{
+            const file = files[key]
+            const res = await this.putFileObject(table.fileKey(key), file, {
+                httpMetadata: {
+                    contentType: file.type || 'application/octet-stream',
+                    cacheControl: 'public, max-age=31536000', // 1 year
+                }
+            }).catch(e=>{
+                console.error('Failed to upload file', e)
+                return null
+            })
+            if(!res) throw new ProcessError('Failed to upload file ' + key + ' ' + file.name )
+            return res
+        })
+        const res = await Promise.allSettled(promises)
+        const hasError = res.some(r=>r.status === 'rejected')
+        const successful: R2Object[] = res.filter(r=>r.status === 'fulfilled').map((r: any)=>r.value)
+        if(hasError) {
+            const errors = res.filter(r=>r.status === 'rejected').map((r: any)=>r.reason)
+            console.error(errors)
+            console.log('Deleting uploaded files', successful)
+            await this.deleteFileObject(successful.map(r=>r.key)).catch(e=>{
+                console.error('Unable to delete some files after upload error', e)
+                // todo mark for delete somehow in logs
+            })
+            throw new ProcessError('Failed to upload files' )
+        }
     }
 
-    async putFileObject(
-        key: string,
-        value: ReadableStream | ArrayBuffer | ArrayBufferView | string | null | Blob,
-        options?: R2PutOptions & {
-            onlyIf?: R2Conditional | Headers;
-        },
-    ): Promise<R2Object | null | {dummy: true}>{
-        if(this.dryRunMode || this.c.env.RESPOND_WITH_QUERY_LOG)
-            this.queryLog.push('STORAGE: putFileObject: ' + key) // todo add data about file?
-        if(this.dryRunMode) return {dummy: true}
-        return this.bucket.put(key, value, options)
-    }
-    async deleteFileObject(keys: string | string[]){
-        if(this.dryRunMode || this.c.env.RESPOND_WITH_QUERY_LOG)
-            this.queryLog.push('STORAGE: deleteFileObject: ' + keys)
-        if(this.dryRunMode) return
-        return this.bucket.delete(keys)
+    protected async _deleteFiles(files: string[], table: $Table){
+        const keys = files.map(f=>table.fileKey(f))
+        if(!keys.length) return
+        console.log('Deleting files', keys)
+        return await this.deleteFileObject(keys).catch(e=>{
+            console.error('Failed to delete files', keys, e)
+            // todo mark for delete somehow in logs, since this error below will be ignored
+            throw new Error('Failed to delete files')
+        })
     }
 
     // Routing
-
-    readonly _apiBase = '/api'
-    readonly apiBase = this._apiBase + '/v1'
-    readonly apiTableSuffix = '/table'
-    readonly apiTableBase = this.apiBase + this.apiTableSuffix
-    async route(path: string){
-        if(!path.startsWith(this._apiBase+'/')) return undefined
-
-        await this.initAuth() // load from bearer auth header
-
-        if(path.startsWith(this.apiTableBase+'/')) {
-            const p = path.replace(this.apiTableBase, '').split('/')
-            const table = this.table(p[1]) // starts with /
-            return table.route('/'+p.slice(2).join('/'))
-        }
-        if(path.startsWith(this.apiBase)) return await this._route(path.replace(this.apiBase, ''))
-        return undefined
-    }
-
-    rawRouteHandler(route: HttpRoute): RawRouterHandlerFunction{
-        return async(params)=>{
-            if(typeof route.handler === 'function') {
-                const data = await parseRequestBody(this.c.req)
-                const res = await route.handler(data, params)
-                if (res) return this.c.json(res)
-                throw new ProcessError('Not found', 404)
-            }else {
-                return route.handler.raw(params)
-            }
-        }
-    }
 
     private routes: HttpRoute[] = [{
         path: '/setup-db',
         method: 'post',
         handler: async()=>{
-            if(!this.auth.admin) throw new HTTPException(403, {message: 'Forbidden'})
             await this.setup()
             return this.settings
         },
         zod: ()=>({
-            description: 'Setup database (create tables etc)',
+            description: 'Setup database and get settings (create metadata tables etc)',
+            request: {headers: z.object({authorization: z.string().min(1).max(255)}).describe('Admin Auth token with superadmin role')},
+            responses: {
+                '200': {
+                    description: 'Success',
+                    content: {'application/json': {
+                            schema: databaseSettingsSchema,
+                        }},
+                }
+            },
+        }),
+    }, {
+        path: '/settings',
+        method: 'get',
+        handler: async()=>{
+            if (!this.auth.admin) throw new HTTPException(this.auth.uid ? 403 : 401, {message: 'Unauthorized'})
+            return this.settings
+        },
+        zod: ()=>({
+            description: 'Get database settings',
             request: {headers: z.object({authorization: z.string().min(1).max(255)}).describe('Admin Auth token')},
             responses: {
                 '200': {
@@ -401,7 +670,7 @@ export class $Database<T extends $Env = $Env>{
         path: '/explain/*',
         handler: {
             raw: async () => {
-                if (!this.auth.admin || !this.c.env.RESPOND_WITH_QUERY_LOG) throw new HTTPException(403, {message: 'Forbidden'})
+                if (!this.auth.admin || !this.c.env.RESPOND_WITH_QUERY_LOG) throw new HTTPException(this.auth.uid ? 403 : 401, {message: 'Forbidden'})
                 this.dryRunMode = true
                 const path = this.c.req.path.replace(this.apiBase, '').replace('/explain', '')
                 if(path.startsWith('/explain')) throw new Error('Cannot explain explain')
@@ -477,3 +746,5 @@ export class SecretResolver{
         return secret && secret[0] === '$' ? this.env[secret.slice(1)] || '' : secret
     }
 }
+
+export type OptionalOmit<T, K extends keyof T> = Omit<T, K> & Pick<Partial<T>, K>;

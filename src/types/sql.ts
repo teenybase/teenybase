@@ -39,6 +39,7 @@ export interface SQLQuery{
         table: string
         column?: string
     }[]
+    _readOnly?: boolean
 }
 
 export function sqlRaw(q: string, p?: Record<string, z.infer<typeof sqlValSchema2>>): SQLQuery{
@@ -59,6 +60,10 @@ export const zSQLQuery = z.object({
 export interface SQLLiteral<T=z.infer<typeof sqlValSchema2>> {
     l: T
     key?: string
+
+    // for ts issues
+    q?: undefined
+    _readOnly?: undefined|true
 }
 
 export const zSQLLiteral = z.object({

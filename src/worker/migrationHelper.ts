@@ -25,6 +25,7 @@ export class MigrationHelper extends $DBExtension{
     }
 
     async setup(version: number) {
+        if (!this.db.auth.superadmin) throw new HTTPException(403, {message: 'Forbidden'})
         if (version >= 0) {
             const sql = `
             CREATE TABLE IF NOT EXISTS "${this.tableName}" (
@@ -35,18 +36,20 @@ export class MigrationHelper extends $DBExtension{
                 applied_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP NOT NULL
             )`.split('\n').map(l => l.trim()).join(' ')
             // await this.db.database.exec(sql)
-            await this.db.runRaw({q: sql, v: []})
+            await this.db.rawSQL({q: sql, v: []})
         }
     }
 
     async list() {
+        if (!this.db.auth.superadmin) throw new HTTPException(403, {message: 'Forbidden'})
         const q = `SELECT id, name, sql, sql_revert FROM ${this.tableName}`
         // const res = await this.db.database.prepare(q).run<DBMigration>()
-        const res = await this.db.runRaw<DBMigration>({q, v:[]})
+        const res = await this.db.rawSQL<DBMigration>({q, v:[]})
         return res
     }
 
     async apply(migrations: Omit<DBMigration, 'id'>[]) {
+        if (!this.db.auth.superadmin) throw new HTTPException(403, {message: 'Forbidden'})
         const last = await this.list()
         const names: string[] = []
         const prepared = z.array(zDBMigration).parse(migrations).flatMap(m => {
@@ -69,7 +72,7 @@ export class MigrationHelper extends $DBExtension{
             ]
         }).filter(q=>!!q) as D1Query[]
         if(!prepared.length) return []
-        const res = await this.db.transactionRaw(prepared).catch(e => {
+        const res = await this.db.rawSQLTransaction(prepared).catch(e => {
             throw e
         })
         const success = res.every(r => r.success)
@@ -85,13 +88,12 @@ export class MigrationHelper extends $DBExtension{
         path: '/migrations',
         method: 'get',
         handler: async () => {
-            if (!this.db.auth.admin) throw new HTTPException(403, {message: 'Forbidden'})
             const migrations = await this.list()
             return {settings: this.db.settings, migrations: migrations}
         },
         zod: () => (<HttpRouteZod>{
             description: 'List all migrations',
-            request: {headers: z.object({authorization: z.string().min(1).max(255)}).describe('Admin Auth token')},
+            request: {headers: z.object({authorization: z.string().min(1).max(255)}).describe('Admin Auth token with superadmin role')},
             responses: {
                 '200': {
                     description: 'Success',
@@ -110,7 +112,6 @@ export class MigrationHelper extends $DBExtension{
         path: '/migrations',
         method: 'post',
         handler: async (data) => {
-            if (!this.db.auth.admin) throw new HTTPException(403, {message: 'Forbidden'})
             // if(data.settings.version !== this.db.settings.version){
             //     throw new HTTPException(400, {message: 'Settings version mismatch'})
             // }
@@ -121,7 +122,7 @@ export class MigrationHelper extends $DBExtension{
         zod: () => (<HttpRouteZod>{
             description: 'Apply migrations',
             request: {
-                headers: z.object({authorization: z.string().min(1).max(255)}).describe('Admin Auth token'),
+                headers: z.object({authorization: z.string().min(1).max(255)}).describe('Admin Auth token with superadmin role'),
                 body: {
                     description: 'All migrations and new DB settings. New migrations will be applied and old migrations will be checked for db match',
                     content: {

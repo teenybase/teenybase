@@ -6,10 +6,10 @@
         "teeny": "bin/teeny.js"
     },
     "scripts": {
-        "run-pack": "npm pack",
         "build": "npm run build-ts && npm run ts-node && npm run js-node",
         "test": "npm run check && npm run test-check && npm run vitest && npm run vitest-worker",
         "watch": "concurrently -n \"r,ts,js\" \"npm run build-ts -- -w --preserveWatchOutput\" \"npm run ts-node -- -w --preserveWatchOutput\" \"npm run js-node -- --watch\"",
+        "run-pack": "npm pack",
 
         "prepare": "npm run build",
         "prepublishOnly": "npm run test",
@@ -76,6 +76,7 @@
         "bin",
         "dist",
         "README.md",
+        "LICENSE",
         "package.json",
         "tsconfig.json"
     ],

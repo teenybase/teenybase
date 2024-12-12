@@ -25,11 +25,33 @@ export async function parseRequestBody<T = any>(req: Context['req']) {
     if (cType === 'multipart/form-data' || cType === 'application/x-www-form-urlencoded') {
         const body = await req.parseBody({all: true, dot: true})
         if (body[MultipartJsonKey]) {
-            const json = body[MultipartJsonKey] as string
+            let json = body[MultipartJsonKey] as string | string[]
             delete body[MultipartJsonKey]
-            Object.assign(body, JSON.parse(json))
+            if(!Array.isArray(json)) json = [json]
+            for (const str of json) {
+                deepMergeFormData(body, JSON.parse(str))
+            }
         }
         return body as T
     }
     return null
+}
+
+function deepMergeFormData(formData: Record<string, any>, json: Record<string, any>){
+    for (const key in json) {
+        const val = json[key]
+        const isObject = typeof val === 'object' && val !== null
+        const isArray = Array.isArray(val)
+        if (isObject || isArray) {
+            if (formData[key] === undefined) {
+                formData[key] = val
+            } else if(isArray){
+                formData[key].push(...val)
+            }else{
+                deepMergeFormData(formData[key], val)
+            }
+        } else {
+            formData[key] = val
+        }
+    }
 }

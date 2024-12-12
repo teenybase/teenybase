@@ -66,18 +66,20 @@ export function literalToQuery(l: SQLLiteral | SQLQuery | string, wrap = true): 
             // q: (!q || (q[0] === '(' && q[q.length - 1] === ')')) ? q : `(${q})`, // Note - this is wrong, since it could be like `(a) OR (b)` which should also be escaped.
             q: !q || !wrap ? q : `(${q})`, // tag - brackets
             p: (l as SQLQuery).p,
-            dependencies: (l as SQLQuery).dependencies
+            dependencies: (l as SQLQuery).dependencies,
+            _readOnly: (l as SQLQuery)._readOnly
         }
     }
     l1 = (isLiteral && typeof l === 'object') ? l1 : (l as string)
     let lm = typeof l1 !== "object" ? literalMapping[l1 as any] : undefined
     if(lm !== undefined) // apparently both m[true] and m['true'] resolves to 1 in js.
-        return {q: lm}
-    if(l1 === null || l1 === undefined) return {q: 'NULL'}
+        return {q: lm, _readOnly: true}
+    if(l1 === null || l1 === undefined) return {q: 'NULL', _readOnly: true}
     const rnd = 'f'+Math.random().toString(36).substring(7)
     return {
         q: '{:'+rnd+'}',
-        p: { [rnd]: l1 } // todo is object check required? right now it's done in sqlQueryToD1Query
+        p: { [rnd]: l1 }, // todo is object check required? right now it's done in sqlQueryToD1Query
+        _readOnly: true
     }
 }
 

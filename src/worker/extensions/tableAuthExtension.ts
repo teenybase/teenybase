@@ -141,10 +141,10 @@ export class TableAuthExtension extends TableExtension<TableAuthExtensionData> {
             this._parseUsername(record)
 
             if (this.mapping.email) this._parseEmail(record)
-            if (this.mapping.name) defaultSchema.name.parse((record[this.mapping.name] as SQLLiteral)?.l)
+            if (this.mapping.name) defaultSchema.name.parse((record[this.mapping.name] as SQLLiteral)?.l, {path: [this.mapping.name]})
 
             if (this.mapping.emailVerified) {
-                let val = defaultSchema.emailVerified.parse((record[this.mapping.emailVerified] as SQLLiteral)?.l)
+                let val = defaultSchema.emailVerified.parse((record[this.mapping.emailVerified] as SQLLiteral)?.l, {path: [this.mapping.emailVerified]})
 
                 if(!this.jc.globals.auth?.admin) {
                     if (val !== undefined) throw new HTTPException(400, {message: `${this.mapping.emailVerified} must not be set`})
@@ -277,7 +277,7 @@ export class TableAuthExtension extends TableExtension<TableAuthExtensionData> {
 
         const record = recordToSqlValues(data)
         const username = (this.mapping.email && record[this.mapping.email]) ? this._parseEmail(record) :
-            record['identity'] ? defaultSchema.identity.parse(record['identity'].l) :
+            record['identity'] ? defaultSchema.identity.parse(record['identity'].l, {path: ["identity"]}) :
             this._parseUsername(record)
 
         const invalid = async()=>{
@@ -408,7 +408,7 @@ export class TableAuthExtension extends TableExtension<TableAuthExtensionData> {
         const username = (!emailOnly && this.mapping.username) ? `${ident(this.mapping.username, this.jc)} = {:loginId}` : null
         const email = this.mapping.email ? `${ident(this.mapping.email, this.jc)} = {:loginId}` : null
         if(!username && !email) throw new HTTPException(500, {message: 'Invalid Configuration'})
-        const select = buildSelectQuery({
+        const res = await this.table.$db.rawSelect(this.table, {
             from: this.jc.tableName,
             where: {
                 q: (username && email) ? `${username} OR ${email}` : email || username!,
@@ -416,13 +416,12 @@ export class TableAuthExtension extends TableExtension<TableAuthExtensionData> {
             },
             selects: this._userFields(true, asAdmin),
             limit: 1,
+            _readOnly: true,
         })
-
-        const res = await this.table.run(select, 'Failed to find user')
         return this._fieldsToUser(res[0], true)
     }
     private async getUser(id: string) {
-        const select = buildSelectQuery({
+        const res = await this.table.$db.rawSelect(this.table, {
             from: this.jc.tableName,
             where: {
                 q: `${ident(this.mapping.uid, this.jc)} = {:uid}`,
@@ -430,14 +429,13 @@ export class TableAuthExtension extends TableExtension<TableAuthExtensionData> {
             },
             selects: this._userFields(),
             limit: 1,
+            _readOnly: true,
         })
-
-        const res = await this.table.run(select, 'Failed to find user by id')
         return this._fieldsToUser(res[0])
     }
 
     private async updateUser(id: string, data: Record<string, SQLLiteral>) {
-        const update = buildUpdateQuery({
+        const res = await this.table.$db.rawUpdate(this.table, {
             table: this.jc.tableName,
             where: {
                 q: `${ident(this.mapping.uid, this.jc)} = {:uid}`,
@@ -446,8 +444,6 @@ export class TableAuthExtension extends TableExtension<TableAuthExtensionData> {
             set: data,
             returning: this._userFields(),
         })
-
-        const res = await this.table.run(update, 'Failed to run user update query')
         return this._fieldsToUser(res[0])
     }
 
@@ -484,13 +480,11 @@ export class TableAuthExtension extends TableExtension<TableAuthExtensionData> {
             if(this.mapping.passwordSalt) values[this.mapping.passwordSalt] = {l: salt}
         }
 
-        const query  = {
+        const res = await this.table.$db.rawInsert(this.table, {
             table: this.jc.tableName,
             values,
             returning: this._userFields(),
-        } as InsertQuery
-        const insert = buildInsertQuery(query, this.jc.autoSimplifyExpr)
-        const res = await this.table.run(insert, 'Failed to run user update query')
+        })
         return this._fieldsToUser(res[0])
     }
 
@@ -697,21 +691,21 @@ export class TableAuthExtension extends TableExtension<TableAuthExtensionData> {
         if (!this.mapping.username) return
         let val = (record[this.mapping.username] as SQLLiteral)?.l
         if (typeof val !== 'string') throw new HTTPException(400, {message: `${this.mapping.username} must be a value, expressions not support in username`})
-        val = defaultSchema.username.parse(val)
+        val = defaultSchema.username.parse(val, {path: [this.mapping.username]})
         return val
     }
     private _parseEmail(record: Record<string, SQLQuery | SQLLiteral>) {
         if (!this.mapping.email) throw new HTTPException(500, {message: 'Invalid Configuration'})
         let val = (record[this.mapping.email] as SQLLiteral)?.l
         if (typeof val !== 'string') throw new HTTPException(400, {message: `${this.mapping.email} must be a value, expressions not support in email`})
-        val = defaultSchema.email.parse(val)
+        val = defaultSchema.email.parse(val, {path: [this.mapping.email]})
         return val
     }
 
     private async _parseCurrentPasswordField(record: Record<string, SQLLiteral>, salt: string) {
         let current = record[this.mapping.password! + this.data.passwordCurrentSuffix!]?.l
         if (!current || typeof current !== 'string') throw new HTTPException(400, {message: `${this.mapping.password! + this.data.passwordCurrentSuffix!} is required`})
-        current = defaultSchema.password.parse(current)
+        current = defaultSchema.password.parse(current, {path: [this.mapping.password! + this.data.passwordCurrentSuffix!]})
         return await this.hashPassword(current, salt)
     }
     private async _parsePasswordFieldUpdate(record: Record<string, SQLLiteral>, query: UpdateQuery, salt?: string) {
@@ -747,12 +741,19 @@ export class TableAuthExtension extends TableExtension<TableAuthExtensionData> {
             const field = this.mapping.password
             if (!field) throw new HTTPException(500, {message: 'Invalid Configuration'})
             let val = (record[field] as SQLLiteral)?.l
+            if (!val) throw new HTTPException(400, {message: `${field} is required`})
             if (typeof val !== 'string') throw new HTTPException(400, {message: `${field} must be a value, expressions not support in password`})
-            val = defaultSchema.password.parse(val)
+            val = defaultSchema.password.parse(val, {path: [field]})
 
             if (this.data.passwordConfirmSuffix) {
                 const confirmVal = (record[field + this.data.passwordConfirmSuffix] as SQLLiteral)?.l
-                if (val !== confirmVal) throw new HTTPException(400, {message: `${field} and ${field + this.data.passwordConfirmSuffix} do not match`})
+                // zod match so we get proper errors
+                // https://github.com/colinhacks/zod/discussions/1525
+                z.literal(val, {
+                    // todo better error message
+                    errorMap: () => ({ message: `${field} and ${field + this.data.passwordConfirmSuffix} do not match` }),
+                }).parse(confirmVal, {path: [field + this.data.passwordConfirmSuffix]})
+                if (val !== confirmVal) throw new HTTPException(400, {message: 'unknown zod error'})
                 delete record[field + this.data.passwordConfirmSuffix]
             }
 
@@ -773,7 +774,7 @@ export class TableAuthExtension extends TableExtension<TableAuthExtensionData> {
         if (!field) throw new HTTPException(500, {message: 'Invalid Configuration'})
         let val = (record[field])?.l
         if (typeof val !== 'string') throw new HTTPException(400, {message: `${field} must be a value, expressions not support in password`})
-        val = defaultSchema.password.parse(val)
+        val = defaultSchema.password.parse(val, {path: [field]})
         val = await this.hashPassword(val, salt)
         record[field] = {l: val}
         return val

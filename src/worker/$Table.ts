@@ -27,7 +27,7 @@ import {TableData} from '../types/table'
 import {columnify, ident, JsepContext, uncolumnify} from '../sql/parse/jsep'
 import {SQLQuery, sqlValSchemaFile2, sqlValSchemaFile3, sqlValSchemaRecord} from '../types/sql'
 import {$Env} from './env'
-import {tableFieldTypeToZod} from '../types/dataTypes'
+import {TableFieldDataType, tableFieldTypeToZod} from '../types/dataTypes'
 import {LinearRouter} from 'hono/router/linear-router'
 import {HttpRoute, RawRouterHandlerFunction} from '../types/route'
 import {normalizeFileName} from './util/string'
@@ -49,18 +49,6 @@ export class $Table<T extends $Env = any>{
 
     readonly autoDeleteR2Files: boolean
     readonly allowMultipleFileRef: boolean
-
-    private _zodSchema: z.ZodObject<any> | undefined
-    get zodSchema(){
-        if(this._zodSchema) return this._zodSchema
-        const schema = {} as Record<string, z.ZodType<any>>
-        for (const field of this.data.fields) {
-            schema[field.name] = tableFieldTypeToZod[field.type as keyof typeof tableFieldTypeToZod]
-                ?? tableFieldTypeToZod[field.sqlType as keyof typeof tableFieldTypeToZod]
-        }
-        this._zodSchema = z.object(schema)
-        return this._zodSchema
-    }
 
     extension<T extends ExtensionsKeys>(key: T): TableExtensions[T]{
         const ext = this.extensions.find(e=>e.name === key)
@@ -137,41 +125,59 @@ export class $Table<T extends $Env = any>{
         })
         await this.onDeleteParse(query)
 
-        // todo make beforeDelete
         const filesToDelete = await this.filesToDelete(query)
 
-        const sql = buildDeleteQuery(query, this.jc.autoSimplifyExpr)
-        const res = await this.run(sql, 'Failed to run delete query')
-
-        // todo make onDelete
-        // ignore error on fail
-        if(filesToDelete && this.autoDeleteR2Files){
-            await this._deleteFiles(filesToDelete).catch(()=>{})
-        }
+        const res = await this.$db.rawDelete(this, query, filesToDelete)
 
         return res
     }
 
     async insert(data: TableInsertParams) {
         // console.error('insert', data)
-        const values = Array.isArray(data.values) ? data.values : [data.values]
+        const values = Array.isArray(data.values) ? data.values : data.values ? [data.values] : undefined
         let filesToUpload = {} as Record<string, File>
         let filesToRef: string[] = []
         const data2 = {
             ...data,
             values: [] as z.infer<typeof sqlValSchemaRecord>[]
         } as const
+
+        // todo - make beforeInsertParse
+
         if(values) {
             for (const setValues of values) {
+                if(!setValues) continue
                 for (const [key, val] of Object.entries(setValues)) { // todo
                     if(Array.isArray(val)) throw new ProcessError('Array values not supported at the moment')
+
+                    const field = this.fields[key]
+                    // if(!field) throw new ProcessError('Invalid field ' + key)
+                    if(!field) continue  // field check is done in onInsertParse
+
+                    // for these types, any string "null" will be coersed to null(this is required for FormData as it only sends strings)
+                    // todo relation, password, editor, text, select
+                    const directNullableTypes: (keyof typeof TableFieldDataType)[] = ['file', 'number', 'bool', 'email', 'url', 'date', 'json', 'integer', 'blob']
+                    if (directNullableTypes.includes(field.type as any) && val === 'null') {
+                        // todo notnull check required?
+                        setValues[key] = null // any existing file will be deleted in filesToDelete
+                        continue
+                    }
+
+                    if(field.type === 'json') {
+                        if(typeof val === 'string' && val !== '') {
+                            try {
+                                // this should return null if val is "null"
+                                setValues[key] = JSON.parse(val)
+                            }catch (e){
+                                throw new ProcessError('Invalid JSON value for ' + key)
+                            }
+                        }
+                    }
                 }
                 const {values: _values} = this.filesToUpload(setValues, filesToUpload, filesToRef)
                 data2.values.push(_values)
             }
         }
-
-        // todo - make beforeInsertParse
 
         const query = await parseInsertQuery(data2, this.jc).catch(e=>{
             throw new ProcessError('Error parsing INSERT data', 400, {input:data}, e)
@@ -179,44 +185,50 @@ export class $Table<T extends $Env = any>{
 
         await this.onInsertParse(query)
 
-        const sql = buildInsertQuery(query, this.jc.autoSimplifyExpr)
-
-        // todo - make beforeInsert
-        // will throw error on fail
-        filesToRef && await this._refCheckFiles(filesToRef)
-        filesToUpload && await this._uploadFiles(filesToUpload)
-
-        let res: any[] | null = null
-        let err = null as any
-        try {
-            res = await this.run(sql, 'Failed to run insert query')
-        }catch (e){
-            console.error(e)
-            err = e
-            res = null
-        }
-
-        // todo - make onInsertFail
-        // if error, delete uploaded files
-        if(res === null){
-            // TODO: its possible that some rows are not inserted because of where/rule in sql. those files need to be deleted. same in update and delete
-            if(filesToUpload) await this._deleteFiles(Object.keys(filesToUpload))
-            throw (err ?? new HTTPException(500, { message: 'Failed to insert' }))
-        }
+        const res = await this.$db.rawInsert(this, query, filesToUpload, filesToRef)
 
         return res
     }
 
     async update(data: TableUpdateParams) {
-        if(data.setValues) for (const [key, val] of Object.entries(data.setValues)) { // todo
-            if(Array.isArray(val)) throw new ProcessError('Array values not supported at the moment')
-        }
         const set = data.set
         if(set && this.fileFields) for (const [key, val] of Object.entries(set)) {
             if(this.fileFields.includes(key)) throw new ProcessError('File fields can only be set using setValues')
         }
 
         // todo - make beforeUpdateParse
+
+        if(data.setValues){
+            const setValues =data.setValues
+            for (const [key, val] of Object.entries(setValues)) { // todo
+                if(Array.isArray(val)) throw new ProcessError('Array values not supported at the moment')
+
+                const field = this.fields[key]
+                // if(!field) throw new ProcessError('Invalid field ' + key)
+                if(!field) continue // field check is done in onUpdateParse
+
+                // for these types, any string "null" will be coersed to null(this is required for FormData as it only sends strings)
+                // todo relation, password, editor, text, select
+                const directNullableTypes: (keyof typeof TableFieldDataType)[] = ['file', 'number', 'bool', 'email', 'url', 'date', 'json', 'integer', 'blob']
+                if (directNullableTypes.includes(field.type as any) && val === 'null') {
+                    // todo notnull check required?
+                    setValues[key] = null // any existing file will be deleted in filesToDelete
+                    continue
+                }
+
+                if(field.type === 'json') {
+                    if(typeof val === 'string' && val !== '') {
+                        try {
+                            // this should return null if val is "null"
+                            setValues[key] = JSON.parse(val)
+                        }catch (e){
+                            throw new ProcessError('Invalid JSON value for ' + key)
+                        }
+                    }
+                }
+            }
+        }
+
         const {filesToUpload, filesToRef, values} = data.setValues ? this.filesToUpload(data.setValues) : {}
         const data2 = {
             ...data,
@@ -229,38 +241,10 @@ export class $Table<T extends $Env = any>{
 
         await this.onUpdateParse(updateQuery)
 
-        // todo - make beforeUpdate
         const fileFields = this.fileFields?.filter(f => updateQuery.set[f])
         const filesToDelete = fileFields ? await this.filesToDelete(updateQuery, fileFields) : undefined
 
-        const sql = buildUpdateQuery(updateQuery)
-
-        // will throw error on fail
-        filesToRef && await this._refCheckFiles(filesToRef)
-        filesToUpload && await this._uploadFiles(filesToUpload)
-
-        let res: any
-        let err = null as any
-        try {
-            res = await this.run(sql, 'Failed to run update query')
-        }catch (e){
-            console.error(e)
-            err = e
-            res = null
-        }
-
-        // todo - make onUpdateFail
-        // if error, delete uploaded files
-        if(res === null){
-            if(filesToUpload) await this._deleteFiles(Object.keys(filesToUpload))
-            throw (err ?? new HTTPException(500, { message: 'Failed to update' }))
-        }
-
-        // todo - make onUpdate
-        // ignore error on fail
-        if(filesToDelete && this.autoDeleteR2Files){
-            await this._deleteFiles(filesToDelete).catch(()=>{})
-        }
+        const res = await this.$db.rawUpdate(this, updateQuery, filesToUpload, filesToRef, filesToDelete)
 
         return res
     }
@@ -277,8 +261,7 @@ export class $Table<T extends $Env = any>{
 
         await this.onViewParse(query, id)
 
-        const sql = buildSelectQuery(query, this.jc.autoSimplifyExpr)
-        const res = await this.run<any>(sql, 'Failed to run select query')
+        const res = await this.$db.rawSelect(this, query)
         return res[0]
     }
 
@@ -291,19 +274,23 @@ export class $Table<T extends $Env = any>{
         })
         await this.onSelectParse(query)
 
-        const sql = buildSelectQuery(query, this.jc.autoSimplifyExpr)
-        // console.log(query, sql)
+        if(countTotal === undefined)
+            return await this.$db.rawSelect(this, query)
 
-        if(!countTotal) {
-            const res = await this.run(sql, 'Failed to run select query')
-            // console.log(res)
-            return countTotal === undefined ? res : {items: res, total: -1}
-        }
+        return await this.$db.rawSelect(this, query, countTotal)
+    }
 
-        const countField = this.mapping.uid ? `${this.data.name}.${columnify(this.mapping.uid)}` : '*'
-        // const countField = this.mapping.uid ? `DISTINCT ${this.data.name}.${columnify(this.mapping.uid)}` : '*'
+    async selectCount(data: Pick<TableSelectParams, 'where'|'select'>) {
+        const query = await parseSelectQuery(data, this.jc).catch(e=>{
+            throw new ProcessError('Error parsing SELECT data', 400, {input:data}, e)
+        })
+        await this.onSelectParse(query)
 
-        const countQuery = buildSelectQuery({
+        if(query.selects?.length??0 > 1) throw new ProcessError('Invalid select count query, only 1 field allowed')
+        const countField = query.selects?.length === 1 ? query.selects[0] :
+            this.mapping.uid ? `${this.data.name}.${columnify(this.mapping.uid)}` : '*'
+
+        const res = await this.$db.rawSelect(this, {
             ...query,
             selects: [`count(${countField}) as total`],
             limit: undefined,
@@ -311,11 +298,33 @@ export class $Table<T extends $Env = any>{
             orderBy: undefined,
             groupBy: undefined,
             distinct: false,
-        }, this.jc.autoSimplifyExpr)
+        })
 
-        const res = await this.transaction([sql, countQuery], 'Failed to run select query')
+        return (res[0] as any)?.total ?? -1
+    }
 
-        return {items: res[0].results, total: (res[1].results[0] as any)?.total ?? -1}
+    async selectRaise(data: Pick<TableSelectParams, 'where'> & {
+        message: string,
+        code?: 'ROLLBACK'|'ABORT'|'FAIL',
+    }){
+        const {message, code} = z.object({
+            message: z.string(),
+            code: z.enum(['ROLLBACK', 'ABORT', 'FAIL']).optional().default('FAIL'),
+        }).parse(data)
+        const data2 = {
+            ...data,
+            select: `RAISE(${code}, ${JSON.stringify(message)})`,
+        } as TableSelectParams
+        const query = await parseSelectQuery(data2, this.jc).catch(e=>{
+            throw new ProcessError('Error parsing SELECT data', 400, {input:data}, e)
+        })
+        await this.onSelectParse(query)
+
+        const res = await this.$db.rawSelect(this, query)
+        // const sql = buildSelectQuery(query, this.jc.autoSimplifyExpr)
+        // const res = await this.run(sql, 'Failed to run select query')
+
+        if(res.length) throw new ProcessError(message, 409, {code: code})
     }
 
     // hooks
@@ -337,6 +346,8 @@ export class $Table<T extends $Env = any>{
                 }
             }
         }
+
+        // todo notNull check
 
         if(query.returning) query.returning = this.checkColsWildcard(Array.isArray(query.returning) ? query.returning : [query.returning], this.data.allowWildcard ?? false)
 
@@ -372,12 +383,17 @@ export class $Table<T extends $Env = any>{
             // if(field.usage && noUpdateSetUsages.includes(field.usage)) throw new ProcessError('Cannot update ' + key + ' field')
             if(field.noUpdate) throw new ProcessError('Cannot update ' + key + ' field')
         }
-        // if(this.mapping.updated) query.set[this.mapping.updated] = {q: 'CURRENT_TIMESTAMP'}
+        // todo notNull check
+
+        // todo autodate?
+        if(this.mapping.updated) query.set[this.mapping.updated] = {q: 'CURRENT_TIMESTAMP'}
+
         if(query.returning) query.returning = this.checkColsWildcard(Array.isArray(query.returning) ? query.returning : [query.returning], this.data.allowWildcard ?? false)
 
         for (const ext of this.extensions) {
             ext.onUpdateParse && await ext.onUpdateParse(query)
         }
+
     }
 
     protected async onSelectParse(query: SelectQuery) {
@@ -461,7 +477,7 @@ export class $Table<T extends $Env = any>{
 
     // D1 Helpers
 
-    private parseD1Error(e: D1Error){
+    parseD1Error(e: D1Error){
         const msg: string = e?.errorMessage
         // todo check for other error types.
         // NOT NULL constraint failed: files.config: SQLITE_CONSTRAINT
@@ -470,7 +486,8 @@ export class $Table<T extends $Env = any>{
         const errorMap = {
             'UNIQUE constraint failed': 'A record with this value already exists.',
             'NOT NULL constraint failed': 'This field cannot be NULL.',
-            'FOREIGN KEY constraint failed': 'Unable to find related record (Foreign Key).',
+            // 'FOREIGN KEY constraint failed': 'Unable to find related record (Foreign Key).',
+            'FOREIGN KEY constraint failed': 'Foreign Key constraint failed.',
         } as Record<string, string>
         const parts = msg.split(':').map(p=>p.trim())
         const column = parts.find(p=>{
@@ -489,19 +506,7 @@ export class $Table<T extends $Env = any>{
         }else if(errorMap[mess]){
             e.message += ' - ' + errorMap[mess]
         }
-    }
-
-    async run<T>(q: SQLQuery, err: string){
-        return this.$db.run<T>(q, err).catch(e=>{
-            if(e instanceof D1Error) this.parseD1Error(e)
-            throw e
-        })
-    }
-    async transaction(q: SQLQuery[], err: string){
-        return this.$db.transaction(q, err).catch(e=>{
-            if(e instanceof D1Error) this.parseD1Error(e) // todo handle array error for transaction?
-            throw e
-        })
+        return e
     }
 
     // R2 Helpers
@@ -509,15 +514,16 @@ export class $Table<T extends $Env = any>{
     private async filesToDelete(desQuery: UpdateQuery|DeleteQuery, fileFields?: string[]) {
         if(!fileFields) fileFields = this.fileFields || []
         if (!fileFields.length) return undefined
-        const selects = fileFields.map(f => `${desQuery.table}.${columnify(f)}`)
-        const selectQuery = buildSelectQuery({
+        if(desQuery.table !== this.jc.tableName) throw new ProcessError('Invalid table for filesToDelete')
+        const selects = fileFields.map(f => ident(f, this.jc))
+        // const res = await this.run<any>(selectQuery, 'Failed to run select query')
+        const res = await this.$db.rawSelect(this, {
             from: desQuery.table,
             where: desQuery.where, // this will have the rule as well.
             selects,
             // limit: desQuery.limit,
             params: desQuery.params,
-        }, this.jc.autoSimplifyExpr)
-        const res = await this.run<any>(selectQuery, 'Failed to run select query')
+        })
         return res.flatMap(r => Object.values(r)).filter(v => !!v) as string[]
     }
 
@@ -526,10 +532,17 @@ export class $Table<T extends $Env = any>{
         filesToRef = filesToRef ?? [] as string[]
         if(!values || !this.fileFields) return {filesToUpload, filesToRef, values: sqlValSchemaRecord.parse(values)}
         const transformed: z.infer<typeof sqlValSchemaRecord> = {}
-        for (const [key, val] of Object.entries(values)) {
+        for (let [key, val] of Object.entries(values)) {
             const isFileField = this.fileFields.includes(key)
 
-            // ignore file field. This is done because file fields in html form set value to empty string when no file is set
+
+            // ignore file field. This is done because file fields in html form set value to empty string when no file is set. we dont want to send the file every time we are updating some record, so empty string is set in autoform
+            //  so empty string when passed in update for file fields means NO CHANGE
+            //  to delete a file, set it to null
+            if (isFileField && Array.isArray(val)) { // remove extra empty string values
+                val = val.filter(v=>v!=='')
+                if(val.length === 1) val = val[0]
+            }
             if (isFileField && val === '') continue
 
             if (!(val instanceof File)) {
@@ -544,15 +557,24 @@ export class $Table<T extends $Env = any>{
             // }
 
             if (typeof val === 'string') {
+                // todo
+                const allowArbitraryStringsInFile = false
+                if(allowArbitraryStringsInFile){
+                    transformed[key] = val
+                    continue
+                }
+
                 if(this.allowMultipleFileRef){
                     // todo check if file exists?
                     const name = normalizeFileName(val, '')
+
                     // todo this will fail if normalizeFileName implementation changes, we should just check for the file in the bucket or could that open up for security issues?
                     if(name !== val) throw new ProcessError('Invalid file name ' + val)
                     // values[key] = name // not needed
                     filesToRef.push(name)
                     continue
                 }
+                // todo check if the string value is same as the current value in db.
 
                 // todo try to download file?
                 throw new ProcessError('File URLs not supported. Set "allowMultipleFileRef" to refer to files from other records.')
@@ -563,7 +585,7 @@ export class $Table<T extends $Env = any>{
                 transformed[key] = name
                 continue
             }
-            throw new ProcessError('File or string expected in file field')
+            throw new ProcessError('File or string expected in file field ' + key)
         }
         return {filesToUpload, filesToRef, values: sqlValSchemaRecord.parse(transformed)}
     }
@@ -591,81 +613,6 @@ export class $Table<T extends $Env = any>{
         })
         if(!object) throw new HTTPException(404, {message: 'File not found'})
         return object
-    }
-
-    protected async _uploadFiles(files: Record<string, File>){
-        const keys = Object.keys(files)
-        if(!keys.length) return
-        console.log('Uploading files', keys, files)
-        const promises = keys.map(async (key)=>{
-            const file = files[key]
-            const res = await this.$db.putFileObject(this.fileKey(key), file, {
-                httpMetadata: {
-                    contentType: file.type || 'application/octet-stream',
-                    cacheControl: 'public, max-age=31536000', // 1 year
-                }
-            }).catch(e=>{
-                console.error('Failed to upload file', e)
-                return null
-            })
-            if(!res) throw new HTTPException(500, { message: 'Failed to upload file ' + key + ' ' + file.name });
-            return res
-        })
-        const res = await Promise.allSettled(promises)
-        const hasError = res.some(r=>r.status === 'rejected')
-        const successful: R2Object[] = res.filter(r=>r.status === 'fulfilled').map((r: any)=>r.value)
-        if(hasError) {
-            const errors = res.filter(r=>r.status === 'rejected').map((r: any)=>r.reason)
-            console.error(errors)
-            console.log('Deleting uploaded files', successful)
-            await this.$db.deleteFileObject(successful.map(r=>r.key)).catch(e=>{
-                console.error('Unable to delete some files after upload error', e)
-                // todo mark for delete somehow in logs
-            })
-            throw new HTTPException(500, { message: 'Failed to upload files' });
-        }
-    }
-
-    /**
-     * Checks that all files referenced in a query exist
-     * @param files
-     * @protected
-     */
-    protected async _refCheckFiles(files: string[]){
-        if(!files.length) return
-        // todo add support for dry run mode in database, it would fail if allowMultipleFileRef is true
-
-        if(!this.allowMultipleFileRef) throw new HTTPException(500, { message: 'Multiple file references shouldn\'t be allowed' });
-        // console.log('Checking files', files)
-
-        const promises = files.map(async (key)=>{
-            const res = await this.$db.headFileObject(this.fileKey(key)).catch(e=>{
-                console.error('Failed to check file', e)
-                return undefined
-            })
-            if(res === undefined) throw new HTTPException(500, { message: 'Failed to check file ' + key });
-            return res
-        })
-        const res = await Promise.allSettled(promises)
-        const hasError = res.some(r=>r.status === 'rejected')
-        const successful = res.filter(r=>r.status === 'fulfilled').map((r)=>r.value)
-        if(!successful.length || hasError) {
-            throw new HTTPException(500, { message: 'Failed to check files' });
-        }
-        if(successful.includes(null)){
-            throw new HTTPException(400, { message: 'File not found ' + files[successful.indexOf(null)] });
-        }
-    }
-
-    protected async _deleteFiles(files: string[]){
-        const keys = files.map(f=>this.fileKey(f))
-        if(!keys.length) return
-        console.log('Deleting files', keys)
-        return await this.$db.deleteFileObject(keys).catch(e=>{
-            console.error('Failed to delete files', keys, e)
-            // todo mark for delete somehow in logs, since this error below will be ignored
-            throw new Error('Failed to delete files')
-        })
     }
 
     // todo rename, as it also does other column checks
@@ -714,7 +661,7 @@ export class $Table<T extends $Env = any>{
         return res
     }
 
-    // Routing
+    // Routing (separate from $Database so we only init the routes for the table when required)
 
     private router: LinearRouter<RawRouterHandlerFunction> | undefined
     protected _routesInit = false
@@ -746,6 +693,18 @@ export class $Table<T extends $Env = any>{
     getRoutes(){
         this._initRoutes()
         return this.routes
+    }
+
+    private _zodSchema: z.ZodObject<any> | undefined
+    get zodSchema(){
+        if(this._zodSchema) return this._zodSchema
+        const schema = {} as Record<string, z.ZodType<any>>
+        for (const field of this.data.fields) {
+            schema[field.name] = tableFieldTypeToZod[field.type as keyof typeof tableFieldTypeToZod]
+                ?? tableFieldTypeToZod[field.sqlType as keyof typeof tableFieldTypeToZod]
+        }
+        this._zodSchema = z.object(schema)
+        return this._zodSchema
     }
 
 }

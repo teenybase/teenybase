@@ -31,6 +31,8 @@ export type SelectQuery = {
     join?: SelectQueryJoin[]
     // union: UnionInfo[]
     // params: Params
+
+    _readOnly?: boolean
 }
 export interface SelectQueryJoin{
     type?: string // NATURAL, LEFT, INNER, CROSS, etc
@@ -198,7 +200,7 @@ export function buildSelectQuery(query: SelectQuery|SelectSubQuery, simplify = t
     if(!inSubquery)
         q += ';\n'
 
-    return { q, p };
+    return { q, p, _readOnly: query._readOnly };
 }
 
 export function appendWhere(query: {where?: SelectWhere}, sql: SQLQuery|SQLLiteral) {

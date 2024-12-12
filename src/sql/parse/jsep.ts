@@ -153,7 +153,7 @@ export function honoToJsep(req: HonoRequest, auth?: AuthContext): JsepGlobals{
             // auth
             // admin - separate just to be safe
         },
-        auth: auth ?? {uid: null, verified: false, admin: false, jwt: {}, email: null, role: null, meta: {}}
+        auth: auth ?? {uid: null, verified: false, admin: false, jwt: {}, email: null, role: null, meta: {}, superadmin: false}
     }
 }
 
@@ -510,7 +510,8 @@ export function applyBinaryOperator(left: SQLQuery | SQLLiteral, right: SQLQuery
     return {
         q: `${left1.q} ${operator} ${right1.q}${(operator.includes('LIKE') ? ` ESCAPE '\\'` : '')}`,
         p: {...left1.p, ...right1.p},
-        dependencies: [...(left1.dependencies || []), ...(right1.dependencies || [])]
+        dependencies: [...(left1.dependencies || []), ...(right1.dependencies || [])],
+        _readOnly: left1._readOnly && right1._readOnly
     } as SQLQuery
 }
 
@@ -602,7 +603,8 @@ export function applyUnaryOperator(arg: SQLQuery | SQLLiteral, operator: BOperat
     return {
         q: `${operator} ${arg1.q}`,
         p: arg1.p,
-        dependencies: arg1.dependencies
+        dependencies: arg1.dependencies,
+        _readOnly: arg1._readOnly
     } as SQLQuery
 }
 
@@ -610,7 +612,7 @@ export function treeToSql(tree: jsep.Expression, context: JsepContext): SQLQuery
     // console.log(tree)
     if(tree.type === 'Identifier'){
         const exp = tree as jsep.Identifier
-        const res = {q: resolveIdentifier(exp, context)}
+        const res = {q: resolveIdentifier(exp, context), _readOnly: true}
         // console.log('Identifier', exp.name, res, context.tableName)
         return res
     }
@@ -675,11 +677,11 @@ export function treeToSql(tree: jsep.Expression, context: JsepContext): SQLQuery
             if(!ftsTableName) throw new Error('Not supported - FTS table not found')
 
             if(!ftsColumnName) {
-                left = {q: ftsTableName}
+                left = {q: ftsTableName, _readOnly: true}
             }else {
                 // todo check if column name in allowedTables
                 //todo use ident?
-                left = {q: `${ftsTableName}.${ftsColumnName}`}
+                left = {q: `${ftsTableName}.${ftsColumnName}`, _readOnly: true}
             }
 
             // tells the builder to add join with fts table
@@ -703,12 +705,14 @@ export function treeToSql(tree: jsep.Expression, context: JsepContext): SQLQuery
             // <query>     := <query> NOT <query>
             right = treeToSql(exp.right, context)
 
+            // todo add ESCAPE '\\' if required like LIKE in applyBinaryOperator?
             operator = 'MATCH'
         }
         // todo return somehow that we are using fts so that fts table can be joined in the select statement.
 
         left = left ?? treeToSql(exp.left, context)
         right = right ?? treeToSql(exp.right, context)
+        // console.log('BinaryExpression', exp.operator, left, right)
         operator = operator ?? operatorMapping[exp.operator as keyof typeof operatorMapping]
         if(!operator){
             throw new Error(`Operator ${exp.operator} not supported`)
@@ -745,7 +749,7 @@ export function treeToSql(tree: jsep.Expression, context: JsepContext): SQLQuery
                 const column = columnify(prop.name)
                 if (context.allowedTables[table]?.find(f => f.name === column)
                     || (context.tableName === table && context._checkColumns===false))
-                    return {q: `${table}.${column}`}
+                    return {q: `${table}.${column}`, _readOnly: true}
             }
         }
         if(!obj) obj = treeToSql(exp.object, context) as SQLLiteral
@@ -773,7 +777,7 @@ export function treeToSql(tree: jsep.Expression, context: JsepContext): SQLQuery
 
         // special case for count() and count(*)
         if(func === 'COUNT' && (exp.arguments.length === 0 /*|| exp.arguments.length === 1 && exp.arguments[0].type === 'Literal' && (exp.arguments[0] as jsep.Literal).name === '*'*/)) {
-            return {q: 'COUNT(*)'}
+            return {q: 'COUNT(*)', _readOnly: true}
         }
 
         const args = exp.arguments.map(arg => literalToQuery(treeToSql(arg, context)))
@@ -783,8 +787,9 @@ export function treeToSql(tree: jsep.Expression, context: JsepContext): SQLQuery
         return {
             q: q,
             p: args.reduce((acc, a) => ({...acc, ...a.p}), {}),
-            dependencies: args.reduce((acc, a) => [...acc, ...(a.dependencies || [])], [] as Required<SQLQuery>['dependencies'])
-        }
+            dependencies: args.reduce((acc, a) => [...acc, ...(a.dependencies || [])], [] as Required<SQLQuery>['dependencies']),
+            _readOnly: args.every(a=>a._readOnly),
+        } as SQLQuery
     }
     // console.log(tree)
     throw new Error('Not Supported type - ' + tree.type)
@@ -794,7 +799,11 @@ export function parseColumnList(q: string|string[]|jsep.Compound, context: JsepC
 export function parseColumnList(q: string|string[]|jsep.Compound, context: JsepContext, allowExpr: boolean, allowAs: true, allowExpand?: false): (string|SelectQuerySelect1)[];
 export function parseColumnList(q: string|string[]|jsep.Compound, context: JsepContext, allowExpr: boolean, allowAs: boolean, allowExpand: true): SelectQuerySelect[];
 export function parseColumnList(q: string|string[]|jsep.Compound, context: JsepContext, allowExpr = false, allowAs = false, allowExpand = false): SelectQuerySelect[] {
-    if(Array.isArray(q)) q = q.join(', ')
+    let hasStar = false
+    if(Array.isArray(q)) {
+        hasStar = !!q.find(f=>f.trim()==='*')
+        q = q.filter(f=>f.trim()!=='*').join(', ')
+    }
     if(q === '*') return ['*']
     let tree = typeof q === 'string' ? jsepParse(q as string) : q
     if(tree.type !== 'Compound') {
@@ -871,8 +880,9 @@ export function parseColumnList(q: string|string[]|jsep.Compound, context: JsepC
                     const q: SelectSubQuery = {
                         selects: fkSelectColumns,
                         from: fkTableName,
-                        where: {q: `${tableName}.${tColumn.name} = ${fkTableName}.${fkColumn}`},
+                        where: {q: `${tableName}.${tColumn.name} = ${fkTableName}.${fkColumn}`, _readOnly: true},
                         as: asName || fkTableOrColumnName,
+                        _readOnly: true,
                     }
                     if (fkColumnFull.isUnique) q.limit = 1
                     res.push(q)
@@ -897,10 +907,10 @@ export function parseColumnList(q: string|string[]|jsep.Compound, context: JsepC
             }
             if(asName && sql1.q[sql1.q.length-1]==='*') throw new Error('Not supported, cannot use * with AS')
             // res.push(sql1.q + asName ? (' AS ' + asName) : '')
-            res.push(!asName ? sql1.q : {q: sql1.q, as: asName, p: sql1.p})
+            res.push(!asName ? sql1.q : {...sql1, as: asName})
         }
     }
-    return res
+    return !hasStar ? res : ['*', ...res] as SelectQuerySelect[]
 }
 
 export function parseColumnListOrder(q: string | string[], context: JsepContext): string[] {
