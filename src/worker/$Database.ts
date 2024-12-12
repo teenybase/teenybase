@@ -32,6 +32,7 @@ import {buildDeleteQuery, DeleteQuery} from '../sql/build/delete'
 import {buildInsertQuery, InsertQuery} from '../sql/build/insert'
 import {buildUpdateQuery, UpdateQuery} from '../sql/build/update'
 import {buildSelectQuery, SelectQuery} from '../sql/build/select'
+import {generateUid} from '../security/random'
 
 export class $Database<T extends $Env = $Env>{
     protected readonly tables: Record<string, $Table<T>> = {}
@@ -43,10 +44,10 @@ export class $Database<T extends $Env = $Env>{
     }
     readonly queryLog: string[] = []
 
-    readonly email: EmailSendClient | null
+    readonly email: EmailSendClient<T> | null
     jwt: JWTTokenHelper
-    kv: InternalKV
-    extensions: $DBExtension[] = []
+    kv: InternalKV<T>
+    extensions: $DBExtension<T>[] = []
 
     public readonly c: Context<T>
     secretResolver
@@ -197,8 +198,8 @@ export class $Database<T extends $Env = $Env>{
         if (!this.adminJwtSecret) throw new HTTPException(500, {message: 'Invalid configuration - ADMIN_JWT_SECRET not set'})
         const tokenDuration = 3 * 60 * 60 // 3 hours
         const data = {
-            sub: 'admin@' + this.settings.appUrl.trim().replace(/^https?:\/\//, ''),
-            id: 'superuser',
+            sub: role + '@' + this.settings.appUrl.trim().replace(/^https?:\/\//, ''),
+            id: generateUid(),
             meta: {},
             aud: role,
             verified: true,

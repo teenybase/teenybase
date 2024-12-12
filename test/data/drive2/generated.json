@@ -420,7 +420,7 @@
           {
             "name": "val",
             "sqlType": "text",
-            "type": "json",
+            "type": "text",
             "notNull": false
           },
           {

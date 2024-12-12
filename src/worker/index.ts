@@ -7,3 +7,4 @@ export {parseRequestBody} from './util/parseRequestBody'
 export {$Env, $CloudflareBindings} from './env'
 
 export {OpenApiExtension} from './util/openapi'
+export {PocketUIExtension} from './util/pocketui'

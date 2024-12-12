@@ -19,11 +19,11 @@ export function honoErrorHandler<T extends $Env>(err: Error | HTTPResponseError,
     return c.json({
         code: status,
         message: isZodError ? 'Validation Error' : ((isHTTP || !c.env || c.env.RESPOND_WITH_ERRORS || isD1Error) ? (err.message) : 'Internal server error'),
-        data: c.env.RESPOND_WITH_ERRORS ? {
+        data: {
             ...(isZodError ? err.format() : null),
-            ...(err as ProcessError).data as any
-        } : undefined,
-        issues: isZodError ? (err as ZodError).issues : undefined,
+            ...(c.env.RESPOND_WITH_ERRORS ? (err as ProcessError).data as any : {}),
+        },
+        issues: c.env.RESPOND_WITH_ERRORS && isZodError ? (err as ZodError).issues : undefined,
         queries: c.env.RESPOND_WITH_QUERY_LOG ? $db?.queryLog : undefined,
     }, {
         status,

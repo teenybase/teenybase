@@ -1,7 +1,8 @@
 import {$Database} from './$Database'
+import {$Env} from './env'
 
-export class InternalKV {
-    constructor(private db: $Database<any>, readonly tableName = '_ddb_internal_kv') {
+export class InternalKV<T extends $Env = $Env> {
+    constructor(private db: $Database<T>, readonly tableName = '_ddb_internal_kv') {
     }
 
     async setup(version: number){

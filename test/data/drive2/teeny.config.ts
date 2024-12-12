@@ -101,7 +101,7 @@ export default {
             fields: [
                 ...baseFields.filter(f=>f.name!=='id'),
                 {name: "id", primary: true, type: 'text', sqlType: 'text', notNull: true, usage: TableFieldUsageRecord.record_uid, noUpdate: false},
-                {name: 'val', sqlType: 'text', type: 'json', notNull: false},
+                {name: 'val', sqlType: 'text', type: 'text', notNull: false},
                 {name: 'protected', sqlType: 'boolean', type: 'bool', notNull: true, default: sqlValue(false)},
             ],
             indexes: [

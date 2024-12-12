@@ -167,7 +167,8 @@ export class $Table<T extends $Env = any>{
                         if(typeof val === 'string' && val !== '') {
                             try {
                                 // this should return null if val is "null"
-                                setValues[key] = JSON.parse(val)
+                                const l = JSON.parse(val)
+                                if(l === null) setValues[key] = l
                             }catch (e){
                                 throw new ProcessError('Invalid JSON value for ' + key)
                             }
@@ -220,7 +221,8 @@ export class $Table<T extends $Env = any>{
                     if(typeof val === 'string' && val !== '') {
                         try {
                             // this should return null if val is "null"
-                            setValues[key] = JSON.parse(val)
+                            const l = JSON.parse(val)
+                            if(l === null) setValues[key] = l
                         }catch (e){
                             throw new ProcessError('Invalid JSON value for ' + key)
                         }

@@ -8,7 +8,7 @@ import {actionTextTemplate} from './templates/action-text'
 import {MailgunBindings} from '../../types/mailgun'
 import {$DBExtension} from '../$DBExtension'
 import {$Database} from '../$Database'
-import {z} from 'zod'
+import {$Env} from '../env'
 
 export interface SendEmailProps {
     from: string,
@@ -52,10 +52,10 @@ function buildEmailTemplate(templates: string[]) {
     return templates.reduce((acc, t) => acc.replace('{{EMAIL_CONTENT}}', t), '{{EMAIL_CONTENT}}')
 }
 
-export class EmailSendClient extends $DBExtension {
+export class EmailSendClient<T extends $Env = $Env> extends $DBExtension<T> {
     private mg: MailgunHelper | null
 
-    constructor(db: $Database<any>, private props: Partial<SendEmailProps> & {
+    constructor(db: $Database<T>, private props: Partial<SendEmailProps> & {
         variables: BaseTemplateProps
     }, mg?: MailgunBindings) {
         super(db)

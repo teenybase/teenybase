@@ -6,6 +6,7 @@ import {$Database} from './$Database'
 import {HttpRoute, HttpRouteZod} from '../types/route'
 import {$DBExtension} from './$DBExtension'
 import {D1Query} from '../sql/build/d1'
+import {$Env} from './env'
 
 export interface DBMigration{
     id: number
@@ -19,8 +20,8 @@ export const zDBMigration = z.object({
     sql_revert: z.string().max(65535).optional()
 })
 
-export class MigrationHelper extends $DBExtension{
-    constructor(db: $Database<any>, private readonly tableName = '_db_migrations') {
+export class MigrationHelper<T extends $Env = $Env> extends $DBExtension<T>{
+    constructor(db: $Database<T>, private readonly tableName = '_db_migrations') {
         super(db)
     }
 

@@ -36,7 +36,8 @@ test('sign up user fail no confirm', async () => {
     })
     const json = await res.json() as any
     expect(res.status).toEqual(400)
-    expect(json.message).toEqual(`password and passwordConfirm do not match`)
+    expect(json.data).toEqual({_errors: [], passwordConfirm: { _errors: [ 'password and passwordConfirm do not match' ] }})
+    expect(json.message).toEqual('Validation Error')
 })
 
 async function createUser(data: any, status = 200) {
@@ -92,7 +93,7 @@ test('sign up with password', async () => {
 test('sign up with password - fail', async () => {
     const res = await createUser({password: '123'}, 400)
     expect(res.message).toEqual('Validation Error')
-    expect(res.data[0].message).toEqual('Password must be at least 8 characters long')
+    expect(res.data).toEqual({_errors: [], password: { _errors: [ 'Password must be at least 8 characters long' ] }})
 })
 
 test('login with pass - wrong pass', async () => {

@@ -128,7 +128,7 @@ export const emptyGlobals = {
         headers: {},
         query: {}
     },
-    auth: {uid: null, verified: false, admin: false, jwt: {}, email: null, role: null, meta: {}}
+    auth: {uid: null, verified: false, admin: false, jwt: {}, email: null, role: null, meta: {}, superadmin: false}
 } as const
 
 // Note, the user can access the whole context, so there shouldn't be any secret accessible from this object
