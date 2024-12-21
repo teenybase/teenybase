@@ -1,10 +1,11 @@
 import {z} from 'zod'
-import {sqlExprSchema, sqlValSchema} from '../../types/sql'
+import {sqlExprSchema, sqlValSchema, zOnConflict} from '../../types/sql'
 import {JsepContext, parseColumnList} from './jsep'
 import {queryToSqlQuery, recordToSqlExpressions, recordToSqlValues} from './parse'
 import {UPDATE_NEW_COL_ID, UpdateQuery} from '../build/update'
 
 export const updateSchema = z.object({
+    or: zOnConflict.optional(),
     set: z.record(sqlExprSchema).optional(),
     setValues: z.record(sqlValSchema).optional(),
     where: sqlExprSchema,
@@ -43,6 +44,7 @@ export async function parseUpdateQuery(q: UpdateParams, jc: JsepContext) {
         returning: updateData.returning ? parseColumnList(updateData.returning, jc, true, true) : undefined,
         set,
         contextWithNew: contextWithNew,
+        or: updateData.or,
         // join
     }
 

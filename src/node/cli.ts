@@ -965,7 +965,7 @@ cli
                 throw new Error('Required - No cloudflare account id(cfAccountId) found in wrangler config')
             }
 
-            const message = `About to upload(create/replace) ${secretKeys.length} secrets to the worker ${workerName} in cloudflare account ${cfAccountId}, continue?\nMake sure 'wrangler login' has been run before continuing. This will run 'wrangler secret bulk'. `
+            const message = `About to upload(create/replace) ${secretKeys.length} secrets to the worker ${workerName} in cloudflare account ${cfAccountId}?\nMake sure 'wrangler login' has been run before continuing. \nThis will run 'wrangler secret bulk'. Do you want to continue? `
             const res = await prompts({
                 type: 'confirm',
                 name: 'value',

@@ -11,9 +11,9 @@ beforeAll(async () => {
 
 const fetch = (input: RequestInfo, init?: RequestInit)=>SELF.fetch(input, {...init, ...{
         headers: {
+            'Content-Type': init?.method === 'POST' ? 'application/json' : 'text/plain',
             ...init?.headers,
             '$DB_TEST_DATABASE_SETTINGS': JSON.stringify(settings),
-            'Content-Type': init?.method === 'POST' ? 'application/json' : 'text/plain',
         }
     }})
 
@@ -105,6 +105,56 @@ test('insert single', async () => {
     expect(json2).toEqual(json)
 })
 
+test('insert twice', async () => {
+    const req = {
+        method: 'POST',
+        body: ({
+            values: {
+                ['uid']: 'test123',
+                name: 'Test Name',
+                email: 'test@example.com',
+                pass_hash: 'babababaaaa',
+            },
+            returning: ['id', 'uid', 'name', 'email'],
+            // or: 'ABORT',
+        }),
+    }
+    const res = await fetch(`https://localhost/api/v1/table/users/insert`, {...req, body: JSON.stringify(req.body)})
+    expect(res.status).toEqual(200)
+    expect(await res.json()).toEqual([{"id":11,"uid":"test123","name":"Test Name","email":"test@example.com"}])
+    const count = await fetch(`https://localhost/api/v1/table/users/select?select=count(id)=>c`)
+    expect((await count.json() as any)[0].c).toEqual(11)
+
+    req.body.values.name = 'Name 2'
+
+    // fail
+    const res2 = await fetch(`https://localhost/api/v1/table/users/insert`, {...req, body: JSON.stringify(req.body)})
+    const json = (await res2.json()) as any
+    expect(json.code).toEqual(400)
+    expect(json.message).toEqual('Failed to run insert query')
+    expect(json.data.error).toEqual('UNIQUE constraint failed: users.uid: SQLITE_CONSTRAINT')
+    expect(json.data.uid).toEqual({
+        code: 'SQLITE_CONSTRAINT',
+        message: 'A record with this value already exists.'
+    })
+
+    // INSERT or REPLACE
+    // @ts-ignore
+    req.body.or = 'REPLACE'
+    // @ts-ignore
+    const res3 = await fetch(`https://localhost/api/v1/table/users/insert`, {...req, body: JSON.stringify(req.body)})
+    expect(res3.status).toEqual(200)
+    const json2 = await res3.json()
+    // id will be incremented, previous record will be deleted
+    expect(json2).toEqual([{"id":12,"uid":"test123","name":"Name 2","email":"test@example.com"}])
+
+    const count2 = await fetch(`https://localhost/api/v1/table/users/select?select=count(id)=>c`)
+    expect((await count2.json() as any)[0].c).toEqual(11)
+    const last = await fetch(`https://localhost/api/v1/table/users/select?select=id&where=${encodeURIComponent(`id=11`)}`)
+    expect(await last.json()).toEqual([])
+
+})
+
 test('insert multiple', async () => {
     const time = Date.now() / 1000
     await new Promise((r) => setTimeout(r, 1000))
@@ -160,6 +210,40 @@ test('update single setValues', async () => {
     expect(json2).toEqual(json)
 })
 
+test('edit, view', async () => {
+    const res = await fetch(`https://localhost/api/v1/table/users/edit/1?returning=id,uid,name,email`, {
+        method: 'POST',
+        body: JSON.stringify({
+            name: 'Test Name Updated',
+            email: 'test@example.com',
+        }),
+    })
+    const json = (await res.text()).trim()
+    // console.log(json)
+    expect(res.status).toEqual(200)
+    expect(json).toEqual(`{"id":1,"uid":"john123","name":"Test Name Updated","email":"test@example.com"}`)
+    const res2 = await fetch(`https://localhost/api/v1/table/users/view/1?select=id,uid,name,email`)
+    const json2 = (await res2.text()).trim()
+    // console.log(json2)
+    expect(res2.status).toEqual(200)
+    expect(json2).toEqual(json)
+})
+
+test('edit formdata', async () => {
+    const formData = new FormData()
+    formData.append('name', 'Test Name Updated')
+    formData.append('email', 'test@example.com')
+    const res = await SELF.fetch(`https://localhost/api/v1/table/users/edit/1?returning=id,uid,name,email`, {
+        method: 'POST',
+        body: formData,
+        headers: {
+            '$DB_TEST_DATABASE_SETTINGS': JSON.stringify(settings),
+        }
+    })
+    const json = (await res.text()).trim()
+    expect(res.status).toEqual(200)
+    expect(json).toEqual(`{"id":1,"uid":"john123","name":"Test Name Updated","email":"test@example.com"}`)
+})
 
 test('update single set', async () => {
     const res = await fetch(`https://localhost/api/v1/table/users/update`, {
@@ -259,3 +343,62 @@ test('select count(*)', async () => {
     expect(json.message).toEqual(`Error parsing SELECT data`)
 })
 
+test('edit(upsert update), view', async () => {
+    settings.tables[0].fields[0].noInsert = false
+    const res = await fetch(`https://localhost/api/v1/table/users/edit/1?or=INSERT&returning=*`, {
+        method: 'POST',
+        body: JSON.stringify({
+            name: 'Test Name Updated',
+            email: 'test@example.com',
+            uid: 'john123',
+            pass_hash: 'asdjadsa'
+        }),
+    })
+    expect(res.status).toEqual(200)
+    const json = (await res.json()) as any
+    const json3 = JSON.parse(JSON.stringify(json))
+    delete json3.created
+    delete json3.updated
+    expect(json3).toEqual({
+        id: 1,
+        name: 'Test Name Updated',
+        email: 'test@example.com',
+        uid: 'john123',
+        pass_hash: 'asdjadsa'
+    })
+    const res2 = await fetch(`https://localhost/api/v1/table/users/view/1?select=*`)
+    const json2 = await res2.json()
+    // console.log(json2)
+    expect(res2.status).toEqual(200)
+    expect(json2).toEqual(json)
+})
+
+test('edit(upsert insert), view', async () => {
+    settings.tables[0].fields[0].noInsert = false
+    const res = await fetch(`https://localhost/api/v1/table/users/edit/99?or=INSERT&returning=*`, {
+        method: 'POST',
+        body: JSON.stringify({
+            name: 'Test Name Updated',
+            email: 'test@example.com',
+            uid: 'john123',
+            pass_hash: 'asdjadsa'
+        }),
+    })
+    expect(res.status).toEqual(200)
+    const json = (await res.json()) as any
+    const json3 = JSON.parse(JSON.stringify(json))
+    delete json3.created
+    delete json3.updated
+    expect(json3).toEqual({
+        id: 99,
+        name: 'Test Name Updated',
+        email: 'test@example.com',
+        uid: 'john123',
+        pass_hash: 'asdjadsa'
+    })
+    const res2 = await fetch(`https://localhost/api/v1/table/users/view/99?select=*`)
+    const json2 = await res2.json()
+    // console.log(json2)
+    expect(res2.status).toEqual(200)
+    expect(json2).toEqual(json)
+})

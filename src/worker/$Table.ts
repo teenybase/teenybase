@@ -25,7 +25,7 @@ import {TableCrudExtension} from './extensions/tableCrudExtention'
 import {TableFieldData} from '../types/field'
 import {TableData} from '../types/table'
 import {columnify, ident, JsepContext, uncolumnify} from '../sql/parse/jsep'
-import {SQLQuery, sqlValSchemaFile2, sqlValSchemaFile3, sqlValSchemaRecord} from '../types/sql'
+import {SQLQuery, sqlValSchemaFile2, sqlValSchemaFile3, sqlValSchemaRecord, zOnConflict} from '../types/sql'
 import {$Env} from './env'
 import {TableFieldDataType, tableFieldTypeToZod} from '../types/dataTypes'
 import {LinearRouter} from 'hono/router/linear-router'
@@ -181,7 +181,7 @@ export class $Table<T extends $Env = any>{
         }
 
         const query = await parseInsertQuery(data2, this.jc).catch(e=>{
-            throw new ProcessError('Error parsing INSERT data', 400, {input:data}, e)
+            throw new ProcessError('Error parsing INSERT data', 400, data, e)
         })
 
         await this.onInsertParse(query)
@@ -238,7 +238,7 @@ export class $Table<T extends $Env = any>{
         } as const
 
         const updateQuery = await parseUpdateQuery(data2, this.jc).catch(e=>{
-            throw new ProcessError('Error parsing UPDATE data', 400, {input:data}, e)
+            throw new ProcessError('Error parsing UPDATE data', 400, data, e)
         })
 
         await this.onUpdateParse(updateQuery)
@@ -254,11 +254,11 @@ export class $Table<T extends $Env = any>{
     async view(data: TableViewParams, id: string) {
         if(!this.mapping.uid) throw new HTTPException(404, {message: 'Not supported without uidField.'})
         const query = await parseSelectQuery({
-            where: `${this.data.name}.${this.mapping.uid}='${id}'`,
+            where: `${this.data.name}.${this.mapping.uid}=${JSON.stringify(id)}`,
             limit: 1,
             select: data.select,
         }, this.jc).catch(e=>{
-            throw new ProcessError('Error parsing SELECT(view) data', 400, {input:data}, e)
+            throw new ProcessError('Error parsing SELECT(view) data', 400, data, e)
         })
 
         await this.onViewParse(query, id)
@@ -267,11 +267,29 @@ export class $Table<T extends $Env = any>{
         return res[0]
     }
 
+    async edit(data: TableEditParams, id: string) {
+        if(!this.mapping.uid) throw new HTTPException(404, {message: 'Not supported without uidField.'})
+        const res = data.or !== 'INSERT' ? await this.update({
+            where: `${this.data.name}.${this.mapping.uid}=${JSON.stringify(id)}`,
+            setValues: data.setValues,
+            returning: data.returning,
+            or: data.or,
+        }) : await this.insert({
+            values: {
+                ...data.setValues,
+                [this.mapping.uid]: id,
+            },
+            returning: data.returning,
+            or: 'REPLACE',
+        })
+        return res[0]
+    }
+
     async select(data: TableSelectParams): Promise<any[]>
     async select(data: TableSelectParams, countTotal: boolean): Promise<{ items: any[], total: number }>
     async select(data: TableSelectParams, countTotal?: boolean) {
         const query = await parseSelectQuery(data, this.jc).catch(e=>{
-            throw new ProcessError('Error parsing SELECT data', 400, {input:data}, e)
+            throw new ProcessError('Error parsing SELECT data', 400, data, e)
             // throw new ProcessErrore: 'Invalid query')
         })
         await this.onSelectParse(query)
@@ -284,7 +302,7 @@ export class $Table<T extends $Env = any>{
 
     async selectCount(data: Pick<TableSelectParams, 'where'|'select'>) {
         const query = await parseSelectQuery(data, this.jc).catch(e=>{
-            throw new ProcessError('Error parsing SELECT data', 400, {input:data}, e)
+            throw new ProcessError('Error parsing SELECT data', 400, data, e)
         })
         await this.onSelectParse(query)
 
@@ -318,7 +336,7 @@ export class $Table<T extends $Env = any>{
             select: `RAISE(${code}, ${JSON.stringify(message)})`,
         } as TableSelectParams
         const query = await parseSelectQuery(data2, this.jc).catch(e=>{
-            throw new ProcessError('Error parsing SELECT data', 400, {input:data}, e)
+            throw new ProcessError('Error parsing SELECT data', 400, data, e)
         })
         await this.onSelectParse(query)
 
@@ -721,3 +739,5 @@ export const tableSelectSchema = selectSchema
 export type TableSelectParams = SelectParams
 export const tableViewSchema = selectSchema.pick({select: true})
 export type TableViewParams = z.infer<typeof tableViewSchema>
+export const tableEditSchema = z.object({setValues: sqlValSchemaFile2, or: updateSchema.shape.or.or(z.literal('INSERT')), returning: updateSchema.shape.returning})
+export type TableEditParams = z.infer<typeof tableEditSchema>

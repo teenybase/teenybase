@@ -4,17 +4,18 @@ import {
     sqlExprSchemaRecord,
     SQLLiteral,
     SQLQuery,
-    sqlValSchemaFile2, sqlValSchemaFile3,
-    sqlValSchemaRecord
+    sqlValSchemaRecord,
+    zOnConflict
 } from '../../types/sql'
 import {JsepContext, parseColumnList} from './jsep'
 import {recordToSqlExpressions, recordToSqlValues} from './parse'
 import {InsertQuery} from '../build/insert'
 
 export const insertSchema = z.object({
+    or: zOnConflict.optional(),
     values: sqlValSchemaRecord.or(z.array(sqlValSchemaRecord)).optional(),
     expr: sqlExprSchemaRecord.or(z.array(sqlExprSchemaRecord)).optional(),
-    returning: z.array(sqlExprSchema).or(sqlExprSchema).optional()
+    returning: z.array(sqlExprSchema).or(sqlExprSchema).optional(),
 })
 export type InsertParams = z.infer<typeof insertSchema>
 
@@ -45,6 +46,8 @@ export async function parseInsertQuery(q: InsertParams, jc: JsepContext){
         table: jc.tableName,
         returning: insertData.returning ? parseColumnList(insertData.returning, jc, true, true) : undefined,
         values,
+        or: insertData.or,
+
         // join
     }
     return insertQuery

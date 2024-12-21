@@ -2,7 +2,7 @@ import {TableExtension} from '../tableExtension'
 import {z} from 'zod'
 import {
     $Table,
-    tableDeleteSchema,
+    tableDeleteSchema, tableEditSchema,
     tableInsertSchema,
     tableSelectSchema,
     tableUpdateSchema,
@@ -10,6 +10,7 @@ import {
 } from '../$Table'
 import {JsepContext} from '../../sql/parse/jsep'
 import {HTTPException} from 'hono/http-exception'
+import {updateSchema} from '../../sql/parse/update'
 
 interface TableCrudExtensionData {
     name: 'crud'
@@ -101,7 +102,7 @@ export class TableCrudExtension extends TableExtension<TableCrudExtensionData> {
             path: '/insert',
             method: 'post',
             zod: ()=>({
-                description: 'Update records',
+                description: 'Insert records',
                 request: {body: {
                     required: true,
                     content: {'application/json': {schema: tableInsertSchema}},
@@ -114,7 +115,7 @@ export class TableCrudExtension extends TableExtension<TableCrudExtensionData> {
             path: '/delete',
             method: 'post',
             zod: ()=>({
-                description: 'Update records',
+                description: 'Delete records',
                 request: {body: {
                     required: true,
                     content: {'application/json': {schema: tableDeleteSchema}},
@@ -130,6 +131,27 @@ export class TableCrudExtension extends TableExtension<TableCrudExtensionData> {
                 zod: () => ({
                     description: 'View record',
                     request: {params: z.object({id: z.string().min(1).max(255)}), query: tableViewSchema},
+                    responses: recordResponse(),
+                }),
+            })
+            this.routes.push({
+                handler: async (body: any, p?: any) => await this.table.edit({
+                    setValues: body,
+                    returning: this.table.$db.c.req.query('returning'),
+                    or: tableEditSchema.shape.or.parse(this.table.$db.c.req.query('or')),
+                }, z.string().min(1).max(255).parse(p.id)),
+                path: '/edit/:id',
+                method: 'post',
+                zod: () => ({
+                    description: 'Edit record',
+                    request: {
+                        params: z.object({id: z.string().min(1).max(255)}),
+                        body: {
+                            required: true,
+                            content: {'application/json': {schema: this.table.zodSchema.or(z.record(z.string(), z.unknown()))}},
+                        },
+                        query: tableEditSchema,
+                    },
                     responses: recordResponse(),
                 }),
             })

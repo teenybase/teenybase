@@ -1,6 +1,6 @@
 import {columnify, JsepContext} from '../parse/jsep'
 import {buildSelectWhere, joinReturning, SelectQuerySelect1, SelectWhere} from './select'
-import {SQLLiteral, SQLQuery} from '../../types/sql'
+import {OnConflict, SQLLiteral, SQLQuery} from '../../types/sql'
 import {literalToQuery} from './query'
 
 // data in this is expected to be safe already.
@@ -11,6 +11,7 @@ export type UpdateQuery = {
     where?: SelectWhere
     returning?: (string|SelectQuerySelect1)[] // todo subqueries
     contextWithNew?: JsepContext, // has extras object with new. data
+    or?: OnConflict
 
     // params
     params?: Record<string, any>
@@ -21,7 +22,11 @@ export const UPDATE_NEW_COL_ID = columnify('new')
 // https://www.sqlite.org/lang_update.html
 export function buildUpdateQuery(query: UpdateQuery, simplify = true, allowAllWhere = true): SQLQuery {
     const p = { ...query.params }
-    let q = `UPDATE ${query.table} SET `
+    let q = `UPDATE ${query.table} `
+
+    if(query.or) q += `OR ${query.or} `
+
+    q += 'SET '
 
     let where = ''
     if(query.where){

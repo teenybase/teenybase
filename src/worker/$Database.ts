@@ -257,7 +257,7 @@ export class $Database<T extends $Env = $Env>{
 
     // crud
 
-    async rawDelete(table: $Table, query: OptionalOmit<DeleteQuery, 'table'>, filesToDelete?: string[]){
+    async rawDelete<T1 = any>(table: $Table, query: OptionalOmit<DeleteQuery, 'table'>, filesToDelete?: string[]){
         if(this.readOnlyMode) throw new ProcessError('DELETE not allowed in read only mode')
 
         if((query as DeleteQuery).table && (query as DeleteQuery).table !== table.jc.tableName) throw new ProcessError('Invalid table')
@@ -265,7 +265,7 @@ export class $Database<T extends $Env = $Env>{
         const sql = buildDeleteQuery({...query, table: table.jc.tableName}, table.jc.autoSimplifyExpr)
 
         // todo make beforeDelete
-        const res = await this.run(sql, 'Failed to run delete query', table)
+        const res = await this.run<T1>(sql, 'Failed to run delete query', table)
 
         // todo make onDelete
         // ignore error on fail
@@ -275,7 +275,7 @@ export class $Database<T extends $Env = $Env>{
         return res
     }
 
-    async rawInsert(table: $Table, query: OptionalOmit<InsertQuery, 'table'>, filesToUpload?: Record<string, File>, filesToRef?: string[]){
+    async rawInsert<T1 = any>(table: $Table, query: OptionalOmit<InsertQuery, 'table'>, filesToUpload?: Record<string, File>, filesToRef?: string[]){
         if(this.readOnlyMode) throw new ProcessError('INSERT not allowed in read only mode')
 
         if((query as InsertQuery).table && (query as InsertQuery).table !== table.jc.tableName) throw new ProcessError('Invalid table')
@@ -287,10 +287,10 @@ export class $Database<T extends $Env = $Env>{
         filesToRef && await this._refCheckFiles(filesToRef, table)
         filesToUpload && await this._uploadFiles(filesToUpload, table)
 
-        let res: any[] | null = null
+        let res: T1[] | null = null
         let err = null as any
         try {
-            res = await this.run(sql, 'Failed to run insert query', table)
+            res = await this.run<T1>(sql, 'Failed to run insert query', table)
         }catch (e){
             console.error(e)
             err = e
@@ -308,7 +308,7 @@ export class $Database<T extends $Env = $Env>{
         return res
     }
 
-    async rawUpdate(table: $Table, query: OptionalOmit<UpdateQuery, 'table'>, filesToUpload?: Record<string, File>, filesToRef?: string[], filesToDelete?: string[]){
+    async rawUpdate<T1 = any>(table: $Table, query: OptionalOmit<UpdateQuery, 'table'>, filesToUpload?: Record<string, File>, filesToRef?: string[], filesToDelete?: string[]){
         if(this.readOnlyMode) throw new ProcessError('UPDATE not allowed in read only mode')
 
         if((query as UpdateQuery).table && (query as UpdateQuery).table !== table.jc.tableName) throw new ProcessError('Invalid table')
@@ -321,10 +321,10 @@ export class $Database<T extends $Env = $Env>{
         filesToRef && await this._refCheckFiles(filesToRef, table)
         filesToUpload && await this._uploadFiles(filesToUpload, table)
 
-        let res: any
+        let res: T1[]|null
         let err = null as any
         try {
-            res = await this.run(sql, 'Failed to run update query', table)
+            res = await this.run<T1>(sql, 'Failed to run update query', table)
         }catch (e){
             console.error(e)
             err = e
@@ -426,7 +426,6 @@ export class $Database<T extends $Env = $Env>{
         if(this.readOnlyMode) throw new Error('deleteFile not allowed in read only mode')
         return this.bucket.delete(keys)
     }
-
 
     dryRunMode = false
     readOnlyMode = false

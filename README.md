@@ -38,6 +38,7 @@ This is for making mostly single-file serverless backends for small modules/proj
   - [x] Deploy worker
   - [x] Deploy secrets
   - [ ] Static assets/files deployment
+  - [ ] Custom Environments from wrangler.toml
 - [x] Edge workers
 - [x] Object storage (R2, S3)
 - [x] SQLite, libSQL, D1
@@ -54,6 +55,7 @@ This is for making mostly single-file serverless backends for small modules/proj
   - [x] OpenAPI spec
   - [x] Swagger UI
   - [ ] Database Events/Triggers
+  - [ ] RPC
   - [ ] Static file hosting
 - [x] Simple built-in QB/ORM (unified for both backend and frontend)
 - [ ] Database Events/Triggers

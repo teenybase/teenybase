@@ -1,7 +1,7 @@
 import {UPDATE_NEW_COL_ID} from './update'
 import {columnify} from '../parse/jsep'
 import {buildSelectWhere, joinReturning, SelectQuery, SelectQuerySelect1, SelectWhere} from './select'
-import {SQLLiteral, SQLQuery} from '../../types/sql'
+import {OnConflict, SQLLiteral, SQLQuery} from '../../types/sql'
 import {literalToQuery} from './query'
 
 // data in this is expected to be safe already.
@@ -11,8 +11,7 @@ export type InsertQuery = {
     values: Record<string, SQLQuery|SQLLiteral> | (Record<string, SQLQuery|SQLLiteral>[])
     returning?: (string|SelectQuerySelect1)[] // todo subqueries
     where?: SelectWhere
-    // todo add orConflict to rest api
-    or?: 'ABORT' | 'FAIL' | 'IGNORE' | 'REPLACE' | 'ROLLBACK'
+    or?: OnConflict
 
     // params
     params?: Record<string, any>

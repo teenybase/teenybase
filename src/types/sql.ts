@@ -4,7 +4,7 @@ export const sqlExprSchema = z.string().max(1000).regex(/^[a-zA-Z0-9_=\s():.*~%'
 export const sqlExprSchemaRecord = z.record(sqlExprSchema)
 
 export const sqlValSchema = z.string().or(z.number()).or(z.boolean()).or(z.null())
-export const sqlValSchemaFile = z.coerce.boolean().or(z.string().or(z.number()).or(z.null()).or(z.instanceof(File)))
+export const sqlValSchemaFile = z.boolean().or(z.string().or(z.number()).or(z.null()).or(z.instanceof(File)))
 export const sqlValSchemaRecord = z.record(sqlValSchema)
 export const sqlValSchema2 = sqlValSchema.or(sqlValSchemaRecord)
 export const sqlValSchemaFile2 = z.record(sqlValSchemaFile)
@@ -137,3 +137,6 @@ export const zSQLTrigger = z.object({
     body: zSQLQuery.or(z.array(zSQLQuery)),
     when: zSQLQuery.optional(),
 })
+
+export type OnConflict = 'ABORT' | 'FAIL' | 'IGNORE' | 'REPLACE' | 'ROLLBACK'
+export const zOnConflict = z.enum(['ABORT', 'FAIL', 'IGNORE', 'REPLACE', 'ROLLBACK'])
