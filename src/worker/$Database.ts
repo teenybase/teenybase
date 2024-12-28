@@ -1,4 +1,4 @@
-import {$Table, TableSelectParams} from './$Table'
+import {$Table} from './$Table'
 import {Context} from 'hono'
 import {HTTPException} from 'hono/http-exception'
 import {decode} from '@tsndr/cloudflare-worker-jwt'
@@ -11,16 +11,18 @@ import {InternalKV} from './internalKV'
 import {$Env} from './env'
 import {JWTPayloadOp} from '../types/jwt'
 import {TableAuthExtensionData} from '../types/tableExtensions'
-import {columnify, createJsepContext, honoToJsep, ident} from '../sql/parse/jsep'
+import {createJsepContext, honoToJsep, ident} from '../sql/parse/jsep'
 import {logSQLQuery} from '../sql/build/query'
 import {D1Query, sqlQueryToD1Query} from '../sql/build/d1'
 import {z} from 'zod'
 import type {
     D1PreparedStatement,
-    // Blob, Headers, // dont import this
     R2Conditional,
-    R2GetOptions, R2Object,
-    R2ObjectBody, R2PutOptions, ReadableStream
+    R2GetOptions,
+    R2Object,
+    R2ObjectBody,
+    R2PutOptions,
+    ReadableStream
 } from '@cloudflare/workers-types/2023-07-01/index'
 import {MigrationHelper} from './migrationHelper'
 import {LinearRouter} from 'hono/router/linear-router'
@@ -33,6 +35,7 @@ import {buildInsertQuery, InsertQuery} from '../sql/build/insert'
 import {buildUpdateQuery, UpdateQuery} from '../sql/build/update'
 import {buildSelectQuery, SelectQuery} from '../sql/build/select'
 import {generateUid} from '../security/random'
+import {getSQLiteSchema} from '../sql/schema/tableInfo'
 
 export class $Database<T extends $Env = $Env>{
     protected readonly tables: Record<string, $Table<T>> = {}
@@ -86,7 +89,7 @@ export class $Database<T extends $Env = $Env>{
 
         const jwtSecret = this.secretResolver.resolve(this.settings.jwtSecret)
         if (!jwtSecret?.length) throw new HTTPException(500, {message: 'Invalid configuration - jwt secret is required'})
-        this.adminJwtSecret = this.secretResolver.resolve(this.c.env.ADMIN_JWT_SECRET ?? '')
+        this.adminJwtSecret = this.c.env.ADMIN_JWT_SECRET ? this.secretResolver.resolve(this.c.env.ADMIN_JWT_SECRET) : ''
         this.jwt = new JWTTokenHelper(jwtSecret, this.settings.jwtIssuer, this.settings.jwtAlgorithm)
         this.kv = new InternalKV(this, this.settings._kvTableName)
     }
@@ -113,16 +116,18 @@ export class $Database<T extends $Env = $Env>{
             return
         }
         if(!tok) {
-            for (const extension of this.extensions) {
-                if(extension.getAuthToken) tok = await extension.getAuthToken()
-                if(tok) break
-            }
-
-            // bearer
+            // request header bearer. This takes priority over extensions. Extensions should call initAuth manually if required
             if(!tok) {
                 const auth = this.c.req.header('Authorization')
                 const isBearer = auth && auth.startsWith('Bearer ')
                 tok = auth ? isBearer ? auth.slice(7) : auth : ''
+            }
+
+            if (!tok) {
+                for (const extension of this.extensions) {
+                    if (extension.getAuthToken) tok = await extension.getAuthToken()
+                    if (tok) break
+                }
             }
 
             if (!tok) return
@@ -158,7 +163,7 @@ export class $Database<T extends $Env = $Env>{
 
         // console.log('init', payload, jwtSecret)
         payload = await this.jwt.decodeAuth(tok!, jwtSecret, false, undefined, payload).catch(e => {
-            // console.error(e)
+            console.error(e)
             return null
         })
         // console.log('init', payload)
@@ -505,7 +510,7 @@ export class $Database<T extends $Env = $Env>{
                 results: [],
                 success: true,
                 // meta: {},
-            } as Omit<D1Result, 'meta'>
+            } as Omit<D1Result<T>, 'meta'>
             const r = res[ki++]
             // if(!r) return null
             // if(!r.success) onErr(r.error)
@@ -624,11 +629,17 @@ export class $Database<T extends $Env = $Env>{
         method: 'get',
         handler: async()=>{
             if (!this.auth.admin) throw new HTTPException(this.auth.uid ? 403 : 401, {message: 'Unauthorized'})
+            const isRaw = this.c.req.query('raw')
+            if(isRaw !== undefined && (isRaw===''||z.coerce.boolean().parse(isRaw)))
+                return {tables: await getSQLiteSchema(this), jwtSecret: this.settings.jwtSecret, appUrl: this.settings.appUrl, version: 1} as DatabaseSettings
             return this.settings
         },
         zod: ()=>({
             description: 'Get database settings',
-            request: {headers: z.object({authorization: z.string().min(1).max(255)}).describe('Admin Auth token')},
+            request: {
+                query: z.object({raw: z.boolean().optional().describe('Get raw sqlite schema (tableInfo)')}),
+                headers: z.object({authorization: z.string().min(1).max(255)}).describe('Admin Auth token')
+            },
             responses: {
                 '200': {
                     description: 'Success',

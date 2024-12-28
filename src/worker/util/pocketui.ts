@@ -21,15 +21,14 @@ export type PocketUiEnv = $Env & {
 
 export class PocketUIExtension<T extends PocketUiEnv = PocketUiEnv> extends $DBExtension<T> {
 
-    // this is private so that it's only applied to the routes in this extension
-    private async _getAuthToken(): Promise<string | undefined> {
+    async getAuthToken(): Promise<string | undefined> {
         return (await getSignedCookie(this.db.c, this.db.c.env.ADMIN_SERVICE_TOKEN || 'admin', cookieName)) || undefined
     }
 
-    private async _initAuth(){
-        const tok= await this._getAuthToken()
-        if(tok) return this.db.initAuth(tok)
-    }
+    // private async _initAuth(){
+    //     const tok= await this._getAuthToken()
+    //     if(tok) return this.db.initAuth(tok)
+    // }
 
     uiVersion = 'latest'
     baseUrl = 'https://cdn.jsdelivr.net/npm/@teenybase/pocket-ui@POCKET_UI_VERSION/dist/'
@@ -44,8 +43,7 @@ export class PocketUIExtension<T extends PocketUiEnv = PocketUiEnv> extends $DBE
             method: 'get',
             handler: {
                 raw: async () => {
-                    await this._initAuth()
-                    if (!this.db.auth.uid) return this.db.c.redirect('./')
+                    // await this._initAuth()
                     deleteCookie(this.db.c, cookieName)
                     deleteCookie(this.db.c, cookieNameRec)
                     return this.db.c.redirect('./')
@@ -66,7 +64,7 @@ export class PocketUIExtension<T extends PocketUiEnv = PocketUiEnv> extends $DBE
             method: 'get',
             handler: {
                 raw: async () => {
-                    await this._initAuth()
+                    // await this._initAuth()
                     if (this.db.auth.uid) return this.db.c.redirect('./')
                     return this.loginPage()
                 }
@@ -93,7 +91,7 @@ export class PocketUIExtension<T extends PocketUiEnv = PocketUiEnv> extends $DBE
             method: 'post',
             handler: {
                 raw: async () => {
-                    await this._initAuth()
+                    // await this._initAuth()
                     if (this.db.auth.uid) return this.db.c.redirect('./')
                     let {username, password} = (await parseRequestBody(this.db.c.req)) ?? {}
                     if (!password) return this.loginPage('Password required', 400)
@@ -166,11 +164,14 @@ export class PocketUIExtension<T extends PocketUiEnv = PocketUiEnv> extends $DBE
             method: 'get',
             handler: {
                 raw: async () => {
-                    await this._initAuth()
+                    // await this._initAuth()
                     // if(!this.db.auth.uid) return this.db.c.redirect('login') // this is done in frontend.
                     const base = (this.baseUrl||'').replace(/POCKET_UI_VERSION/g, this.uiVersion)
                     // todo this wont work when routing internally
-                    const path = this.db.c.req.path.replace(this.db.apiBase + '/pocket/', '') || 'index.html'
+                    const path = this.db.c.req.path
+                        .replace(this.db.apiBase + '/pocket/', '')
+                        .replace(this.db.apiBase + '/pocket', '')
+                        || 'index.html'
                     const res = await fetch(base + path)
                     if (path.endsWith('.html')) {
                         const html = await res.text()

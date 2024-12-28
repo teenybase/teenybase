@@ -5,7 +5,7 @@
         "types": [
             "node"
         ],
-        "declarationDir": "../../dist/node",
+        "declarationDir": "../../dist",
         "emitDeclarationOnly": true
     },
     "include": ["./**/*.ts", "../src/*.d.ts"],

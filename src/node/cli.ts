@@ -229,14 +229,14 @@ async function parseWrangler(root: string|undefined, options: GlobalCLIOptions):
         const projectRoot = normalizePath(root ? path.resolve(root) : process.cwd())
         const wranglerConfig = await loadWranglerConfigFromFile(projectRoot, options.wrangler, options.logLevel)
         const d1s = wranglerConfig.config.d1_databases
-        if (!d1s?.length) new Error('No databases found in wrangler config')
+        if (!d1s?.length) throw new Error('No databases found in wrangler config')
         // const r2s = wranglerConfig.config.r2_buckets
         // if(!r2s?.length) new Error('No buckets found in wrangler config')
         const d1Binding = options.db ?? 'PRIMARY_DB'
         const d1 = d1s.find((d: any) => d.binding === (options.db || d1Binding))
-        if (!d1) new Error(`Database binding ${d1Binding} not found in wrangler config. ` + (!options.db ? 'Use --db to specify a different database binding' : ''))
+        if (!d1) throw new Error(`Database binding ${d1Binding} not found in wrangler config. ` + (!options.db ? 'Use --db to specify a different database binding' : ''))
         const migrationsDir = d1.migrations_dir
-        if (!migrationsDir) new Error('No migrations_dir found in wrangler config. Please specify a migrations_dir in wrangler config (like migrations)')
+        if (!migrationsDir) throw new Error('No migrations_dir found in wrangler config. Please specify a migrations_dir in wrangler config (like migrations)')
         return {config: wranglerConfig, db: d1, migrations: migrationsDir}
     }catch (e: any) {
         createLogger(options.logLevel).error(
@@ -334,7 +334,7 @@ function loadLocalPersistConfig(c: CliContext) {
         try {
             localConfig = JSON.parse(fs.readFileSync(localConfigPath, 'utf8'))
         } catch (e: any) {
-            throw new Error(`Unable to read file ${readableRelative(localConfigPath || '')}\n${e?.message || e}\n\nThis file is not supposed to be manually edited. You may revert any changes, or delete the "${readableRelative(localPersist)}" directory and run again.`)
+            throw new Error(`Unable to read file ${readableRelative(localConfigPath || '')}\n${e?.message || e}\n\nThis file is not supposed to be manually edited. You may revert any changes, or delete the "${readableRelative(c.localPersistPath)}" directory and run again.`)
         }
         // write to migrations/config.json so that fetchDeployedMigrations below can use it in local dev server. if clean is true, this will be deleted.
         if(!fs.existsSync(c.migrationsPath)) fs.mkdirSync(c.migrationsPath, {recursive: true})
