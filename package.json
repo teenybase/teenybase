@@ -1,6 +1,6 @@
 {
     "name": "teenybase",
-    "version": "0.0.4",
+    "version": "0.0.5-dev.1",
     "type": "module",
     "bin": {
         "teeny": "bin/teeny.js"
@@ -21,7 +21,7 @@
         "js-node": "esbuild src/node/cli.ts --bundle --outfile=dist/node/cli.js --platform=node --format=esm --packages=external --sourcemap",
         "test-check": "tsc -p test/tsconfig.json --pretty --noEmit",
         "build-runtime-esbuild-temp": "esbuild src/worker/index.ts --bundle --outfile=dist/worker/index.js --format=esm --sourcemap",
-        "run-publish": "git diff --quiet origin/master -- && npm publish && git tag v$(node -p \"require('./package.json').version\") && git push --tags"
+        "run-publish": "git diff --exit-code --name-only origin/master * && npm publish && git tag v$npm_package_version && git push --tags"
     },
     "exports": {
         ".": {

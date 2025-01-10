@@ -285,7 +285,23 @@ export class $Database<T extends $Env = $Env>{
 
         if((query as InsertQuery).table && (query as InsertQuery).table !== table.jc.tableName) throw new ProcessError('Invalid table')
 
-        const sql = buildInsertQuery({...query, table: table.jc.tableName}, table.jc.autoSimplifyExpr)
+        const sqlQs: SQLQuery[] = []
+        if(Array.isArray(query.values)){
+            // D1 has SQLITE_MAX_COMPOUND_SELECT of 5
+            // https://github.com/cloudflare/workerd/blob/c3a0749df92ea56a362c2c132fe09fb69e0f92cd/src/workerd/util/sqlite.c%2B%2B#L1070
+            // because - https://sqlite.org/security.html
+
+            const batchSize = 5
+            for (let i = 0; i < query.values.length; i += batchSize) {
+                const batch = query.values.slice(i, i + batchSize)
+                const sql = buildInsertQuery({...query, values: batch, table: table.jc.tableName}, table.jc.autoSimplifyExpr)
+                sqlQs.push(sql)
+            }
+        }else {
+            const sql = buildInsertQuery({...query, table: table.jc.tableName}, table.jc.autoSimplifyExpr)
+            sqlQs.push(sql)
+        }
+        // const sql = buildInsertQuery({...query, table: table.jc.tableName}, table.jc.autoSimplifyExpr)
 
         // todo - make beforeInsert
         // will throw error on fail
@@ -295,7 +311,11 @@ export class $Database<T extends $Env = $Env>{
         let res: T1[] | null = null
         let err = null as any
         try {
-            res = await this.run<T1>(sql, 'Failed to run insert query', table)
+            if(sqlQs.length === 1) {
+                res = await this.run<T1>(sqlQs[0], 'Failed to run insert query', table)
+            }else {
+                res = (await this.transaction<T1>(sqlQs, 'Failed to run insert query')).flatMap(r => r.results)
+            }
         }catch (e){
             console.error(e)
             err = e
@@ -456,7 +476,7 @@ export class $Database<T extends $Env = $Env>{
         if(this.dryRunMode) return [] // todo add dummy data?
         return await this._rawSQL<T>(d1Expr, onErr, q._readOnly)
     }
-    private async transaction(q: SQLQuery[], err: string, table?: $Table) {
+    private async transaction<T>(q: SQLQuery[], err: string, table?: $Table) {
         if (this.dryRunMode || this.c.env.RESPOND_WITH_QUERY_LOG) {
             this.queryLog.push(q.map(q1 => logSQLQuery(q1)).join(';\n'))
         }
@@ -539,6 +559,10 @@ export class $Database<T extends $Env = $Env>{
         // todo add support for dry run mode, it would fail if allowMultipleFileRef is true
         if(!table.allowMultipleFileRef) throw new ProcessError('Multiple file references shouldn\'t be allowed')
         // console.log('Checking files', files)
+        if(this.c.req.header('x-check-file-references') === 'false') return
+
+        // todo check files length, max subrequest allowed is 1000, but it was failing with around 700 also
+        if(files.length > 500) throw new ProcessError('Too many files to check, set x-check-file-references to false to disable.')
 
         const promises = files.map(async (key)=>{
             const res = await this.headFileObject(table.fileKey(key)).catch(e=>{

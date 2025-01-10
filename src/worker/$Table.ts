@@ -1,31 +1,31 @@
 import {TableExtension} from './tableExtension'
-import {buildInsertQuery, InsertQuery} from '../sql/build/insert'
+import {InsertQuery} from '../sql/build/insert'
 import {extensions, ExtensionsKeys, TableExtensions} from './extensions'
 import {
-    appendJoin, appendOrderBy,
-    buildSelectQuery,
+    appendJoin,
+    appendOrderBy,
     getSubSelectQueries,
     SelectQuery,
     SelectQueryJoin,
     SelectQuerySelect
 } from '../sql/build/select'
-import {buildDeleteQuery, DeleteQuery} from '../sql/build/delete'
-import {buildUpdateQuery, UpdateQuery} from '../sql/build/update'
+import {DeleteQuery} from '../sql/build/delete'
+import {UpdateQuery} from '../sql/build/update'
 import {HTTPException} from 'hono/http-exception'
-import {parseUpdateQuery, UpdateParams, updateSchema} from '../sql/parse/update'
-import {InsertParams, insertSchema, parseInsertQuery} from '../sql/parse/insert'
+import {parseUpdateQuery, updateSchema} from '../sql/parse/update'
+import {insertSchema, parseInsertQuery} from '../sql/parse/insert'
 import {parseSelectQuery, SelectParams, selectSchema} from '../sql/parse/select'
 import {DeleteParams, deleteSchema, parseDeleteQuery} from '../sql/parse/delete'
 import {z} from 'zod'
 import {TableFieldUsage} from './usages'
-import {generateUid, randomString} from '../security/random'
+import {generateUid} from '../security/random'
 import {$Database} from './$Database'
 import {D1Error, ProcessError} from './util/error'
 import {TableCrudExtension} from './extensions/tableCrudExtention'
 import {TableFieldData} from '../types/field'
 import {TableData} from '../types/table'
 import {columnify, ident, JsepContext, uncolumnify} from '../sql/parse/jsep'
-import {SQLQuery, sqlValSchemaFile2, sqlValSchemaFile3, sqlValSchemaRecord, zOnConflict} from '../types/sql'
+import {SQLQuery, sqlValSchemaFile2, sqlValSchemaFile3, sqlValSchemaRecord} from '../types/sql'
 import {$Env} from './env'
 import {TableFieldDataType, tableFieldTypeToZod} from '../types/dataTypes'
 import {LinearRouter} from 'hono/router/linear-router'
