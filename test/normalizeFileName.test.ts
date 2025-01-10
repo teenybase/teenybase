@@ -16,6 +16,7 @@ describe('normalizeFileName', () => {
     test('underscore 2', ()=> expect(normalizeFileName('_', '_asd')).toMatch(/[a-z0-9]{0,5}_asd.dat/))
     test('underscore 3', ()=> expect(normalizeFileName('_123_', '_asd')).toBe('123_asd.dat'))
     test('underscore 4', ()=> expect(normalizeFileName('_123_.png', '_asd')).toBe('123_asd.png'))
+    test('uvs_debug_59bd8f531e.png', ()=> expect(normalizeFileName('uvs_debug_59bd8f531e.png', '')).toBe('uvs_debug_59bd8f531e.png'))
     test('small', ()=> {
         const res = normalizeFileName('ab', '_asd')
         expect(res.endsWith('_asd.dat')).toBe(true)

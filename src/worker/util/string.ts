@@ -24,14 +24,15 @@ export function Snakecase(str: string): string {
 
     const words = str.split(new RegExp(snakecaseSplitRegex, 'g'))
 
-    words.forEach((word, i) => {
+    words.forEach((word) => {
         if (word == "") return;
 
         if (result.length > 0) result += '_';
 
-        for (let j = 0; j < word.length; j++) {
-            const c = word[j]
-            if (c === c.toUpperCase() && j > 0 && word[j-1] !== word[j-1].toUpperCase()) {
+        for (let i = 0; i < word.length; i++) {
+            const c = word[i]
+
+            if (c >= 'A' && c <= 'Z' && i > 0 && !(word[i-1] > 'A' && word[i-1] < 'Z')) {
                 result += "_"
             }
 

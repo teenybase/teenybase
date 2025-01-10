@@ -1,6 +1,6 @@
 import {z} from 'zod'
 
-export const sqlExprSchema = z.string().max(1000).regex(/^[a-zA-Z0-9_=\s():.*~%'"><!+\-&|@,\/\\${}]*$/)
+export const sqlExprSchema = z.string().max(1000).regex(/^[a-zA-Z0-9_=\s():.*~%'"><!+\-&|@,\/\\${}]*$/, 'Invalid expression')
 export const sqlExprSchemaRecord = z.record(sqlExprSchema)
 
 export const sqlValSchema = z.string().or(z.number()).or(z.boolean()).or(z.null())
