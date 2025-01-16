@@ -526,7 +526,7 @@ export function applyBoolJoinOperator(args: (SQLQuery | SQLLiteral)[], operator:
         // both any known literal
         if(literals.length){
 
-            const bools = args.filter(a=>typeof (a as SQLLiteral).l === 'boolean')
+            const bools: boolean[] = args.filter(a=>typeof (a as SQLLiteral).l === 'boolean').map(a=>(a as SQLLiteral).l as boolean)
             if(operator === 'AND') {
                 if(!bools.every(b=>b)){
                     res = {l: false}

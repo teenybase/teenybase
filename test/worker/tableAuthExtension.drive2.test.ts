@@ -54,7 +54,7 @@ async function createUser(data: any, status = 200) {
             passwordConfirm: '12345678',
             name: 'Admin User',
             role: 'guest',
-            meta: '{}',
+            meta: '{"base": "/"}',
             ...data,
         }),
     })
@@ -92,6 +92,17 @@ test('sign up with password', async () => {
 test('sign up with password - fail role', async () => {
     const res = await createUser({role: ''}, 400)
     expect(res.message).toEqual('Unable to create user')
+})
+
+test('sign up with password - fail base', async () => {
+    const res = await createUser({meta: '{"base": ""}'}, 400)
+    // todo need to know it's because of rule fail
+    expect(res.message).toEqual('Unable to create user')
+})
+
+test('sign up with password - invalid field', async () => {
+    const res = await createUser({base: 'test'}, 400)
+    expect(res.message).toEqual('Invalid field base')
 })
 
 test('sign up with password - fail', async () => {
@@ -147,6 +158,31 @@ test('login with pass and token refresh', async () => {
     expect(decode2.sub).toEqual('admin@example.com')
 })
 
+test('login with pass admin', async () => {
+    const res = await fetch(`users/auth/login-password`, {
+        method: 'POST',
+        body: JSON.stringify({username: 'suadmin', password: 'password123',}),
+    })
+    expect(res.status).toEqual(200)
+    const json = await res.json() as any
+    const authExt = settings.tables.find(t=>t.name==='users')?.extensions.find(e=>e.name==='auth') as TableAuthExtensionData
+    expect(authExt).toBeDefined()
+    await jwt.verify(json.token, authExt!.jwtSecret, {throwError: true})
+    const decode = jwt.decode(json.token).payload!
+    delete decode.iat
+    delete decode.exp
+    expect(decode).toEqual({
+        cid: 'users',
+        user: 'suadmin',
+        sub: 'admin@admin.com',
+        id: 'suadmin',
+        meta: { base: '/' },
+        aud: [ 'superadmin' ],
+        verified: true,
+        iss: '$db'
+    })
+})
+
 test('list users - *', async () => {
     const token = await createUser({username: 'a'})
 
@@ -163,7 +199,7 @@ test('list users - *', async () => {
         // password should not be in the json since noSelect is true
     }
     // console.log(JSON.stringify(json))
-    expect(json).toEqual([{"username":"a","email":"admin@example.com","email_verified":0,"name":"Admin User","avatar":null,"role":"guest","meta":"{}"}])
+    expect(json).toEqual([{"username":"a","email":"admin@example.com","email_verified":0,"name":"Admin User","avatar":null,"role":"guest","meta":"{\"base\": \"/\"}"}])
 })
 test('list users', async () => {
     const token = await createUser({username: 'a'})
@@ -173,6 +209,87 @@ test('list users', async () => {
     })
     expect(res.status).toEqual(200)
     expect(await res.text()).toEqual('[{"name":"Admin User","username":"a","email":"admin@example.com"}]')
+})
+
+test('list files', async () => {
+    const token = await createUser({username: 'a'})
+    const res = await fetch(`files/select?select=name,path`, {
+        method: 'GET',
+        headers: {'Authorization': 'Bearer ' + token.token},
+    })
+    expect(res.status).toEqual(200)
+    expect(await res.text()).toEqual('[]')
+    const res2 = await fetch(`users/auth/login-password`, {
+        method: 'POST',
+        body: JSON.stringify({username: 'suadmin', password: 'password123',}),
+    })
+    expect(res2.status).toEqual(200)
+    const token2 = await res2.json() as any
+    const res3 = await fetch(`files/select?select=name,path`, {
+        method: 'GET',
+        headers: {'Authorization': 'Bearer ' + token2.token},
+    })
+    expect(res3.status).toEqual(200)
+    expect(await res3.text()).toEqual('[{"name":"Test File","path":"/test/"}]')
+})
+
+test('list files no token', async () => {
+    const res = await fetch(`files/select?select=name,path`, {
+        method: 'GET',
+    })
+    expect(res.status).toEqual(200)
+    expect(await res.text()).toEqual('[]')
+})
+
+// this could break if bug in rules/simplification
+test('list files no token 2', async () => {
+    const res = await fetch(`files/select?select=name,path&where=${encodeURIComponent("id='test'")}`, {
+        method: 'GET',
+    })
+    expect(res.status).toEqual(200)
+    expect(await res.text()).toEqual('[]')
+})
+
+test('view file no token', async () => {
+    const res = await fetch(`files/view/test`, {
+        method: 'GET',
+    })
+    expect(res.status).toEqual(404)
+    const json = await res.json()
+    expect(json).toEqual({
+        code: 404,
+        message: 'Not found',
+        data: {},
+        queries: [
+            'SELECT [files].[id], [files].[created], [files].[updated], [files].[created_by], [files].[path], [files].[name], [files].[thumb], [files].[file], [files].[notes], [files].[config], [files].[meta], [files].[tags], [files].[deleted_by], [files].[deleted_at] FROM [files] WHERE 0 LIMIT 1;'
+        ]
+    })
+})
+
+test('view file', async () => {
+    const token = await createUser({username: 'a'})
+    const res = await fetch(`files/view/test?select=*`, {
+        method: 'GET',
+        headers: {'Authorization': 'Bearer ' + token.token},
+    })
+    expect(res.status).toEqual(200)
+    const json = await res.json() as any
+    delete json.created
+    delete json.updated
+    expect(json).toEqual({
+        id: 'test',
+        created_by: null,
+        path: '/test/',
+        name: 'Test File',
+        thumb: null,
+        file: 'test.txt',
+        notes: '',
+        config: '{}',
+        meta: '{}',
+        tags: null,
+        deleted_by: null,
+        deleted_at: null
+    })
 })
 
 

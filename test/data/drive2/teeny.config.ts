@@ -30,7 +30,7 @@ export default {
                 name: "rules",
                 listRule: "(auth.uid == id) | auth.role ~ '%admin'",
                 viewRule: "(auth.uid == id) | auth.role ~ '%admin'",
-                createRule: "(auth.uid == null & role == 'guest' & meta == '{}') | auth.role ~ '%admin'",
+                createRule: "(auth.uid == null & role == 'guest' & meta == '{\"base\": \"/\"}') | auth.role ~ '%admin'",
                 updateRule: "(auth.uid == id & role == new.role & meta == new.meta) | auth.role ~ '%admin'",
                 deleteRule: "auth.role ~ '%admin'",
             } as TableRulesExtensionData, {
@@ -87,7 +87,7 @@ export default {
             }],
             extensions: [{
                 name: "rules",
-                listRule: "auth.uid != null & (path ~ (auth.meta.base||'%') | auth.role ~ '%admin')",
+                listRule: "auth.uid != null & (path ~ (auth.meta.base||'%') | auth.role ~ '%admin') & auth.role != 'guest'",
                 viewRule: "auth.uid != null & (path ~ (auth.meta.base||'%') | auth.role ~ '%admin')",
                 createRule: "auth.uid != null & auth.role != 'guest' & (path ~ (auth.meta.base||'%') | auth.role ~ '%admin') & created_by == auth.uid",
                 // updateRule: "auth.uid == id & role == new.role & base_path == new.base_path",

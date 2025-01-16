@@ -450,7 +450,7 @@ export class TableAuthExtension extends TableExtension<TableAuthExtensionData> {
     private async _createUser(data: Required<InsertParams>['values']) {
         const res = await this.table.insert({values: data, returning: this._userFields(false)})
         const user = res ? this._fieldsToUser(res[0]) : null
-        if (!user) throw new HTTPException(400, {message: 'Unable to create user'})
+        if (!user) throw new HTTPException(400, {message: 'Unable to create user'}) // todo maybe tell user it can be because of rules?
         return user
     }
 
