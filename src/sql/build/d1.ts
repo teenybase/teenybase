@@ -31,3 +31,4 @@ export function sqlQueryToD1Query(query: SQLQuery): D1Query{
     }
     return {q, v: vals}
 }
+

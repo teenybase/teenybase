@@ -60,7 +60,7 @@ export class EmailSendClient<T extends $Env = $Env> extends $DBExtension<T> {
     }, mg?: MailgunBindings) {
         super(db)
         this.mg = mg ? new MailgunHelper(mg) : null
-        // todo also make a webhook that logs everything to an r2 bucket (with encryption)
+        // todo also make a webhook that logs everything to an r2 bucket with encryption
         this.mg && this.routes.push(...this.mg.getRoutes(this.db.c))
     }
 
@@ -117,7 +117,6 @@ export class EmailSendClient<T extends $Env = $Env> extends $DBExtension<T> {
             to: props.to,
         })
     }
-
 
 }
 

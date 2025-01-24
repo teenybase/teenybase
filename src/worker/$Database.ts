@@ -12,10 +12,10 @@ import {$Env} from './env'
 import {JWTPayloadOp} from '../types/jwt'
 import {TableAuthExtensionData} from '../types/tableExtensions'
 import {createJsepContext, honoToJsep, ident} from '../sql/parse/jsep'
-import {logSQLQuery} from '../sql/build/query'
+import {logSQLQuery, QueryTypes} from '../sql/build/query'
 import {D1Query, sqlQueryToD1Query} from '../sql/build/d1'
 import {z} from 'zod'
-import type {
+import {
     D1PreparedStatement,
     R2Conditional,
     R2GetOptions,
@@ -36,8 +36,13 @@ import {buildUpdateQuery, UpdateQuery} from '../sql/build/update'
 import {buildSelectQuery, SelectQuery} from '../sql/build/select'
 import {generateUid} from '../security/random'
 import {getSQLiteSchema} from '../sql/schema/tableInfo'
+import {D1RunEvent, D1RunFailEvent, SQLRunContext, SQLRunTransactionContext} from './util/sql'
 
-export class $Database<T extends $Env = $Env>{
+export type $DatabaseEventMap = {
+    run_sql: D1RunEvent
+    run_sql_fail: D1RunFailEvent
+}
+export class $Database<T extends $Env = $Env> extends EventTarget<$DatabaseEventMap>{
     protected readonly tables: Record<string, $Table<T>> = {}
     readonly settings: DatabaseSettings
     auth: AuthContext = {
@@ -48,14 +53,21 @@ export class $Database<T extends $Env = $Env>{
     readonly queryLog: string[] = []
 
     readonly email: EmailSendClient<T> | null
-    jwt: JWTTokenHelper
-    kv: InternalKV<T>
-    extensions: $DBExtension<T>[] = []
+    // readonly notify: NotifyClient
+    readonly jwt: JWTTokenHelper
+    readonly kv: InternalKV<T>
+    readonly extensions: $DBExtension<T>[] = []
 
     public readonly c: Context<T>
-    secretResolver
+    readonly secretResolver
+
+    protected dryRunMode = false
+    protected readOnlyMode = false
+
+    private readonly adminJwtSecret: string
 
     constructor(c: Context<T>, settings: z.infer<typeof databaseSettingsSchema>|DatabaseSettings|undefined, database: D1Database, storage?: R2Bucket) {
+        super()
         this.c = c
         if((c.env as any).IS_VITEST){
             const h = c.req.header('$DB_TEST_DATABASE_SETTINGS')
@@ -87,6 +99,8 @@ export class $Database<T extends $Env = $Env>{
         } : undefined) : null
         if(this.email) this.extensions.push(this.email)
 
+        // this.notify = new NotifyClient({}, this.email)
+
         const jwtSecret = this.secretResolver.resolve(this.settings.jwtSecret)
         if (!jwtSecret?.length) throw new HTTPException(500, {message: 'Invalid configuration - jwt secret is required'})
         this.adminJwtSecret = this.c.env.ADMIN_JWT_SECRET ? this.secretResolver.resolve(this.c.env.ADMIN_JWT_SECRET) : ''
@@ -107,6 +121,8 @@ export class $Database<T extends $Env = $Env>{
             ...this.settings.tables.map(t => this.table(t.name).setup(version))
         ])
     }
+
+    // region auth
 
     async initAuth(tok?: string|false) {
         // console.log('c auth 2 ', this.c.get('auth'))
@@ -213,6 +229,10 @@ export class $Database<T extends $Env = $Env>{
         return await this.jwt.createJwtToken(data, this.adminJwtSecret, tokenDuration)
     }
 
+    // endregion auth
+
+    // region table
+
     table(name: string) {
         if (this.tables[name]) return this.tables[name]
         const tableData = this.settings.tables.find(t => t.name === name)
@@ -228,6 +248,10 @@ export class $Database<T extends $Env = $Env>{
         const keys = this.settings.tables.map(t=>t.name)
         return keys.map(k=>this.table(k))
     }
+
+    // endregion table
+
+    // region route
 
     readonly _apiBase = '/api'
     readonly apiBase = this._apiBase + '/v1'
@@ -260,17 +284,24 @@ export class $Database<T extends $Env = $Env>{
         }
     }
 
-    // crud
+    getRoutes(){
+        this._initRoutes()
+        return this.routes
+    }
+    // endregion route
+
+    // region crud
 
     async rawDelete<T1 = any>(table: $Table, query: OptionalOmit<DeleteQuery, 'table'>, filesToDelete?: string[]){
         if(this.readOnlyMode) throw new ProcessError('DELETE not allowed in read only mode')
 
         if((query as DeleteQuery).table && (query as DeleteQuery).table !== table.jc.tableName) throw new ProcessError('Invalid table')
 
-        const sql = buildDeleteQuery({...query, table: table.jc.tableName}, table.jc.autoSimplifyExpr)
+        const deleteQuery = {...query, table: table.jc.tableName}
+        const sql = buildDeleteQuery(deleteQuery, table.jc.autoSimplifyExpr)
 
         // todo make beforeDelete
-        const res = await this.run<T1>(sql, 'Failed to run delete query', table)
+        const res = await this.run<T1, 'delete'>(sql, 'Failed to run delete query', {table, type: 'delete', crudQuery: deleteQuery, query: sql})
 
         // todo make onDelete
         // ignore error on fail
@@ -285,7 +316,7 @@ export class $Database<T extends $Env = $Env>{
 
         if((query as InsertQuery).table && (query as InsertQuery).table !== table.jc.tableName) throw new ProcessError('Invalid table')
 
-        const sqlQs: SQLQuery[] = []
+        const sqlQs: [InsertQuery, SQLQuery][] = []
         if(Array.isArray(query.values)){
             // D1 has SQLITE_MAX_COMPOUND_SELECT of 5
             // https://github.com/cloudflare/workerd/blob/c3a0749df92ea56a362c2c132fe09fb69e0f92cd/src/workerd/util/sqlite.c%2B%2B#L1070
@@ -294,12 +325,14 @@ export class $Database<T extends $Env = $Env>{
             const batchSize = 5
             for (let i = 0; i < query.values.length; i += batchSize) {
                 const batch = query.values.slice(i, i + batchSize)
-                const sql = buildInsertQuery({...query, values: batch, table: table.jc.tableName}, table.jc.autoSimplifyExpr)
-                sqlQs.push(sql)
+                const insertQuery = {...query, values: batch, table: table.jc.tableName}
+                const sql = buildInsertQuery(insertQuery, table.jc.autoSimplifyExpr)
+                sqlQs.push([insertQuery, sql])
             }
         }else {
-            const sql = buildInsertQuery({...query, table: table.jc.tableName}, table.jc.autoSimplifyExpr)
-            sqlQs.push(sql)
+            const insertQuery = {...query, table: table.jc.tableName}
+            const sql = buildInsertQuery(insertQuery, table.jc.autoSimplifyExpr)
+            sqlQs.push([insertQuery, sql])
         }
         // const sql = buildInsertQuery({...query, table: table.jc.tableName}, table.jc.autoSimplifyExpr)
 
@@ -312,9 +345,9 @@ export class $Database<T extends $Env = $Env>{
         let err = null as any
         try {
             if(sqlQs.length === 1) {
-                res = await this.run<T1>(sqlQs[0], 'Failed to run insert query', table)
+                res = await this.run<T1, 'insert'>(sqlQs[0][1], 'Failed to run insert query', {table, type: 'insert', crudQuery: sqlQs[0][0], query: sqlQs[0][1]})
             }else {
-                res = (await this.transaction<T1>(sqlQs, 'Failed to run insert query')).flatMap(r => r.results)
+                res = (await this.transaction<T1>(sqlQs.map(q=>q[1]), 'Failed to run insert query', {table, type: 'insert', crudQuery: sqlQs.map(q=>q[0]), query: sqlQs.map(q=>q[1])})).flatMap(r => r.results)
             }
         }catch (e){
             console.error(e)
@@ -338,7 +371,8 @@ export class $Database<T extends $Env = $Env>{
 
         if((query as UpdateQuery).table && (query as UpdateQuery).table !== table.jc.tableName) throw new ProcessError('Invalid table')
 
-        const sql = buildUpdateQuery({...query, table: table.jc.tableName}, table.jc.autoSimplifyExpr)
+        const updateQuery = {...query, table: table.jc.tableName}
+        const sql = buildUpdateQuery(updateQuery, table.jc.autoSimplifyExpr)
 
         // todo - make beforeUpdate
 
@@ -349,7 +383,7 @@ export class $Database<T extends $Env = $Env>{
         let res: T1[]|null
         let err = null as any
         try {
-            res = await this.run<T1>(sql, 'Failed to run update query', table)
+            res = await this.run<T1, 'update'>(sql, 'Failed to run update query', {table, type: 'update', crudQuery: updateQuery, query: sql})
         }catch (e){
             console.error(e)
             err = e
@@ -376,11 +410,12 @@ export class $Database<T extends $Env = $Env>{
     async rawSelect<T=any>(table: $Table, query: OptionalOmit<SelectQuery, 'from'>, countTotal: boolean): Promise<{ items: T[], total: number }>
     async rawSelect<T=any>(table: $Table, query: OptionalOmit<SelectQuery, 'from'>, countTotal?: boolean){
         if((query as SelectQuery).from && (query as SelectQuery).from !== table.jc.tableName) throw new ProcessError('Invalid from table')
-        const sql = buildSelectQuery({...query, from: table.jc.tableName}, table.jc.autoSimplifyExpr)
+        const selectQuery = {...query, from: table.jc.tableName}
+        const sql = buildSelectQuery(selectQuery, table.jc.autoSimplifyExpr)
         // console.log(query, sql)
 
         if(!countTotal) {
-            const res = await this.run(sql, 'Failed to run select query', table)
+            const res = await this.run<T, 'select'>(sql, 'Failed to run select query', {table, type: 'select', crudQuery: selectQuery, query: sql})
             // console.log(res)
             return countTotal === undefined ? res : {items: res, total: -1}
         }
@@ -388,7 +423,7 @@ export class $Database<T extends $Env = $Env>{
         const countField = table.mapping.uid ? ident(table.mapping.uid, table.jc) : '*'
         // const countField = table.mapping.uid ? `DISTINCT ${table.data.name}.${columnify(table.mapping.uid)}` : '*'
 
-        const countQuery = buildSelectQuery({
+        const countSelectQuery = {
             ...query,
             from: table.jc.tableName,
             selects: [`count(${countField}) as total`],
@@ -397,20 +432,29 @@ export class $Database<T extends $Env = $Env>{
             orderBy: undefined,
             groupBy: undefined,
             distinct: false,
-        }, table.jc.autoSimplifyExpr)
+        }
+        const countQuery = buildSelectQuery(countSelectQuery, table.jc.autoSimplifyExpr)
 
-        const res = await this.transaction([sql, countQuery], 'Failed to run select query', table)
+        const res = await this.transaction([sql, countQuery], 'Failed to run select query', {table, type: 'select', crudQuery: [selectQuery, countSelectQuery], query: [sql, countQuery]})
 
         return {items: res[0].results, total: (res[1].results[0] as any)?.total ?? -1}
     }
 
-    async rawSQL<T>(d1Expr: D1Query, onErr?: (er: any) => any) {
-        return this._rawSQL<T>(d1Expr, onErr, false)
+    // endregion crud
+
+    // region sql
+
+    async rawSQL<T>(d1Expr: D1Query, onErr?: (er: any) => any, c?: SQLRunContext) {
+        return this._rawSQL<T>(d1Expr, onErr, false, c)
     }
 
-    async rawSQLTransaction<T>(d1Expr: D1Query[], onErr?: (er: any) => any) {
-        return this._rawSQLTransaction<T>(d1Expr, onErr, false)
+    async rawSQLTransaction<T>(d1Expr: D1Query[], onErr?: (er: any) => any, c?: SQLRunTransactionContext) {
+        return this._rawSQLTransaction<T>(d1Expr, onErr, false, c)
     }
+
+    // endregion sql
+
+    // region r2/s3
 
     async headFileObject(key: string){
         if(this.dryRunMode || this.c.env.RESPOND_WITH_QUERY_LOG)
@@ -452,14 +496,12 @@ export class $Database<T extends $Env = $Env>{
         return this.bucket.delete(keys)
     }
 
-    dryRunMode = false
-    readOnlyMode = false
+    // endregion r2/s3
 
+    // region private sql
     private readonly database: D1Database
-    private readonly storage?: R2Bucket
-    private adminJwtSecret: string
 
-    private async run<T>(q: SQLQuery, err: string, table?: $Table) {
+    private async run<T, TC extends keyof QueryTypes>(q: SQLQuery, err: string, c: SQLRunContext<TC>) {
         if (this.dryRunMode || this.c.env.RESPOND_WITH_QUERY_LOG) {
             this.queryLog.push(logSQLQuery(q))
         }
@@ -471,12 +513,12 @@ export class $Database<T extends $Env = $Env>{
             const msg = er.message ? er.message.replace(/D1_ERROR: /g, '') : 'Unknown error'
             // throw new HTTPException(500, { message: err + ' - ' + msg, asd });
             const e = new D1Error(err || 'Unknown SQL Error', msg, er, logSQLQuery(q))
-            return table?.parseD1Error(e) ?? e
+            return c?.table?.parseD1Error(e) ?? e
         }
         if(this.dryRunMode) return [] // todo add dummy data?
-        return await this._rawSQL<T>(d1Expr, onErr, q._readOnly)
+        return await this._rawSQL<T>(d1Expr, onErr, q._readOnly, c)
     }
-    private async transaction<T>(q: SQLQuery[], err: string, table?: $Table) {
+    private async transaction<T>(q: SQLQuery[], err: string, c: SQLRunTransactionContext) {
         if (this.dryRunMode || this.c.env.RESPOND_WITH_QUERY_LOG) {
             this.queryLog.push(q.map(q1 => logSQLQuery(q1)).join(';\n'))
         }
@@ -487,65 +529,82 @@ export class $Database<T extends $Env = $Env>{
             const msg = er.message ? er.message.replace(/D1_ERROR: /g, '') : 'Unknown error'
             // throw new HTTPException(500, { message: err??'Error running transaction' });
             const e = new D1Error(err || 'Unknown SQL Error(t)', msg, er, q.map(q1 => logSQLQuery(q1)).join(';\n'))
-            return table?.parseD1Error(e) ?? e
+            return c?.table?.parseD1Error(e) ?? e
         }
         if(this.dryRunMode) return [] // todo add dummy data?
-        return await this._rawSQLTransaction<T>(d1Expr, onErr, q.every(q1=>q1._readOnly))
+        return await this._rawSQLTransaction<T>(d1Expr, onErr, q.every(q1=>q1._readOnly), c)
     }
 
-    private async _rawSQL<T>(d1Expr: D1Query, onErr?: (er: any) => any, readOnly = false) {
+    private async _rawSQL<T>(d1Expr: D1Query, onErr?: (er: any) => any, readOnly = false, c?: SQLRunContext) {
         if (this.readOnlyMode && !readOnly) throw new ProcessError('Running raw SQL is not allowed in read only mode.')
         if (this.dryRunMode) throw new ProcessError('Running raw SQL is not allowed in dry run.')
-        if(!onErr) onErr = (er: any)=>er
+        const onError = (er: any)=>{
+            this.dispatchEvent(new D1RunFailEvent({input: {...c, d1Expr}, error: er}))
+            return onErr ? onErr(er) : er
+        }
 
         const prepared = this.database.prepare(d1Expr.q).bind(...d1Expr.v)
         // console.log('Running query:', query.q, query.v)
-        const res = await prepared.run<T>().catch((e)=>{
-            throw onErr(e)
-        })
-        if (!res) throw onErr({message: 'No result'})
-        else if (!res.success) throw onErr(res.error)
-        // console.log('Query result:', res)
-        else return res.results
+        const res = await prepared.run<T>().catch((e)=> {throw onError(e)})
+        if (!res) throw onError({message: 'No result'})
+        else if (!res.success) throw onError(res.error)
+        else {
+            // console.log('Query result:', res)
+            this.dispatchEvent(new D1RunEvent({input: {...c, d1Expr}, result: res}))
+            return res.results
+        }
     }
-    private async _rawSQLTransaction<T>(d1Expr: D1Query[], onErr?: (er: any) => any, readOnly = false) {
+    private async _rawSQLTransaction<T>(d1Exprs: D1Query[], onErr?: (er: any) => any, readOnly = false, c?: SQLRunTransactionContext) {
         if (this.readOnlyMode && !readOnly) throw new ProcessError('Running raw SQL is not allowed in read only mode.')
         if (this.dryRunMode) throw new ProcessError('Running raw SQL is not allowed in dry run.')
-        if(!onErr) onErr = (er: any)=>er
+        const onError = (er: any)=>{
+            let i = 0
+            for (const d1Expr of d1Exprs) {
+                this.dispatchEvent(new D1RunFailEvent({input: {...c, d1Expr, query: c?.query[i], crudQuery: c?.crudQuery[i]}, error: er}))
+                i++
+            }
+            return onErr ? onErr(er) : er
+        }
 
-        const prepared = d1Expr.map(query => query.q ? this.database.prepare(query.q).bind(...query.v) : null)
+        const prepared = d1Exprs.map(query => query.q ? this.database.prepare(query.q).bind(...query.v) : null)
         // console.log('Running batch queries:', qs)
 
         // todo proper error return for transaction
 
         const p2 = prepared.filter(p => !!p) as D1PreparedStatement[]
         const res = p2.length ? await this.database.batch<T>(p2).catch((e)=>{
-            throw onErr(e)
+            throw onError(e)
         }) : []
-        if (!res) throw onErr({message: 'No result'})
+        if (!res) throw onError({message: 'No result'})
 
         let ki = 0
-        const res2 = prepared.map((p, i) => {
-            if (!p) return {
-                results: [],
-                success: true,
-                // meta: {},
-            } as Omit<D1Result<T>, 'meta'>
-            const r = res[ki++]
-            // if(!r) return null
-            // if(!r.success) onErr(r.error)
-            return r
-        })
-        // console.log('Query result:', res)
-        return res2
+        let i = 0
+        const events: D1RunEvent[] = []
+        const results = [] as (D1Result<T>|Omit<D1Result<T>, 'meta'>)[]
+        for (const d1Expr of d1Exprs) {
+            const p = prepared[i]
+            const r = p ? res[ki] : ({success: true, results: []} as Omit<D1Result<T>, 'meta'>)
+            if(p) events.push(new D1RunEvent({input: {...c, d1Expr, query: c?.query[i], crudQuery: c?.crudQuery[i]}, result: res[ki]}))
+            if(!r.success) throw onError(r.error)
+            results.push(r)
+            i++
+            if(p) ki++
+        }
+        events.forEach(e=>this.dispatchEvent(e))
+
+        return results
     }
+
+    // endregion private sql
+
+    // region private r2/s3
+
+    private readonly storage?: R2Bucket
 
     private get bucket() {
         if (!this.storage) throw new HTTPException(500, {message: 'No bucket provided'});
         return this.storage
     }
-
-    // table specific file handling
 
     /**
      * Checks that all files referenced in a query exist
@@ -627,7 +686,9 @@ export class $Database<T extends $Env = $Env>{
         })
     }
 
-    // Routing
+    // endregion private r2/s3
+
+    // region routing
 
     private routes: HttpRoute[] = [{
         path: '/setup-db',
@@ -768,10 +829,8 @@ export class $Database<T extends $Env = $Env>{
         if(!handler) return undefined
         return await handler(params as Record<string, string>)
     }
-    getRoutes(){
-        this._initRoutes()
-        return this.routes
-    }
+
+    // endregion routing
 }
 
 export class SecretResolver{
@@ -783,3 +842,14 @@ export class SecretResolver{
 }
 
 export type OptionalOmit<T, K extends keyof T> = Omit<T, K> & Pick<Partial<T>, K>;
+
+
+// export type NotifyModes = 'email'|'discord'/*|'slack'|'webhook'*/
+// export class NotifyClient{
+//     constructor(private props: {}, private email: EmailSendClient<any>|null) {
+//     }
+//
+//     send(mode: NotifyModes){
+//
+//     }
+// }

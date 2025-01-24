@@ -1,4 +1,15 @@
 import {SQLLiteral, SQLQuery} from '../../types/sql'
+import {SelectQuery} from './select'
+import {InsertQuery} from './insert'
+import {UpdateQuery} from './update'
+import {DeleteQuery} from './delete'
+
+export interface QueryTypes{
+    select: SelectQuery
+    insert: InsertQuery
+    update: UpdateQuery
+    delete: DeleteQuery
+}
 
 /**
  * Warning - use only for logging, not for building queries.
