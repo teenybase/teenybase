@@ -3,7 +3,7 @@ import {normalizeFileName} from '../src/worker/util/string'
 import {randomString} from '../src'
 
 describe('normalizeFileName', () => {
-    test('test', ()=> expect(normalizeFileName('test123', '_asd')).toBe('test_123_asd.dat'))
+    test('test', ()=> expect(normalizeFileName('test123', '_asd')).toBe('test123_asd.dat'))
     test('test 1', ()=> expect(normalizeFileName('test 1', '_asd')).toBe('test_1_asd.dat'))
     test('test-1', ()=> expect(normalizeFileName('test-1', '_asd')).toBe('test_1_asd.dat'))
     test('test-1 2', ()=> expect(normalizeFileName('test-1 2.png', '_asd')).toBe('test_1_2_asd.png'))
