@@ -1,6 +1,6 @@
 import {describe, expect, test} from 'vitest'
-import {normalizeFileName} from '../src/worker/util/string'
-import {randomString} from '../src'
+import {normalizeFileName} from '../../src/worker/util/string'
+import {randomString} from '../../src'
 
 describe('normalizeFileName', () => {
     test('test', ()=> expect(normalizeFileName('test123', '_asd')).toBe('test123_asd.dat'))

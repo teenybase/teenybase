@@ -34,7 +34,7 @@ export class TableCrudExtension extends TableExtension<TableCrudExtensionData> {
             },
         })
         this.routes.push({
-            handler: async(body: any, p?: any)=>await (await this.table.select(body))?.run()??[],
+            handler: async(body: any, p?: any)=>await this.table.select(body)??[],
             path: '/select',
             method: 'get',
             zod: ()=>({
@@ -44,7 +44,7 @@ export class TableCrudExtension extends TableExtension<TableCrudExtensionData> {
             }),
         })
         this.routes.push({
-            handler: async(body: any, p?: any)=>await (await this.table.select(body))?.run()??[],
+            handler: async(body: any, p?: any)=>await this.table.select(body)??[],
             path: '/select',
             method: 'post',
             zod: ()=>({
@@ -57,7 +57,7 @@ export class TableCrudExtension extends TableExtension<TableCrudExtensionData> {
             }),
         })
         this.routes.push({
-            handler: async(body: any, p?: any)=>await (await this.table.select(body, true))?.run()??[],
+            handler: async(body: any, p?: any)=>await this.table.select(body, true)??[],
             path: '/list',
             method: 'get',
             zod: ()=>({
@@ -70,7 +70,7 @@ export class TableCrudExtension extends TableExtension<TableCrudExtensionData> {
             }),
         })
         this.routes.push({
-            handler: async(body: any, p?: any)=>await (await this.table.select(body, true))?.run()??[],
+            handler: async(body: any, p?: any)=>await this.table.select(body, true)??[],
             path: '/list',
             method: 'post',
             zod: ()=>({
@@ -86,7 +86,7 @@ export class TableCrudExtension extends TableExtension<TableCrudExtensionData> {
             }),
         })
         this.routes.push({
-            handler: async(body: any, p?: any)=>await (await this.table.update(body))?.run()??[],
+            handler: async(body: any, p?: any)=>await this.table.update(body)??[],
             path: '/update',
             method: 'post',
             zod: ()=>({
@@ -99,7 +99,7 @@ export class TableCrudExtension extends TableExtension<TableCrudExtensionData> {
             }),
         })
         this.routes.push({
-            handler: async(body: any, p?: any)=>await (await this.table.insert(body))?.run()??[],
+            handler: async(body: any, p?: any)=>await this.table.insert(body)??[],
             path: '/insert',
             method: 'post',
             zod: ()=>({
@@ -112,7 +112,7 @@ export class TableCrudExtension extends TableExtension<TableCrudExtensionData> {
             }),
         })
         this.routes.push({
-            handler: async(body: any, p?: any)=>await (await this.table.delete(body))?.run(),
+            handler: async(body: any, p?: any)=>await this.table.delete(body),
             path: '/delete',
             method: 'post',
             zod: ()=>({
@@ -126,7 +126,7 @@ export class TableCrudExtension extends TableExtension<TableCrudExtensionData> {
         })
         if(this.table.fieldsUsage.record_uid) {
             this.routes.push({
-                handler: async (body: any, p?: any) => await (await this.table.view(body, z.string().min(1).max(255).parse(p.id)))?.run() ?? undefined,
+                handler: async (body: any, p?: any) => await this.table.view(body, z.string().min(1).max(255).parse(p.id)) ?? undefined,
                 path: '/view/:id',
                 method: 'get',
                 zod: () => ({
@@ -136,11 +136,11 @@ export class TableCrudExtension extends TableExtension<TableCrudExtensionData> {
                 }),
             })
             this.routes.push({
-                handler: async (body: any, p?: any) => await (await this.table.edit({
+                handler: async (body: any, p?: any) => await this.table.edit({
                     setValues: body,
                     returning: this.table.$db.c.req.query('returning'),
                     or: tableEditSchema.shape.or.parse(this.table.$db.c.req.query('or')),
-                }, z.string().min(1).max(255).parse(p.id)))?.run()??undefined,
+                }, z.string().min(1).max(255).parse(p.id)) ?? undefined,
                 path: '/edit/:id',
                 method: 'post',
                 zod: () => ({

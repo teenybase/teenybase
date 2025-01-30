@@ -143,6 +143,27 @@ test('login with pass and token refresh', async () => {
     expect(decode2.sub).toEqual('admin@example.com')
 })
 
+test('login with email, pass', async () => {
+    await createUser({username: 'testuser', email: 'adm.in+3.hello123@gmail.com'})
+
+    const res = await fetch(`users/auth/login-password`, {
+        method: 'POST',
+        body: JSON.stringify({email: 'ADMI.N+23@gmaIL.cOm', password: '12345678',}),
+    })
+    expect(res.status).toEqual(200)
+    const json = await res.json() as any
+    const authExt = settings.tables.find(t=>t.name==='users')?.extensions.find(e=>e.name==='auth') as TableAuthExtensionData
+    expect(authExt).toBeDefined()
+    await jwt.verify(json.token, authExt!.jwtSecret, {throwError: true})
+    const decode = jwt.decode(json.token).payload!
+    expect(decode.aud).toEqual(['guest'])
+    expect((decode as any).verified).toEqual(false)
+    expect((decode as any).cid).toEqual('users')
+    expect(decode.sub).toEqual('admin@gmail.com')
+    expect((decode as any).user).toEqual('testuser')
+
+})
+
 test('list users - *', async () => {
     const token = await createUser({username: 'a'})
 

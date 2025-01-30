@@ -1,8 +1,8 @@
 import {describe, expect, test} from 'vitest'
-import {queryToSqlQuery} from '../src/sql/parse/parse'
-import {literalToQuery} from '../src'
-import {createJsepContext, emptyGlobals} from '../src/sql/parse/jsep'
-import {logSQLQuery} from '../src/sql/build/query'
+import {queryToSqlQuery} from '../../src/sql/parse/parse'
+import {literalToQuery} from '../../src'
+import {createJsepContext, emptyGlobals} from '../../src/sql/parse/jsep'
+import {logSQLQuery} from '../../src/sql/build/query'
 
 const f = (input: string, table: string, simplify = true, autoNull = true) => {
     const jc = createJsepContext(table, [], {

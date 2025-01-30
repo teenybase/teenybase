@@ -1,4 +1,3 @@
-import {LinearRouter} from 'hono/router/linear-router'
 import {$Table} from './$Table'
 import {TableExtensionData} from '../types/table'
 import {JsepContext} from '../sql/parse/jsep'
@@ -6,9 +5,7 @@ import {InsertQuery} from '../sql/build/insert'
 import {DeleteQuery} from '../sql/build/delete'
 import {UpdateQuery} from '../sql/build/update'
 import {SelectQuery} from '../sql/build/select'
-import {parseRequestBody} from './util/parseRequestBody'
-import {ProcessError} from './util/error'
-import {HttpRoute, RawRouterHandlerFunction} from '../types/route'
+import {HttpRoute} from '../types/route'
 
 export class TableExtension<TData extends TableExtensionData = TableExtensionData> {
     get name(){

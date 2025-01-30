@@ -33,6 +33,7 @@ export interface TableAuthExtensionData extends TableExtensionData {
     passwordResetTokenDuration?: number
     emailVerifyTokenDuration?: number
     autoSendVerificationEmail?: boolean // default = false
+    normalizeEmail?: boolean // default = true. converts to lower case, remove + suffix and remove dots from gmail. todo should this be in field level?
 
     emailTemplates?: Partial<Record<'verification' | 'passwordReset', {
         subject?: string,

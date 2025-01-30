@@ -9,6 +9,8 @@ beforeAll(async () => {
     console.log('Before All - Setup Test 1')
 })
 
+const basePath = 'https://localhost/api/v1/table'
+
 const fetch = (input: RequestInfo, init?: RequestInit)=>SELF.fetch(input, {...init, ...{
         headers: {
             'Content-Type': init?.method === 'POST' ? 'application/json' : 'text/plain',
@@ -18,7 +20,7 @@ const fetch = (input: RequestInfo, init?: RequestInit)=>SELF.fetch(input, {...in
     }})
 
 test('select with filters get', async () => {
-    const res = await fetch(`https://localhost/api/v1/table/users/select?limit=4&select=uid,name,email&order=uid&where=${encodeURIComponent(`name~'%o%'`)}`)
+    const res = await fetch(`${basePath}/users/select?limit=4&select=uid,name,email&order=uid&where=${encodeURIComponent(`name~'%o%'`)}`)
     const json = (await res.text()).trim()
     // console.log(json)
     expect(res.status).toEqual(200)
@@ -26,9 +28,8 @@ test('select with filters get', async () => {
     // console.log(JSON.parse(json))
 })
 
-
 test('select with filters get 2', async () => {
-    const res = await fetch(`https://localhost/api/v1/table/users/select?select=uid,users.id&order=name&where=${encodeURIComponent(`name~'%o%'&id>5`)}`)
+    const res = await fetch(`${basePath}/users/select?select=uid,users.id&order=name&where=${encodeURIComponent(`name~'%o%'&id>5`)}`)
     const json = (await res.text()).trim()
     // console.log(json)
     expect(res.status).toEqual(200)
@@ -37,7 +38,7 @@ test('select with filters get 2', async () => {
 })
 
 test('select count id', async () => {
-    const res = await fetch(`https://localhost/api/v1/table/users/select?select=count(id)=>count`)
+    const res = await fetch(`${basePath}/users/select?select=count(id)=>count`)
     const json = (await res.text()).trim()
     // console.log(json)
     expect(res.status).toEqual(200)
@@ -46,7 +47,7 @@ test('select count id', async () => {
 })
 
 test('select count all', async () => {
-    const res = await fetch(`https://localhost/api/v1/table/users/select?select=count()`)
+    const res = await fetch(`${basePath}/users/select?select=count()`)
     const json = (await res.text()).trim()
     // console.log(json)
     expect(res.status).toEqual(200)
@@ -55,7 +56,7 @@ test('select count all', async () => {
 })
 
 // test('select with join', async () => {
-//     const res = await fetch(`https://localhost/api/v1/table/users/select?select=users.uid,files.id&join=files.user_id=users.id&where=${encodeURIComponent(`users.id=1`)}`)
+//     const res = await fetch(`${basePath}/users/select?select=users.uid,files.id&join=files.user_id=users.id&where=${encodeURIComponent(`users.id=1`)}`)
 //     const json = (await res.text()).trim()
 //     console.log(json)
 //     expect(res.status).toEqual(200)
@@ -64,7 +65,7 @@ test('select count all', async () => {
 // })
 
 test('select with filters post', async () => {
-    const res = await fetch(`https://localhost/api/v1/table/users/select`, {
+    const res = await fetch(`${basePath}/users/select`, {
         method: 'POST',
         body: JSON.stringify({
             limit: 4,
@@ -81,7 +82,7 @@ test('select with filters post', async () => {
 })
 
 test('insert single', async () => {
-    const res = await fetch(`https://localhost/api/v1/table/users/insert`, {
+    const res = await fetch(`${basePath}/users/insert`, {
         method: 'POST',
         body: JSON.stringify({
             values: {
@@ -98,7 +99,7 @@ test('insert single', async () => {
     expect(res.status).toEqual(200)
     expect(json).toEqual(`[{"id":11,"uid":"test123","name":"Test Name","email":"test@example.com"}]`)
     const js = JSON.parse(json)[0]
-    const res2 = await fetch(`https://localhost/api/v1/table/users/select?select=id,uid,name,email&where=${encodeURIComponent(`id=`+js.id)}`)
+    const res2 = await fetch(`${basePath}/users/select?select=id,uid,name,email&where=${encodeURIComponent(`id=`+js.id)}`)
     const json2 = (await res2.text()).trim()
     // console.log(json2)
     expect(res2.status).toEqual(200)
@@ -119,16 +120,16 @@ test('insert twice', async () => {
             // or: 'ABORT',
         }),
     }
-    const res = await fetch(`https://localhost/api/v1/table/users/insert`, {...req, body: JSON.stringify(req.body)})
+    const res = await fetch(`${basePath}/users/insert`, {...req, body: JSON.stringify(req.body)})
     expect(res.status).toEqual(200)
     expect(await res.json()).toEqual([{"id":11,"uid":"test123","name":"Test Name","email":"test@example.com"}])
-    const count = await fetch(`https://localhost/api/v1/table/users/select?select=count(id)=>c`)
+    const count = await fetch(`${basePath}/users/select?select=count(id)=>c`)
     expect((await count.json() as any)[0].c).toEqual(11)
 
     req.body.values.name = 'Name 2'
 
     // fail
-    const res2 = await fetch(`https://localhost/api/v1/table/users/insert`, {...req, body: JSON.stringify(req.body)})
+    const res2 = await fetch(`${basePath}/users/insert`, {...req, body: JSON.stringify(req.body)})
     const json = (await res2.json()) as any
     expect(json.code).toEqual(400)
     expect(json.message).toEqual('Failed to run insert query')
@@ -142,15 +143,15 @@ test('insert twice', async () => {
     // @ts-ignore
     req.body.or = 'REPLACE'
     // @ts-ignore
-    const res3 = await fetch(`https://localhost/api/v1/table/users/insert`, {...req, body: JSON.stringify(req.body)})
+    const res3 = await fetch(`${basePath}/users/insert`, {...req, body: JSON.stringify(req.body)})
     expect(res3.status).toEqual(200)
     const json2 = await res3.json()
     // id will be incremented, previous record will be deleted
     expect(json2).toEqual([{"id":12,"uid":"test123","name":"Name 2","email":"test@example.com"}])
 
-    const count2 = await fetch(`https://localhost/api/v1/table/users/select?select=count(id)=>c`)
+    const count2 = await fetch(`${basePath}/users/select?select=count(id)=>c`)
     expect((await count2.json() as any)[0].c).toEqual(11)
-    const last = await fetch(`https://localhost/api/v1/table/users/select?select=id&where=${encodeURIComponent(`id=11`)}`)
+    const last = await fetch(`${basePath}/users/select?select=id&where=${encodeURIComponent(`id=11`)}`)
     expect(await last.json()).toEqual([])
 
 })
@@ -158,7 +159,7 @@ test('insert twice', async () => {
 test('insert multiple', async () => {
     const time = Date.now() / 1000
     await new Promise((r) => setTimeout(r, 1000))
-    const res = await fetch(`https://localhost/api/v1/table/users/insert`, {
+    const res = await fetch(`${basePath}/users/insert`, {
         method: 'POST',
         body: JSON.stringify({
             values: [{
@@ -179,7 +180,7 @@ test('insert multiple', async () => {
     // console.log(json)
     expect(res.status).toEqual(200)
     expect(json).toEqual(`[{"id":11,"pass_hash":"babababaaaa"},{"id":12,"pass_hash":"aaababababe"}]`)
-    const res2 = await fetch(`https://localhost/api/v1/table/users/select?select=id,pass_hash&where=${encodeURIComponent(`unixepoch(created)>=${time}`)}`)
+    const res2 = await fetch(`${basePath}/users/select?select=id,pass_hash&where=${encodeURIComponent(`unixepoch(created)>=${time}`)}`)
     const json2 = (await res2.text()).trim()
     // console.log(JSON.parse(json2))
     expect(res2.status).toEqual(200)
@@ -187,7 +188,7 @@ test('insert multiple', async () => {
 })
 
 test('update single setValues', async () => {
-    const res = await fetch(`https://localhost/api/v1/table/users/update`, {
+    const res = await fetch(`${basePath}/users/update`, {
         method: 'POST',
         body: JSON.stringify({
             setValues: {
@@ -203,7 +204,7 @@ test('update single setValues', async () => {
     expect(res.status).toEqual(200)
     expect(json).toEqual(`[{"id":1,"uid":"john123","name":"Test Name Updated","email":"test@example.com"}]`)
     const js = JSON.parse(json)[0]
-    const res2 = await fetch(`https://localhost/api/v1/table/users/select?select=id,uid,name,email&where=${encodeURIComponent(`id=`+js.id)}`)
+    const res2 = await fetch(`${basePath}/users/select?select=id,uid,name,email&where=${encodeURIComponent(`id=`+js.id)}`)
     const json2 = (await res2.text()).trim()
     // console.log(json2)
     expect(res2.status).toEqual(200)
@@ -211,7 +212,7 @@ test('update single setValues', async () => {
 })
 
 test('edit, view', async () => {
-    const res = await fetch(`https://localhost/api/v1/table/users/edit/1?returning=id,uid,name,email`, {
+    const res = await fetch(`${basePath}/users/edit/1?returning=id,uid,name,email`, {
         method: 'POST',
         body: JSON.stringify({
             name: 'Test Name Updated',
@@ -222,7 +223,7 @@ test('edit, view', async () => {
     // console.log(json)
     expect(res.status).toEqual(200)
     expect(json).toEqual(`{"id":1,"uid":"john123","name":"Test Name Updated","email":"test@example.com"}`)
-    const res2 = await fetch(`https://localhost/api/v1/table/users/view/1?select=id,uid,name,email`)
+    const res2 = await fetch(`${basePath}/users/view/1?select=id,uid,name,email`)
     const json2 = (await res2.text()).trim()
     // console.log(json2)
     expect(res2.status).toEqual(200)
@@ -233,7 +234,7 @@ test('edit formdata', async () => {
     const formData = new FormData()
     formData.append('name', 'Test Name Updated')
     formData.append('email', 'test@example.com')
-    const res = await SELF.fetch(`https://localhost/api/v1/table/users/edit/1?returning=id,uid,name,email`, {
+    const res = await SELF.fetch(`${basePath}/users/edit/1?returning=id,uid,name,email`, {
         method: 'POST',
         body: formData,
         headers: {
@@ -246,7 +247,7 @@ test('edit formdata', async () => {
 })
 
 test('update single set', async () => {
-    const res = await fetch(`https://localhost/api/v1/table/users/update`, {
+    const res = await fetch(`${basePath}/users/update`, {
         method: 'POST',
         body: JSON.stringify({
             set: {
@@ -262,7 +263,7 @@ test('update single set', async () => {
     expect(res.status).toEqual(200)
     expect(json).toEqual(`[{"id":1,"uid":"john123","name":"John Doe1100.0"}]`)
     const js = JSON.parse(json)[0]
-    const res2 = await fetch(`https://localhost/api/v1/table/users/select?select=id,uid,name&where=${encodeURIComponent(`name="${js.name}"`)}`)
+    const res2 = await fetch(`${basePath}/users/select?select=id,uid,name&where=${encodeURIComponent(`name="${js.name}"`)}`)
     const json2 = (await res2.text()).trim()
     // console.log(json2)
     expect(res2.status).toEqual(200)
@@ -270,7 +271,7 @@ test('update single set', async () => {
 })
 
 test('update multiple set', async () => {
-    const res = await fetch(`https://localhost/api/v1/table/users/update`, {
+    const res = await fetch(`${basePath}/users/update`, {
         method: 'POST',
         body: JSON.stringify({
             set: {
@@ -290,13 +291,13 @@ test('update multiple set', async () => {
 
 test('delete single', async () => {
     const id = '1'
-    const res1 = await fetch(`https://localhost/api/v1/table/files/select?select=count(id)&where=${encodeURIComponent(`user_id='${id}'`)}`)
+    const res1 = await fetch(`${basePath}/files/select?select=count(id)&where=${encodeURIComponent(`user_id='${id}'`)}`)
     const json1 = (await res1.text()).trim()
     // console.log(json1)
     expect(res1.status).toEqual(200)
     expect(json1).toEqual(`[{"COUNT(([files].[id]))":1}]`)
 
-    const res = await fetch(`https://localhost/api/v1/table/users/delete`, {
+    const res = await fetch(`${basePath}/users/delete`, {
         method: 'POST',
         body: JSON.stringify({
             where: `id='${id}'`,
@@ -309,7 +310,7 @@ test('delete single', async () => {
     expect(json).toEqual(`[{"id":1,"uid":"john123","name":"John Doe"}]`)
 
     // test cascade delete
-    const res2 = await fetch(`https://localhost/api/v1/table/files/select?select=count(id)=>ci&where=${encodeURIComponent(`user_id='${id}'`)}`)
+    const res2 = await fetch(`${basePath}/files/select?select=count(id)=>ci&where=${encodeURIComponent(`user_id='${id}'`)}`)
     const json2 = (await res2.text()).trim()
     // console.log(json2)
     expect(res2.status).toEqual(200)
@@ -317,7 +318,7 @@ test('delete single', async () => {
 })
 
 test('delete multiple', async () => {
-    const res = await fetch(`https://localhost/api/v1/table/users/delete`, {
+    const res = await fetch(`${basePath}/users/delete`, {
         method: 'POST',
         body: JSON.stringify({
             where: 'id > 7 & true',
@@ -328,7 +329,7 @@ test('delete multiple', async () => {
     expect(res.status).toEqual(200)
     expect(JSON.parse(json)).toEqual([{"i":8,"uid":"grace505","n":"Grace Lee"},{"i":9,"uid":"henry606","n":"Henry Taylor"},{"i":10,"uid":"ivy707","n":"Ivy Clark"}])
 
-    const res1 = await fetch(`https://localhost/api/v1/table/users/select?select=id&where=${encodeURIComponent(`id > 7`)}`)
+    const res1 = await fetch(`${basePath}/users/select?select=id&where=${encodeURIComponent(`id > 7`)}`)
     const json1 = (await res1.text()).trim()
     expect(res1.status).toEqual(200)
     expect(json1).toEqual(`[]`)
@@ -336,7 +337,7 @@ test('delete multiple', async () => {
 
 // this throws error. just use count() which is same as count(*)
 test('select count(*)', async () => {
-    const res = await fetch(`https://localhost/api/v1/table/users/select?select=count(*)`)
+    const res = await fetch(`${basePath}/users/select?select=count(*)`)
     const json = await res.json() as any
     // console.log(json)
     expect(res.status).toEqual(400)
@@ -345,7 +346,7 @@ test('select count(*)', async () => {
 
 test('edit(upsert update), view', async () => {
     settings.tables[0].fields[0].noInsert = false
-    const res = await fetch(`https://localhost/api/v1/table/users/edit/1?or=INSERT&returning=*`, {
+    const res = await fetch(`${basePath}/users/edit/1?or=INSERT&returning=*`, {
         method: 'POST',
         body: JSON.stringify({
             name: 'Test Name Updated',
@@ -366,7 +367,7 @@ test('edit(upsert update), view', async () => {
         uid: 'john123',
         pass_hash: 'asdjadsa'
     })
-    const res2 = await fetch(`https://localhost/api/v1/table/users/view/1?select=*`)
+    const res2 = await fetch(`${basePath}/users/view/1?select=*`)
     const json2 = await res2.json()
     // console.log(json2)
     expect(res2.status).toEqual(200)
@@ -375,7 +376,7 @@ test('edit(upsert update), view', async () => {
 
 test('edit(upsert insert), view', async () => {
     settings.tables[0].fields[0].noInsert = false
-    const res = await fetch(`https://localhost/api/v1/table/users/edit/99?or=INSERT&returning=*`, {
+    const res = await fetch(`${basePath}/users/edit/99?or=INSERT&returning=*`, {
         method: 'POST',
         body: JSON.stringify({
             name: 'Test Name Updated',
@@ -396,9 +397,18 @@ test('edit(upsert insert), view', async () => {
         uid: 'john123',
         pass_hash: 'asdjadsa'
     })
-    const res2 = await fetch(`https://localhost/api/v1/table/users/view/99?select=*`)
+    const res2 = await fetch(`${basePath}/users/view/99?select=*`)
     const json2 = await res2.json()
     // console.log(json2)
     expect(res2.status).toEqual(200)
     expect(json2).toEqual(json)
+})
+
+test('test custom routing', async () => {
+    const res = await fetch(`https://localhost/teeny/test/v1/route/api/api/v1/table/users/select?select=count(id)=>count`)
+    const json = (await res.text()).trim()
+    // console.log(json)
+    expect(res.status).toEqual(200)
+    expect(json).toEqual(`[{"count":10}]`)
+    // console.log(JSON.parse(json))
 })

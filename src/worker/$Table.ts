@@ -131,7 +131,39 @@ export class $Table<T extends $Env = any>{
 
     // crud
 
+    async edit(data: TableEditParams, id: string) {
+        return await (await this.rawEdit(data, id))?.run()
+    }
+    async view(data: TableViewParams, id: string) {
+        return await (await this.rawView(data, id))?.run()
+    }
+    async select(data: TableSelectParams, then?: (r: any[])=>any): Promise<any>
+    async select(data: TableSelectParams, countTotal: boolean): Promise<{ items: any[], total: number } >
+    async select(data: TableSelectParams, countTotal?: boolean|((r: any[])=>any)) {
+        return typeof countTotal === 'boolean' ?
+            await (await this.rawSelect(data, countTotal))?.run() :
+            await (await this.rawSelect(data, countTotal))?.run()
+    }
+    async selectCount(data: Pick<TableSelectParams, 'where'|'select'>) {
+        return await (await this.rawSelectCount(data))?.run()
+    }
+    async selectRaise(data: Pick<TableSelectParams, 'where'> & {
+        message: string,
+        code?: 'ROLLBACK'|'ABORT'|'FAIL',
+    }) {
+        return await (await this.rawSelectRaise(data))?.run()
+    }
+    async update(data: TableUpdateParams, then?: (r: any[])=>any) {
+        return await (await this.rawUpdate(data, then))?.run()
+    }
+    async insert(data: TableInsertParams, then?: (r: any[])=>any) {
+        return await (await this.rawInsert(data, then))?.run()
+    }
     async delete(data: TableDeleteParams, then?: (r: any[])=>any) {
+        return await (await this.rawDelete(data, then))?.run()
+    }
+
+    async rawDelete(data: TableDeleteParams, then?: (r: any[])=>any) {
 
         let query
 
@@ -150,7 +182,7 @@ export class $Table<T extends $Env = any>{
         return res
     }
 
-    async insert(data: TableInsertParams, then?: (r: any[])=>any) {
+    async rawInsert(data: TableInsertParams, then?: (r: any[])=>any) {
         // console.error('insert', data)
         const values = Array.isArray(data.values) ? data.values : data.values ? [data.values] : undefined
         let filesToUpload = {} as Record<string, File>
@@ -186,7 +218,7 @@ export class $Table<T extends $Env = any>{
         return res
     }
 
-    async update(data: TableUpdateParams, then?: (r: any[])=>any) {
+    async rawUpdate(data: TableUpdateParams, then?: (r: any[])=>any) {
         const set = data.set
         if(set && this.fileFields) for (const [key, val] of Object.entries(set)) {
             if(this.fileFields.includes(key)) throw new ProcessError('File fields can only be set using setValues')
@@ -219,7 +251,7 @@ export class $Table<T extends $Env = any>{
         return res
     }
 
-    async view(data: TableViewParams, id: string) {
+    async rawView(data: TableViewParams, id: string) {
         if(!this.mapping.uid) throw new HTTPException(404, {message: 'Not supported without uidField.'})
 
         let query
@@ -240,14 +272,14 @@ export class $Table<T extends $Env = any>{
         return res
     }
 
-    async edit(data: TableEditParams, id: string) {
+    async rawEdit(data: TableEditParams, id: string) {
         if(!this.mapping.uid) throw new HTTPException(404, {message: 'Not supported without uidField.'})
-        const res = data.or !== 'INSERT' ? await this.update({
+        const res = data.or !== 'INSERT' ? await this.rawUpdate({
             where: `${this.data.name}.${this.mapping.uid}=${JSON.stringify(id)}`,
             setValues: data.setValues,
             returning: data.returning,
             or: data.or,
-        }, r=>r?.length ? r[0] : null) : await this.insert({
+        }, r=>r?.length ? r[0] : null) : await this.rawInsert({
             values: {
                 ...data.setValues,
                 [this.mapping.uid]: id,
@@ -259,9 +291,9 @@ export class $Table<T extends $Env = any>{
         return res
     }
 
-    async select(data: TableSelectParams, then?: (r: any[])=>any): Promise<D1PreparedQuery<any, any, 'select'>|null>
-    async select(data: TableSelectParams, countTotal: boolean): Promise<D1PreparedQuery<any, { items: any[], total: number }, 'select'>|null>
-    async select(data: TableSelectParams, countTotal?: boolean|((r: any[])=>any)) {
+    async rawSelect(data: TableSelectParams, then?: (r: any[])=>any): Promise<D1PreparedQuery<any, any, 'select'>|null>
+    async rawSelect(data: TableSelectParams, countTotal: boolean): Promise<D1PreparedQuery<any, { items: any[], total: number }, 'select'>|null>
+    async rawSelect(data: TableSelectParams, countTotal?: boolean|((r: any[])=>any)) {
         let query
         try {
             query = parseSelectQuery(data, this.jc)
@@ -278,7 +310,7 @@ export class $Table<T extends $Env = any>{
         return this.$db.rawSelect(this, query, countTotal)
     }
 
-    async selectCount(data: Pick<TableSelectParams, 'where'|'select'>) {
+    async rawSelectCount(data: Pick<TableSelectParams, 'where'|'select'>) {
         let query
 
         try {
@@ -306,7 +338,7 @@ export class $Table<T extends $Env = any>{
         return res
     }
 
-    async selectRaise(data: Pick<TableSelectParams, 'where'> & {
+    async rawSelectRaise(data: Pick<TableSelectParams, 'where'> & {
         message: string,
         code?: 'ROLLBACK'|'ABORT'|'FAIL',
     }){
@@ -724,10 +756,10 @@ export class $Table<T extends $Env = any>{
 
     async route(path: string){
         const router = this._initRoutes()
-        const match = router.match(this.$db.c.req.method, path)
+        const match = router.match(this.$db.requestMethod, path)
         const [handler, params] = match[0]?.[0] ?? [undefined]
         if(!handler) return undefined
-        return await handler(params as Record<string, string>)
+        return await handler(params as Record<string, string>, path)
     }
 
     getRoutes(){

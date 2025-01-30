@@ -1,22 +1,21 @@
 import {z} from 'zod'
 import {TableExtension} from '../tableExtension'
-import {TableAuthExtensionData} from '../../types/tableExtensions'
+import {tableAuthDataSchema, TableAuthExtensionData} from '../../types/tableExtensions'
 import {HTTPException} from 'hono/http-exception'
 import {$Table} from '../$Table'
 import {ident, JsepContext} from '../../sql/parse/jsep'
-import {tableAuthDataSchema} from '../../types/tableExtensions'
-import {buildInsertQuery, InsertQuery} from '../../sql/build/insert'
+import {InsertQuery} from '../../sql/build/insert'
 import {literalToQuery} from '../../sql/build/query'
-import {buildUpdateQuery, UpdateQuery} from '../../sql/build/update'
+import {UpdateQuery} from '../../sql/build/update'
 import {DeleteQuery} from '../../sql/build/delete'
-import {appendWhere, buildSelectQuery, SelectQuery} from '../../sql/build/select'
-import {parseRequestBody} from '../util/parseRequestBody'
+import {appendWhere, SelectQuery} from '../../sql/build/select'
 import {recordToSqlValues} from '../../sql/parse/parse'
 import {JWTPayload} from '../../types/jwt'
 import {generateUid, randomString} from '../../security/random'
 import {InsertParams, SQLLiteral, SQLQuery, sqlValSchema} from '../../types/sql'
 import {passwordProcessors} from '../util/passwordProcessors'
 import {Context} from 'hono'
+import {normalizeEmail} from '../util/normalizeEmail'
 
 type UserFields = {
     emailVerified?: boolean
@@ -211,7 +210,7 @@ export class TableAuthExtension extends TableExtension<TableAuthExtensionData> {
 
     confirmRequiresAuth = true  // todo make setting
     async confirmVerification(){
-        const data = await parseRequestBody(this.c.req)
+        const data = await this.table.$db.getRequestBody()
         if (!data) throw new HTTPException(400, {message: 'Usage: POST /auth/confirm-verification {data} in JSON/FormData'})
         // console.log(data.token)
         const token = jwtTokenSchema.parse(data.token)
@@ -232,7 +231,7 @@ export class TableAuthExtension extends TableExtension<TableAuthExtensionData> {
     async requestPasswordReset(){
         if(!this.mapping.email || !this.mapping.password) throw new HTTPException(500, {message: 'Invalid Configuration'})
 
-        const data = await parseRequestBody(this.c.req)
+        const data = await this.table.$db.getRequestBody()
         if(!data) throw new HTTPException(400, {message: 'Usage: POST /auth/request-password-reset {data} in JSON/FormData'})
 
         const record = recordToSqlValues(data)
@@ -251,7 +250,7 @@ export class TableAuthExtension extends TableExtension<TableAuthExtensionData> {
 
     async confirmPasswordReset(){
         if(!this.mapping.email || !this.mapping.password) throw new HTTPException(500, {message: 'Invalid Configuration'})
-        const data = await parseRequestBody(this.c.req)
+        const data = await this.table.$db.getRequestBody()
         if (!data) throw new HTTPException(400, {message: 'Usage: POST /auth/confirm-password-reset {data} in JSON/FormData'})
         const token = jwtTokenSchema.parse(data.token)
         if(!token) throw new HTTPException(400, {message: 'Token required'})
@@ -447,7 +446,7 @@ export class TableAuthExtension extends TableExtension<TableAuthExtensionData> {
     }
 
     private async _createUser(data: Required<InsertParams>['values']) {
-        const res = await (await this.table.insert({values: data, returning: this._userFields(false)}))?.run() ?? []
+        const res = await this.table.insert({values: data, returning: this._userFields(false)}) ?? []
         const user = res ? this._fieldsToUser(res[0]) : null
         if (!user) throw new HTTPException(400, {message: 'Unable to create user'}) // todo maybe tell user it can be because of rules?
         return user
@@ -691,6 +690,7 @@ export class TableAuthExtension extends TableExtension<TableAuthExtensionData> {
         let val = (record[this.mapping.username] as SQLLiteral)?.l
         if (typeof val !== 'string') throw new HTTPException(400, {message: `${this.mapping.username} must be a value, expressions not support in username`})
         val = defaultSchema.username.parse(val, {path: [this.mapping.username]})
+        record[this.mapping.username] = {l: val}
         return val
     }
     private _parseEmail(record: Record<string, SQLQuery | SQLLiteral>) {
@@ -698,6 +698,16 @@ export class TableAuthExtension extends TableExtension<TableAuthExtensionData> {
         let val = (record[this.mapping.email] as SQLLiteral)?.l
         if (typeof val !== 'string') throw new HTTPException(400, {message: `${this.mapping.email} must be a value, expressions not support in email`})
         val = defaultSchema.email.parse(val, {path: [this.mapping.email]})
+        if(this.data.normalizeEmail !== false) {
+            try{
+                val = normalizeEmail(val);
+            }catch (e) {
+                console.error(e)
+                throw new HTTPException(400, {message: `Invalid ${this.mapping.email} format`});
+            }
+        }
+        // todo check domain blocklists
+        record[this.mapping.email] = {l: val}
         return val
     }
 

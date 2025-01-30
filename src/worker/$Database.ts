@@ -71,7 +71,7 @@ export class $Database<T extends $Env = $Env> extends EventTarget<$DatabaseEvent
     protected dryRunMode = false
     protected readOnlyMode = false
 
-    private readonly adminJwtSecret: string
+    private readonly adminJwtSecret: ()=>string
 
     constructor(c: Context<T>, settings: z.infer<typeof databaseSettingsSchema>|DatabaseSettings|undefined, database: D1Database, storage?: R2Bucket) {
         super()
@@ -84,7 +84,7 @@ export class $Database<T extends $Env = $Env> extends EventTarget<$DatabaseEvent
         this.database = database
         this.storage = storage
         this.extensions.push(new MigrationHelper(this))
-        this.secretResolver = new SecretResolver(c.env)
+        this.secretResolver = new SecretResolver(()=>c.env)
 
         // this can be set in the admin frontend to make sure we are working with the correct deployment of the worker
         const sv = c.req.header('DDB_SETTINGS_VERSION') // todo set in frontend
@@ -108,9 +108,9 @@ export class $Database<T extends $Env = $Env> extends EventTarget<$DatabaseEvent
 
         // this.notify = new NotifyClient({}, this.email)
 
-        const jwtSecret = this.secretResolver.resolve(this.settings.jwtSecret)
-        if (!jwtSecret?.length) throw new HTTPException(500, {message: 'Invalid configuration - jwt secret is required'})
-        this.adminJwtSecret = this.c.env.ADMIN_JWT_SECRET ? this.secretResolver.resolve(this.c.env.ADMIN_JWT_SECRET) : ''
+        const jwtSecret = ()=>this.secretResolver.resolve(this.settings.jwtSecret)
+        if (!jwtSecret()?.length) throw new HTTPException(500, {message: 'Invalid configuration - jwt secret is required'})
+        this.adminJwtSecret = ()=>this.c.env.ADMIN_JWT_SECRET ? this.secretResolver.resolve(this.c.env.ADMIN_JWT_SECRET) : ''
         this.jwt = new JWTTokenHelper(jwtSecret, this.settings.jwtIssuer, this.settings.jwtAlgorithm)
         this.kv = new InternalKV(this, this.settings._kvTableName)
     }
@@ -160,7 +160,7 @@ export class $Database<T extends $Env = $Env> extends EventTarget<$DatabaseEvent
             // }
         }
 
-        let jwtSecret = this.adminJwtSecret
+        let jwtSecret = this.adminJwtSecret()
 
         // todo hack, remove
         if (this.c.env.ADMIN_SERVICE_TOKEN && tok === this.c.env.ADMIN_SERVICE_TOKEN) {
@@ -223,7 +223,8 @@ export class $Database<T extends $Env = $Env> extends EventTarget<$DatabaseEvent
 
     async generateAdminToken(role: string, tok?: string) {
         if(tok !== this.c.env.ADMIN_SERVICE_TOKEN && !this.auth.superadmin) throw new HTTPException(401, {message: 'Unauthorized'})
-        if (!this.adminJwtSecret) throw new HTTPException(500, {message: 'Invalid configuration - ADMIN_JWT_SECRET not set'})
+        const adminJwtSecret = this.adminJwtSecret()
+        if (!adminJwtSecret) throw new HTTPException(500, {message: 'Invalid configuration - ADMIN_JWT_SECRET not set'})
         const tokenDuration = 3 * 60 * 60 // 3 hours
         const data = {
             sub: role + '@' + this.settings.appUrl.trim().replace(/^https?:\/\//, ''),
@@ -233,7 +234,7 @@ export class $Database<T extends $Env = $Env> extends EventTarget<$DatabaseEvent
             verified: true,
             admin: true,
         } as any
-        return await this.jwt.createJwtToken(data, this.adminJwtSecret, tokenDuration)
+        return await this.jwt.createJwtToken(data, adminJwtSecret, tokenDuration)
     }
 
     // endregion auth
@@ -264,29 +265,46 @@ export class $Database<T extends $Env = $Env> extends EventTarget<$DatabaseEvent
     readonly apiBase = this._apiBase + '/v1'
     readonly apiTableSuffix = '/table'
     readonly apiTableBase = this.apiBase + this.apiTableSuffix
+
+    // routePath: string | null = null
     async route(path: string){
         if(!path.startsWith(this._apiBase+'/')) return undefined
+        // const lastPath = this.routePath
+        // this.routePath = path
 
         await this.initAuth() // load from bearer auth header
 
+        let res
         if(path.startsWith(this.apiTableBase+'/')) {
             const p = path.replace(this.apiTableBase, '').split('/')
             const table = this.table(p[1]) // starts with /
-            return table.route('/'+p.slice(2).join('/'))
-        }
-        if(path.startsWith(this.apiBase)) return await this._route(path.replace(this.apiBase, ''))
-        return undefined
+            res = await table.route('/'+p.slice(2).join('/'))
+        } else if(path.startsWith(this.apiBase))
+            res = await this._route(path.replace(this.apiBase, ''))
+        else res = undefined
+
+        // this.routePath = lastPath
+        return res
+    }
+
+    get requestMethod(){
+        return this.c.req.method
+    }
+    private requestBody?: Record<string, any> | null
+    async getRequestBody(){
+        if(this.requestBody === undefined) this.requestBody = await parseRequestBody(this.c.req)
+        return this.requestBody
     }
 
     rawRouteHandler(route: HttpRoute): RawRouterHandlerFunction{
-        return async(params)=>{
+        return async(params, path)=>{
             if(typeof route.handler === 'function') {
-                const data = await parseRequestBody(this.c.req)
-                const res = await route.handler(data, params)
+                const data = await this.getRequestBody()
+                const res = await route.handler(data, params, path)
                 if (res) return this.c.json(res)
                 throw new ProcessError('Not found', 404)
             }else {
-                return route.handler.raw(params)
+                return route.handler.raw(params, path)
             }
         }
     }
@@ -502,10 +520,15 @@ export class $Database<T extends $Env = $Env> extends EventTarget<$DatabaseEvent
     rawSQL<T>(d1Expr: D1Query, c?: SQLRunContext) {
         return this._prepareD1Query<T>(d1Expr, false, c)
     }
-
     rawSQLTransaction<T>(d1Expr: D1Query[], c?: SQLRunTransactionContext) {
         return this._prepareD1Transaction<T>(d1Expr, false, c)
     }
+    // async sql<T>(d1Expr: D1Query, c?: SQLRunContext) {
+    //     return await this.rawSQL<T>(d1Expr, c).run()
+    // }
+    // async sqlTransaction<T>(d1Expr: D1Query[], c?: SQLRunTransactionContext) {
+    //     return await this.rawSQLTransaction<T>(d1Expr, c).run()
+    // }
 
     // todo
     private async _rawProcedure(procedure: SQLProcedure){
@@ -519,7 +542,7 @@ export class $Database<T extends $Env = $Env> extends EventTarget<$DatabaseEvent
         const rule = procedure.rule ?? true
         const prepared: (D1PreparedQuery<any, any, QueryType>|D1PreparedTransaction<any, any, QueryType>|null)[] = []
         if(queries.length){
-            if(rule) throw new ProcessError(`Invalid procedure ${procedure.name}, cannot have raw queries without rule`)
+            if(rule) throw new ProcessError(`Invalid procedure ${procedure.name}, cannot have raw queries with rule`)
             for (const query of queries) {
                 if(!query) continue
                 if(query.type === 'SELECT'){
@@ -536,18 +559,19 @@ export class $Database<T extends $Env = $Env> extends EventTarget<$DatabaseEvent
             }
         }
         if(statements.length){
+            // todo handle when rule is false
+            if(!rule) throw new ProcessError(`Invalid procedure ${procedure.name}, cannot have statements without rule, not supported yet`)
             for (const statement of statements) {
                 if(!statement) continue
-                // todo handle when rule is false
                 const table = this.table(statement.table)
                 if(statement.type === 'SELECT'){
-                    prepared.push(await table.select(statement))
+                    prepared.push(await table.rawSelect(statement))
                 }else if(statement.type === 'UPDATE'){
-                    prepared.push(await table.update(statement))
+                    prepared.push(await table.rawUpdate(statement))
                 }else if(statement.type === 'INSERT'){
-                    prepared.push(await table.insert(statement))
+                    prepared.push(await table.rawInsert(statement))
                 }else if(statement.type === 'DELETE'){
-                    prepared.push(await table.delete(statement))
+                    prepared.push(await table.rawDelete(statement))
                 }
             }
         }
@@ -999,10 +1023,11 @@ export class $Database<T extends $Env = $Env> extends EventTarget<$DatabaseEvent
         method: 'get',
         path: '/explain/*',
         handler: {
-            raw: async () => {
+            raw: async (_params, path) => {
                 if (!this.auth.admin || !this.c.env.RESPOND_WITH_QUERY_LOG) throw new HTTPException(this.auth.uid ? 403 : 401, {message: 'Forbidden'})
                 this.dryRunMode = true
-                const path = this.c.req.path.replace(this.apiBase, '').replace('/explain', '')
+                // todo this wont work with diff base route.
+                path = path.replace('/explain', '')
                 if(path.startsWith('/explain')) throw new Error('Cannot explain explain')
                 if(!path.startsWith(this.apiTableSuffix)) throw new Error('Not supported for this path')
                 const res = await this.route(this.apiBase + path)
@@ -1058,20 +1083,21 @@ export class $Database<T extends $Env = $Env> extends EventTarget<$DatabaseEvent
     }
     private async _route(path: string){
         const router = this._initRoutes()
-        const match = router.match(this.c.req.method, path)
+        const match = router.match(this.requestMethod, path)
         const [handler, params] = match[0]?.[0] ?? [undefined]
         if(!handler) return undefined
-        return await handler(params as Record<string, string>)
+        return await handler(params as Record<string, string>, path)
     }
 
     // endregion routing
 }
 
 export class SecretResolver{
-    constructor(private env: any) {
+    constructor(private readonly env: ()=>any) {
     }
     resolve(secret?: string){
-        return secret && secret[0] === '$' ? this.env[secret.slice(1)] || '' : secret
+        const env = this.env()
+        return secret && secret[0] === '$' ? env[secret.slice(1)] || '' : secret
     }
 }
 

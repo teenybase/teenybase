@@ -115,7 +115,7 @@ export async function getSQLiteSchema(db: $Database<any>){
             && !r.name.startsWith('_cf')
             && !r.name.startsWith('sqlite_')
     }
-    console.log(schema)
+    // console.log(schema)
     const tables = await getTableInfo(db, schema.filter(tableCheck).map(r => ({
         name: r.tbl_name,
         sql: r.sql,

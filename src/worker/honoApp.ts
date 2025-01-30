@@ -38,10 +38,10 @@ export function teenyHono<T extends $Env=$Env>(
             const res = await beforeRoute(c)
             if(res) return res
         }
-        return (await c.get('$db').route(c.req.path)) ?? await next()
+        const base = c.req.routePath.replace('/api/*', '')
+        const path = c.req.path.replace(base, '')
+        return (await c.get('$db').route(path)) ?? await next()
     })
-
-    // todo mailgun webhook
 
     return app
 }

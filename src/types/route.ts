@@ -7,8 +7,8 @@ import type {
 } from '@asteasolutions/zod-to-openapi/dist/openapi-registry'
 import type {ZodType} from 'zod'
 
-export type RawRouterHandlerFunction = (params?: Record<string, string>)=>Promise<Response|undefined>
-export type RouterHandlerFunction = ((body: any, params?: Record<string, string>)=>Promise<Record<string, any>|undefined>)
+export type RawRouterHandlerFunction = (params: Record<string, string>, path: string)=>Promise<Response|undefined>
+export type RouterHandlerFunction = ((body: any, params: Record<string, string>, path: string)=>Promise<Record<string, any>|undefined>)
 export type RouteFunction = {raw: RawRouterHandlerFunction} | RouterHandlerFunction
 
 // todo better name

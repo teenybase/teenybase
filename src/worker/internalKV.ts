@@ -36,7 +36,7 @@ export class InternalKV<T extends $Env = $Env> {
         // console.log(q)
         const b = [key]
         if(!s) b.push(value)
-        await this.db.rawSQL({q, v: b}).run()
+        return this.db.rawSQL({q, v: b}).run()
     }
     async setSql(key: string, value: string) {
         return await this.set(key, {sql: value})

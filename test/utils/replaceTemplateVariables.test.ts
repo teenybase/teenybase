@@ -1,5 +1,5 @@
 import {describe, expect, test} from 'vitest'
-import {replaceTemplateVariables} from '../src/worker/util/replaceTemplateVariables'
+import {replaceTemplateVariables} from '../../src/worker/util/replaceTemplateVariables'
 
 const f = replaceTemplateVariables
 describe('replaceTemplateVariables', () => {

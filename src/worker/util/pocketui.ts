@@ -3,7 +3,6 @@ import {$Database} from '../$Database'
 import {HttpRouteZod} from '../../types/route'
 import {$DBExtension} from '../$DBExtension'
 import {deleteCookie, getSignedCookie, setCookie, setSignedCookie} from 'hono/cookie'
-import {parseRequestBody} from './parseRequestBody'
 import {StatusCode} from 'hono/utils/http-status'
 import {decode} from '@tsndr/cloudflare-worker-jwt'
 import {$Env} from '../env'
@@ -93,7 +92,7 @@ export class PocketUIExtension<T extends PocketUiEnv = PocketUiEnv> extends $DBE
                 raw: async () => {
                     // await this._initAuth()
                     if (this.db.auth.uid) return this.db.c.redirect('./')
-                    let {username, password} = (await parseRequestBody(this.db.c.req)) ?? {}
+                    let {username, password} = (await this.db.getRequestBody()) ?? {}
                     if (!password) return this.loginPage('Password required', 400)
 
                     if(username === 'viewer' && password === this.db.c.env['POCKET_UI_VIEWER_PASSWORD'])
@@ -163,15 +162,11 @@ export class PocketUIExtension<T extends PocketUiEnv = PocketUiEnv> extends $DBE
             path: '/pocket/*',
             method: 'get',
             handler: {
-                raw: async () => {
+                raw: async (_params, path) => {
                     // await this._initAuth()
                     // if(!this.db.auth.uid) return this.db.c.redirect('login') // this is done in frontend.
                     const base = (this.baseUrl||'').replace(/POCKET_UI_VERSION/g, this.uiVersion)
-                    // todo this wont work when routing internally
-                    const path = this.db.c.req.path
-                        .replace(this.db.apiBase + '/pocket/', '')
-                        .replace(this.db.apiBase + '/pocket', '')
-                        || 'index.html'
+                    path = path.replace('/pocket/', '').replace('/pocket', '') || 'index.html'
                     const res = await fetch(base + path)
                     if (path.endsWith('.html')) {
                         const html = await res.text()
