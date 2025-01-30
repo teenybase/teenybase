@@ -1,26 +1,10 @@
-import {z} from 'zod'
-import {
-    sqlExprSchema,
-    sqlExprSchemaRecord,
-    SQLLiteral,
-    SQLQuery,
-    sqlValSchemaRecord,
-    zOnConflict
-} from '../../types/sql'
+import {InsertParams, insertSchema, SQLLiteral, SQLQuery} from '../../types/sql'
 import {JsepContext, parseColumnList} from './jsep'
 import {recordToSqlExpressions, recordToSqlValues} from './parse'
 import {InsertQuery} from '../build/insert'
 
-export const insertSchema = z.object({
-    or: zOnConflict.optional(),
-    values: sqlValSchemaRecord.or(z.array(sqlValSchemaRecord)).optional(),
-    expr: sqlExprSchemaRecord.or(z.array(sqlExprSchemaRecord)).optional(),
-    returning: z.array(sqlExprSchema).or(sqlExprSchema).optional(),
-})
-export type InsertParams = z.infer<typeof insertSchema>
-
-export async function parseInsertQuery(q: InsertParams, jc: JsepContext){
-    const insertData = await insertSchema.parseAsync(q)
+export function parseInsertQuery(q: InsertParams, jc: JsepContext){
+    const insertData = insertSchema.parse(q)
     if((!insertData.expr && !insertData.values) || (insertData.expr && insertData.values)){
         throw new Error('Insert query must have either values or expr')
     }

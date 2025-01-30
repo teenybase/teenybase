@@ -73,7 +73,6 @@ export function buildSelectWhere(queryWhere: SelectWhere, simplify: boolean) {
     return literalToQuery(q, true)
 }
 
-
 // todo subquery and merge with selects
 export function joinReturning(returning: (string|SelectQuerySelect1)[], p: Record<string, any>): string {
     return returning.map(select=>{

@@ -1,21 +1,12 @@
-import {z} from 'zod'
-import {sqlExprSchema, sqlValSchema, zOnConflict} from '../../types/sql'
 import {JsepContext, parseColumnList} from './jsep'
 import {queryToSqlQuery, recordToSqlExpressions, recordToSqlValues} from './parse'
 import {UPDATE_NEW_COL_ID, UpdateQuery} from '../build/update'
+import {UpdateParams, updateSchema} from '../../types/sql'
 
-export const updateSchema = z.object({
-    or: zOnConflict.optional(),
-    set: z.record(sqlExprSchema).optional(),
-    setValues: z.record(sqlValSchema).optional(),
-    where: sqlExprSchema,
-    returning: z.array(sqlExprSchema).or(sqlExprSchema).optional()
-})
+export function parseUpdateQuery(q: UpdateParams, jc: JsepContext) {
+    const updateData = updateSchema.parse(q)
 
-export type UpdateParams = z.infer<typeof updateSchema>
-
-export async function parseUpdateQuery(q: UpdateParams, jc: JsepContext) {
-    const updateData = await updateSchema.parseAsync(q)
+    // todo - support both set and setValues.
     if ((!updateData.set && !updateData.setValues) || (updateData.set && updateData.setValues)) {
         throw new Error('Update query must have either set or setValues')
     }
@@ -28,7 +19,7 @@ export async function parseUpdateQuery(q: UpdateParams, jc: JsepContext) {
     //  since we are replacing as literal,
     //  its possible to have queries like
     //  `new.owner = notes.owner` will become `[notes].[owner] = [notes].[owner]`
-    //  todo - so this should be simplified to true.
+    //  todo - so this should be simplified to true. is it done?
 
     // allows new.* in where and rule
     const contextWithNew: JsepContext = {

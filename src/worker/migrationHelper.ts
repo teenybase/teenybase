@@ -37,7 +37,7 @@ export class MigrationHelper<T extends $Env = $Env> extends $DBExtension<T>{
                 applied_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP NOT NULL
             )`.split('\n').map(l => l.trim()).join(' ')
             // await this.db.database.exec(sql)
-            await this.db.rawSQL({q: sql, v: []})
+            await this.db.rawSQL({q: sql, v: []}).run()
         }
     }
 
@@ -45,7 +45,7 @@ export class MigrationHelper<T extends $Env = $Env> extends $DBExtension<T>{
         if (!this.db.auth.superadmin) throw new HTTPException(403, {message: 'Forbidden'})
         const q = `SELECT id, name, sql, sql_revert FROM ${this.tableName}`
         // const res = await this.db.database.prepare(q).run<DBMigration>()
-        const res = await this.db.rawSQL<DBMigration>({q, v:[]})
+        const res = await this.db.rawSQL<DBMigration>({q, v:[]}).run() || []
         return res
     }
 
@@ -73,14 +73,10 @@ export class MigrationHelper<T extends $Env = $Env> extends $DBExtension<T>{
             ]
         }).filter(q=>!!q) as D1Query[]
         if(!prepared.length) return []
-        const res = await this.db.rawSQLTransaction(prepared).catch(e => {
-            throw e
-        })
-        const success = res.every(r => r.success)
-        if (!success) {
-            const error = res.find(r => !r.success)?.error
-            console.error(error)
-            throw new Error(error || 'Failed to apply migrations')
+        try {
+            await this.db.rawSQLTransaction(prepared).run()
+        }catch (e){
+            throw e??new Error('Failed to apply migrations')
         }
         return names
     }

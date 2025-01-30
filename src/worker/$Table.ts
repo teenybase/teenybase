@@ -12,10 +12,10 @@ import {
 import {DeleteQuery} from '../sql/build/delete'
 import {UpdateQuery} from '../sql/build/update'
 import {HTTPException} from 'hono/http-exception'
-import {parseUpdateQuery, updateSchema} from '../sql/parse/update'
-import {insertSchema, parseInsertQuery} from '../sql/parse/insert'
-import {parseSelectQuery, SelectParams, selectSchema} from '../sql/parse/select'
-import {DeleteParams, deleteSchema, parseDeleteQuery} from '../sql/parse/delete'
+import {parseUpdateQuery} from '../sql/parse/update'
+import {parseInsertQuery} from '../sql/parse/insert'
+import {parseSelectQuery} from '../sql/parse/select'
+import {parseDeleteQuery} from '../sql/parse/delete'
 import {z} from 'zod'
 import {TableFieldUsage} from './usages'
 import {generateUid} from '../security/random'
@@ -25,13 +25,25 @@ import {TableCrudExtension} from './extensions/tableCrudExtention'
 import {TableFieldData} from '../types/field'
 import {TableData} from '../types/table'
 import {columnify, ident, JsepContext, uncolumnify} from '../sql/parse/jsep'
-import {SQLQuery, sqlValSchemaFile2, sqlValSchemaFile3, sqlValSchemaRecord} from '../types/sql'
+import {
+    SQLQuery,
+    sqlValSchemaFile2,
+    sqlValSchemaFile3,
+    sqlValSchemaRecord,
+    TableDeleteParams,
+    TableEditParams,
+    TableInsertParams,
+    TableSelectParams,
+    TableUpdateParams,
+    TableViewParams
+} from '../types/sql'
 import {$Env} from './env'
 import {TableFieldDataType, tableFieldTypeToZod} from '../types/dataTypes'
 import {LinearRouter} from 'hono/router/linear-router'
 import {HttpRoute, RawRouterHandlerFunction} from '../types/route'
 import {normalizeFileName} from './util/string'
 import {fts5TableName} from '../sql/schema/tableQueries'
+import {D1PreparedQuery} from './util/sql'
 
 export class $Table<T extends $Env = any>{
     extensions: TableExtension[] = []
@@ -119,20 +131,26 @@ export class $Table<T extends $Env = any>{
 
     // crud
 
-    async delete(data: TableDeleteParams) {
-        const query = await parseDeleteQuery(data, this.jc).catch(e=>{
+    async delete(data: TableDeleteParams, then?: (r: any[])=>any) {
+
+        let query
+
+        try {
+            query = parseDeleteQuery(data, this.jc)
+        }catch (e){
             throw new ProcessError('Error parsing DELETE data', 400, {input: data}, e)
-        })
+        }
+
         await this.onDeleteParse(query)
 
         const filesToDelete = await this.filesToDelete(query)
 
-        const res = await this.$db.rawDelete(this, query, filesToDelete)
+        const res = this.$db.rawDelete(this, query, filesToDelete, then)
 
         return res
     }
 
-    async insert(data: TableInsertParams) {
+    async insert(data: TableInsertParams, then?: (r: any[])=>any) {
         // console.error('insert', data)
         const values = Array.isArray(data.values) ? data.values : data.values ? [data.values] : undefined
         let filesToUpload = {} as Record<string, File>
@@ -147,51 +165,28 @@ export class $Table<T extends $Env = any>{
         if(values) {
             for (const setValues of values) {
                 if(!setValues) continue
-                for (const [key, val] of Object.entries(setValues)) { // todo
-                    if(Array.isArray(val)) throw new ProcessError('Array values not supported at the moment')
+                this.checkNewRecordValues(setValues)
 
-                    const field = this.fields[key]
-                    // if(!field) throw new ProcessError('Invalid field ' + key)
-                    if(!field) continue  // field check is done in onInsertParse
-
-                    // for these types, any string "null" will be coersed to null(this is required for FormData as it only sends strings)
-                    // todo relation, password, editor, text, select
-                    const directNullableTypes: (keyof typeof TableFieldDataType)[] = ['file', 'number', 'bool', 'email', 'url', 'date', 'json', 'integer', 'blob']
-                    if (directNullableTypes.includes(field.type as any) && val === 'null') {
-                        // todo notnull check required?
-                        setValues[key] = null // any existing file will be deleted in filesToDelete
-                        continue
-                    }
-
-                    if(field.type === 'json') {
-                        if(typeof val === 'string' && val !== '') {
-                            try {
-                                // this should return null if val is "null"
-                                const l = JSON.parse(val)
-                                if(l === null) setValues[key] = l
-                            }catch (e){
-                                throw new ProcessError('Invalid JSON value for ' + key)
-                            }
-                        }
-                    }
-                }
                 const {values: _values} = this.filesToUpload(setValues, filesToUpload, filesToRef)
                 data2.values.push(_values)
             }
         }
 
-        const query = await parseInsertQuery(data2, this.jc).catch(e=>{
+        let query
+        try {
+            query = parseInsertQuery(data2, this.jc)
+        }catch (e){
             throw new ProcessError('Error parsing INSERT data', 400, data, e)
-        })
+        }
 
         await this.onInsertParse(query)
 
-        const res = await this.$db.rawInsert(this, query, filesToUpload, filesToRef)
+        const res = this.$db.rawInsert(this, query, filesToUpload, filesToRef, then)
 
         return res
     }
 
-    async update(data: TableUpdateParams) {
+    async update(data: TableUpdateParams, then?: (r: any[])=>any) {
         const set = data.set
         if(set && this.fileFields) for (const [key, val] of Object.entries(set)) {
             if(this.fileFields.includes(key)) throw new ProcessError('File fields can only be set using setValues')
@@ -199,37 +194,7 @@ export class $Table<T extends $Env = any>{
 
         // todo - make beforeUpdateParse
 
-        if(data.setValues){
-            const setValues =data.setValues
-            for (const [key, val] of Object.entries(setValues)) { // todo
-                if(Array.isArray(val)) throw new ProcessError('Array values not supported at the moment')
-
-                const field = this.fields[key]
-                // if(!field) throw new ProcessError('Invalid field ' + key)
-                if(!field) continue // field check is done in onUpdateParse
-
-                // for these types, any string "null" will be coersed to null(this is required for FormData as it only sends strings)
-                // todo relation, password, editor, text, select
-                const directNullableTypes: (keyof typeof TableFieldDataType)[] = ['file', 'number', 'bool', 'email', 'url', 'date', 'json', 'integer', 'blob']
-                if (directNullableTypes.includes(field.type as any) && val === 'null') {
-                    // todo notnull check required?
-                    setValues[key] = null // any existing file will be deleted in filesToDelete
-                    continue
-                }
-
-                if(field.type === 'json') {
-                    if(typeof val === 'string' && val !== '') {
-                        try {
-                            // this should return null if val is "null"
-                            const l = JSON.parse(val)
-                            if(l === null) setValues[key] = l
-                        }catch (e){
-                            throw new ProcessError('Invalid JSON value for ' + key)
-                        }
-                    }
-                }
-            }
-        }
+        this.checkNewRecordValues(data.setValues)
 
         const {filesToUpload, filesToRef, values} = data.setValues ? this.filesToUpload(data.setValues) : {}
         const data2 = {
@@ -237,34 +202,42 @@ export class $Table<T extends $Env = any>{
             setValues: values,
         } as const
 
-        const updateQuery = await parseUpdateQuery(data2, this.jc).catch(e=>{
+        let updateQuery
+
+        try {
+            updateQuery = parseUpdateQuery(data2, this.jc)
+        }catch (e){
             throw new ProcessError('Error parsing UPDATE data', 400, data, e)
-        })
+        }
 
         await this.onUpdateParse(updateQuery)
 
         const fileFields = this.fileFields?.filter(f => updateQuery.set[f])
         const filesToDelete = fileFields ? await this.filesToDelete(updateQuery, fileFields) : undefined
 
-        const res = await this.$db.rawUpdate(this, updateQuery, filesToUpload, filesToRef, filesToDelete)
-
+        const res = this.$db.rawUpdate(this, updateQuery, filesToUpload, filesToRef, filesToDelete, then)
         return res
     }
 
     async view(data: TableViewParams, id: string) {
         if(!this.mapping.uid) throw new HTTPException(404, {message: 'Not supported without uidField.'})
-        const query = await parseSelectQuery({
-            where: `${this.data.name}.${this.mapping.uid}=${JSON.stringify(id)}`,
-            limit: 1,
-            select: data.select,
-        }, this.jc).catch(e=>{
+
+        let query
+
+        try {
+            query = parseSelectQuery({
+                where: `${this.data.name}.${this.mapping.uid}=${JSON.stringify(id)}`,
+                limit: 1,
+                select: data.select,
+            }, this.jc)
+        }catch(e){
             throw new ProcessError('Error parsing SELECT(view) data', 400, data, e)
-        })
+        }
 
         await this.onViewParse(query, id)
 
-        const res = await this.$db.rawSelect(this, query)
-        return res[0]
+        const res = this.$db.rawSelect(this, query, (r)=>r?.length?r[0]:null)
+        return res
     }
 
     async edit(data: TableEditParams, id: string) {
@@ -274,43 +247,53 @@ export class $Table<T extends $Env = any>{
             setValues: data.setValues,
             returning: data.returning,
             or: data.or,
-        }) : await this.insert({
+        }, r=>r?.length ? r[0] : null) : await this.insert({
             values: {
                 ...data.setValues,
                 [this.mapping.uid]: id,
             },
             returning: data.returning,
             or: 'REPLACE',
-        })
-        return res[0]
+        }, r=>r?.length ? r[0] : null)
+
+        return res
     }
 
-    async select(data: TableSelectParams): Promise<any[]>
-    async select(data: TableSelectParams, countTotal: boolean): Promise<{ items: any[], total: number }>
-    async select(data: TableSelectParams, countTotal?: boolean) {
-        const query = await parseSelectQuery(data, this.jc).catch(e=>{
+    async select(data: TableSelectParams, then?: (r: any[])=>any): Promise<D1PreparedQuery<any, any, 'select'>|null>
+    async select(data: TableSelectParams, countTotal: boolean): Promise<D1PreparedQuery<any, { items: any[], total: number }, 'select'>|null>
+    async select(data: TableSelectParams, countTotal?: boolean|((r: any[])=>any)) {
+        let query
+        try {
+            query = parseSelectQuery(data, this.jc)
+        }catch (e) {
             throw new ProcessError('Error parsing SELECT data', 400, data, e)
             // throw new ProcessErrore: 'Invalid query')
-        })
+        }
+
         await this.onSelectParse(query)
 
-        if(countTotal === undefined)
-            return await this.$db.rawSelect(this, query)
+        if(countTotal === undefined || typeof countTotal === 'function')
+            return this.$db.rawSelect(this, query, countTotal)
 
-        return await this.$db.rawSelect(this, query, countTotal)
+        return this.$db.rawSelect(this, query, countTotal)
     }
 
     async selectCount(data: Pick<TableSelectParams, 'where'|'select'>) {
-        const query = await parseSelectQuery(data, this.jc).catch(e=>{
+        let query
+
+        try {
+            query = parseSelectQuery(data, this.jc)
+        }catch(e){
             throw new ProcessError('Error parsing SELECT data', 400, data, e)
-        })
+        }
+
         await this.onSelectParse(query)
 
         if(query.selects?.length??0 > 1) throw new ProcessError('Invalid select count query, only 1 field allowed')
         const countField = query.selects?.length === 1 ? query.selects[0] :
             this.mapping.uid ? `${this.data.name}.${columnify(this.mapping.uid)}` : '*'
 
-        const res = await this.$db.rawSelect(this, {
+        const res = this.$db.rawSelect(this, {
             ...query,
             selects: [`count(${countField}) as total`],
             limit: undefined,
@@ -318,9 +301,9 @@ export class $Table<T extends $Env = any>{
             orderBy: undefined,
             groupBy: undefined,
             distinct: false,
-        })
+        }, r=>r?.length ? r[0].total : -1)
 
-        return (res[0] as any)?.total ?? -1
+        return res
     }
 
     async selectRaise(data: Pick<TableSelectParams, 'where'> & {
@@ -335,16 +318,21 @@ export class $Table<T extends $Env = any>{
             ...data,
             select: `RAISE(${code}, ${JSON.stringify(message)})`,
         } as TableSelectParams
-        const query = await parseSelectQuery(data2, this.jc).catch(e=>{
+
+        let query
+        try {
+            query = parseSelectQuery(data2, this.jc)
+        }catch(e){
             throw new ProcessError('Error parsing SELECT data', 400, data, e)
-        })
+        }
+
         await this.onSelectParse(query)
 
-        const res = await this.$db.rawSelect(this, query)
-        // const sql = buildSelectQuery(query, this.jc.autoSimplifyExpr)
-        // const res = await this.run(sql, 'Failed to run select query')
-
-        if(res.length) throw new ProcessError(message, 409, {code: code})
+        const res = this.$db.rawSelect(this, query, r=>{
+            if(r.length) throw new ProcessError(message, 409, {code: code})
+            return null
+        })
+        return res
     }
 
     // hooks
@@ -495,6 +483,38 @@ export class $Table<T extends $Env = any>{
         }
     }
 
+    private checkNewRecordValues(setValues?: z.infer<typeof sqlValSchemaFile2>) {
+        if(!setValues) return
+        for (const [key, val] of Object.entries(setValues)) { // todo
+            if (Array.isArray(val)) throw new ProcessError('Array values not supported at the moment')
+
+            const field = this.fields[key]
+            // if(!field) throw new ProcessError('Invalid field ' + key)
+            if (!field) continue // field check is done in onUpdateParse
+
+            // for these types, any string "null" will be coersed to null(this is required for FormData as it only sends strings)
+            // todo relation, password, editor, text, select
+            const directNullableTypes: (keyof typeof TableFieldDataType)[] = ['file', 'number', 'bool', 'email', 'url', 'date', 'json', 'integer', 'blob']
+            if (directNullableTypes.includes(field.type as any) && val === 'null') {
+                // todo notnull check required?
+                setValues[key] = null // any existing file will be deleted in filesToDelete
+                continue
+            }
+
+            if (field.type === 'json') {
+                if (typeof val === 'string' && val !== '') {
+                    try {
+                        // this should return null if val is "null"
+                        const l = JSON.parse(val)
+                        if (l === null) setValues[key] = l
+                    } catch (e) {
+                        throw new ProcessError('Invalid JSON value for ' + key)
+                    }
+                }
+            }
+        }
+    }
+
     // D1 Helpers
 
     parseD1Error(e: D1Error){
@@ -543,7 +563,7 @@ export class $Table<T extends $Env = any>{
             selects,
             // limit: desQuery.limit,
             params: desQuery.params,
-        })
+        })?.run() || []
         return res.flatMap(r => Object.values(r)).filter(v => !!v) as string[]
     }
 
@@ -728,16 +748,3 @@ export class $Table<T extends $Env = any>{
     }
 
 }
-
-export const tableDeleteSchema = deleteSchema
-export type TableDeleteParams = DeleteParams
-export const tableInsertSchema = insertSchema.omit({values: true}).and(z.object({values: sqlValSchemaFile3}))
-export type TableInsertParams = z.infer<typeof tableInsertSchema>
-export const tableUpdateSchema = updateSchema.omit({setValues: true}).and(z.object({setValues: sqlValSchemaFile2}))
-export type TableUpdateParams = z.infer<typeof tableUpdateSchema>
-export const tableSelectSchema = selectSchema
-export type TableSelectParams = SelectParams
-export const tableViewSchema = selectSchema.pick({select: true})
-export type TableViewParams = z.infer<typeof tableViewSchema>
-export const tableEditSchema = z.object({setValues: sqlValSchemaFile2, or: updateSchema.shape.or.or(z.literal('INSERT')), returning: updateSchema.shape.returning})
-export type TableEditParams = z.infer<typeof tableEditSchema>

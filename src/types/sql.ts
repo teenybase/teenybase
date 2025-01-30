@@ -1,4 +1,5 @@
 import {z} from 'zod'
+import {QueryType, QueryTypes} from '../sql/build/query'
 
 export const sqlExprSchema = z.string().max(1000).regex(/^[a-zA-Z0-9_=\s():.*~%'"><!+\-&|@,\/\\${}]*$/, 'Invalid expression')
 export const sqlExprSchemaRecord = z.record(sqlExprSchema)
@@ -73,6 +74,91 @@ export const zSQLLiteral = z.object({
 
 export const zSQLQueryOrLiteral = zSQLQuery.or(zSQLLiteral)
 
+export type OnConflict = 'ABORT' | 'FAIL' | 'IGNORE' | 'REPLACE' | 'ROLLBACK'
+export const zOnConflict = z.enum(['ABORT', 'FAIL', 'IGNORE', 'REPLACE', 'ROLLBACK'])
+
+export const selectSchema = z.object({
+    where: sqlExprSchema.optional(),
+    limit: z.coerce.number().optional(),
+    offset: z.coerce.number().optional(),
+    order: sqlColListSchemaOrder2.optional(),
+    group: sqlColListSchema2.optional(),
+    select: sqlExprSchema.or(z.array(sqlExprSchema)).optional(), // todo rename to fields in api v2
+    distinct: z.coerce.boolean().optional(),
+
+    // join: joinObjSchema2.array().optional(),
+    // having: z.string().regex(/^[a-zA-Z0-9_=\s\(\)\.\*]*$/).optional(),
+    // selectOption: z.string().optional(),
+})
+
+export type SelectParams = z.infer<typeof selectSchema>
+
+export const updateSchema = z.object({
+    or: zOnConflict.optional(),
+    set: z.record(sqlExprSchema).optional(),
+    setValues: z.record(sqlValSchema).optional(),
+    where: sqlExprSchema,
+    returning: z.array(sqlExprSchema).or(sqlExprSchema).optional()
+})
+
+export type UpdateParams = z.infer<typeof updateSchema>
+
+export const insertSchema = z.object({
+    or: zOnConflict.optional(),
+    values: sqlValSchemaRecord.or(z.array(sqlValSchemaRecord)).optional(),
+    expr: sqlExprSchemaRecord.or(z.array(sqlExprSchemaRecord)).optional(),
+    returning: z.array(sqlExprSchema).or(sqlExprSchema).optional(),
+})
+export type InsertParams = z.infer<typeof insertSchema>
+
+export const deleteSchema = z.object({
+    where: sqlExprSchema,
+    returning: z.array(sqlExprSchema).or(sqlExprSchema).optional(),
+})
+
+export type DeleteParams = z.infer<typeof deleteSchema>
+
+export const tableDeleteSchema = deleteSchema
+export type TableDeleteParams = DeleteParams
+export const tableInsertSchema = insertSchema.omit({values: true}).and(z.object({values: sqlValSchemaFile3}))
+export type TableInsertParams = z.infer<typeof tableInsertSchema>
+export const tableUpdateSchema = updateSchema.omit({setValues: true}).and(z.object({setValues: sqlValSchemaFile2.optional()}))
+export type TableUpdateParams = z.infer<typeof tableUpdateSchema>
+export const tableSelectSchema = selectSchema
+export type TableSelectParams = SelectParams
+export const tableViewSchema = selectSchema.pick({select: true})
+export type TableViewParams = z.infer<typeof tableViewSchema>
+export const tableEditSchema = z.object({setValues: sqlValSchemaFile2, or: updateSchema.shape.or.or(z.literal('INSERT')), returning: updateSchema.shape.returning})
+export type TableEditParams = z.infer<typeof tableEditSchema>
+
+export const selectStatementSchema = tableSelectSchema.and(z.object({
+    type: z.literal('SELECT'),
+    table: tableColumnNameSchema,
+}))
+export type SelectStatement = z.infer<typeof selectStatementSchema>
+export const insertStatementSchema = tableInsertSchema.and(z.object({
+    type: z.literal('INSERT'),
+    table: tableColumnNameSchema,
+}))
+export type InsertStatement = z.infer<typeof insertStatementSchema>
+export const updateStatementSchema = tableUpdateSchema.and(z.object({
+    type: z.literal('UPDATE'),
+    table: tableColumnNameSchema,
+}))
+export type UpdateStatement = z.infer<typeof updateStatementSchema>
+export const deleteStatementSchema = tableDeleteSchema.and(z.object({
+    type: z.literal('DELETE'),
+    table: tableColumnNameSchema,
+}))
+export type DeleteStatement = z.infer<typeof deleteStatementSchema>
+
+export interface StatementTypes{
+    select: SelectStatement
+    insert: InsertStatement
+    update: UpdateStatement
+    delete: DeleteStatement
+}
+
 export interface SQLIndex {
     name?: string
     unique?: boolean
@@ -138,5 +224,26 @@ export const zSQLTrigger = z.object({
     when: zSQLQuery.optional(),
 })
 
-export type OnConflict = 'ABORT' | 'FAIL' | 'IGNORE' | 'REPLACE' | 'ROLLBACK'
-export const zOnConflict = z.enum(['ABORT', 'FAIL', 'IGNORE', 'REPLACE', 'ROLLBACK'])
+export interface SQLProcedure{
+    name: string,
+    /**
+     * If true, run with default rules based on the statements
+     * If false, run as admin
+     * If string, use string as the rule for all statements. todo
+     * @default true
+     */
+    rule?: boolean /*| string*/
+    params: string[]
+    query?: QueryTypes[QueryType]|((QueryTypes[QueryType])[])
+    statement?: StatementTypes[QueryType]|((StatementTypes[QueryType])[])
+}
+
+export const zTypedSQLQuery = z.record(z.string(), z.any()) // todo SelectQuery|UpdateQuery...
+export const zTypedSQLStatement = selectStatementSchema.or(insertStatementSchema).or(updateStatementSchema).or(deleteStatementSchema)
+export const zSQLProcedure = z.object({
+    name: tableColumnNameSchema,
+    rule: z.boolean()/*.or(z.string())*/.default(true),
+    params: z.array(tableColumnNameSchema),
+    query: z.union([zTypedSQLQuery, z.array(zTypedSQLQuery)]).optional(),
+    statement: z.union([zTypedSQLStatement, z.array(zTypedSQLStatement)]).optional(),
+})

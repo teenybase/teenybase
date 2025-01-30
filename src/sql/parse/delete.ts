@@ -1,18 +1,10 @@
-import {z} from 'zod'
 import {JsepContext, parseColumnList} from './jsep'
 import {DeleteQuery} from '../build/delete'
 import {queryToSqlQuery} from './parse'
-import {sqlExprSchema} from '../../types/sql'
+import {DeleteParams, deleteSchema} from '../../types/sql'
 
-export const deleteSchema = z.object({
-    where: sqlExprSchema,
-    returning: z.array(sqlExprSchema).or(sqlExprSchema).optional(),
-})
-
-export type DeleteParams = z.infer<typeof deleteSchema>
-
-export async function parseDeleteQuery(q: DeleteParams, jc: JsepContext){
-    const deleteData = await deleteSchema.parseAsync(q)
+export function parseDeleteQuery(q: DeleteParams, jc: JsepContext){
+    const deleteData = deleteSchema.parse(q)
 
     const deleteQuery: DeleteQuery = {
         table: jc.tableName,

@@ -1,31 +1,10 @@
-import {z} from 'zod'
-import {
-    JsepContext,
-    parseColumnList,
-    parseColumnListOrder,
-} from './jsep'
+import {JsepContext, parseColumnList, parseColumnListOrder,} from './jsep'
 import {queryToSqlQuery} from './parse'
-import {sqlColListSchema2, sqlColListSchemaOrder2, sqlExprSchema, SQLQuery} from '../../types/sql'
 import {SelectQuery} from '../build/select'
+import {SelectParams, selectSchema} from '../../types/sql'
 
-export const selectSchema = z.object({
-    where: sqlExprSchema.optional(),
-    limit: z.coerce.number().optional(),
-    offset: z.coerce.number().optional(),
-    order: sqlColListSchemaOrder2.optional(),
-    group: sqlColListSchema2.optional(),
-    select: sqlExprSchema.or(z.array(sqlExprSchema)).optional(), // todo rename to fields in api v2
-    distinct: z.coerce.boolean().optional(),
-
-    // join: joinObjSchema2.array().optional(),
-    // having: z.string().regex(/^[a-zA-Z0-9_=\s\(\)\.\*]*$/).optional(),
-    // selectOption: z.string().optional(),
-})
-
-export type SelectParams = z.infer<typeof selectSchema>
-
-export async function parseSelectQuery(q: SelectParams, jc: JsepContext){
-    const selectData = await selectSchema.parseAsync(q)
+export function parseSelectQuery(q: SelectParams, jc: JsepContext){
+    const selectData = selectSchema.parse(q)
     const select: SelectQuery = {
         selects: selectData.select ? parseColumnList(selectData.select, jc, true, true, true) : undefined,
         from: jc.tableName,

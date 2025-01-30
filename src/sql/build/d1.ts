@@ -7,6 +7,7 @@ export interface D1Query{
 
 // todo benchmark and optimise, might be slow when inserting lots of values
 export function sqlQueryToD1Query(query: SQLQuery): D1Query{
+    if(!query.p) return {q: query.q, v: []}
     const regex = /(?:^|\s|\W)\{\:([a-zA-Z0-9_]+)\}(?:\s|\W|$)/g
     const matches = query.q.match(regex)
     if(!matches?.length) return {q: query.q, v: []}

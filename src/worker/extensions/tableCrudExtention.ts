@@ -2,15 +2,16 @@ import {TableExtension} from '../tableExtension'
 import {z} from 'zod'
 import {
     $Table,
+} from '../$Table'
+import {JsepContext} from '../../sql/parse/jsep'
+import {HTTPException} from 'hono/http-exception'
+import {
     tableDeleteSchema, tableEditSchema,
     tableInsertSchema,
     tableSelectSchema,
     tableUpdateSchema,
     tableViewSchema
-} from '../$Table'
-import {JsepContext} from '../../sql/parse/jsep'
-import {HTTPException} from 'hono/http-exception'
-import {updateSchema} from '../../sql/parse/update'
+} from '../../types/sql'
 
 interface TableCrudExtensionData {
     name: 'crud'
@@ -33,7 +34,7 @@ export class TableCrudExtension extends TableExtension<TableCrudExtensionData> {
             },
         })
         this.routes.push({
-            handler: async(body: any, p?: any)=>await this.table.select(body),
+            handler: async(body: any, p?: any)=>await (await this.table.select(body))?.run()??[],
             path: '/select',
             method: 'get',
             zod: ()=>({
@@ -43,7 +44,7 @@ export class TableCrudExtension extends TableExtension<TableCrudExtensionData> {
             }),
         })
         this.routes.push({
-            handler: async(body: any, p?: any)=>await this.table.select(body),
+            handler: async(body: any, p?: any)=>await (await this.table.select(body))?.run()??[],
             path: '/select',
             method: 'post',
             zod: ()=>({
@@ -56,7 +57,7 @@ export class TableCrudExtension extends TableExtension<TableCrudExtensionData> {
             }),
         })
         this.routes.push({
-            handler: async(body: any, p?: any)=>await this.table.select(body),
+            handler: async(body: any, p?: any)=>await (await this.table.select(body, true))?.run()??[],
             path: '/list',
             method: 'get',
             zod: ()=>({
@@ -69,7 +70,7 @@ export class TableCrudExtension extends TableExtension<TableCrudExtensionData> {
             }),
         })
         this.routes.push({
-            handler: async(body: any, p?: any)=>await this.table.select(body),
+            handler: async(body: any, p?: any)=>await (await this.table.select(body, true))?.run()??[],
             path: '/list',
             method: 'post',
             zod: ()=>({
@@ -85,7 +86,7 @@ export class TableCrudExtension extends TableExtension<TableCrudExtensionData> {
             }),
         })
         this.routes.push({
-            handler: async(body: any, p?: any)=>await this.table.update(body),
+            handler: async(body: any, p?: any)=>await (await this.table.update(body))?.run()??[],
             path: '/update',
             method: 'post',
             zod: ()=>({
@@ -98,7 +99,7 @@ export class TableCrudExtension extends TableExtension<TableCrudExtensionData> {
             }),
         })
         this.routes.push({
-            handler: async(body: any, p?: any)=>await this.table.insert(body),
+            handler: async(body: any, p?: any)=>await (await this.table.insert(body))?.run()??[],
             path: '/insert',
             method: 'post',
             zod: ()=>({
@@ -111,7 +112,7 @@ export class TableCrudExtension extends TableExtension<TableCrudExtensionData> {
             }),
         })
         this.routes.push({
-            handler: async(body: any, p?: any)=>await this.table.delete(body),
+            handler: async(body: any, p?: any)=>await (await this.table.delete(body))?.run(),
             path: '/delete',
             method: 'post',
             zod: ()=>({
@@ -125,7 +126,7 @@ export class TableCrudExtension extends TableExtension<TableCrudExtensionData> {
         })
         if(this.table.fieldsUsage.record_uid) {
             this.routes.push({
-                handler: async (body: any, p?: any) => await this.table.view(body, z.string().min(1).max(255).parse(p.id)),
+                handler: async (body: any, p?: any) => await (await this.table.view(body, z.string().min(1).max(255).parse(p.id)))?.run() ?? undefined,
                 path: '/view/:id',
                 method: 'get',
                 zod: () => ({
@@ -135,11 +136,11 @@ export class TableCrudExtension extends TableExtension<TableCrudExtensionData> {
                 }),
             })
             this.routes.push({
-                handler: async (body: any, p?: any) => await this.table.edit({
+                handler: async (body: any, p?: any) => await (await this.table.edit({
                     setValues: body,
                     returning: this.table.$db.c.req.query('returning'),
                     or: tableEditSchema.shape.or.parse(this.table.$db.c.req.query('or')),
-                }, z.string().min(1).max(255).parse(p.id)),
+                }, z.string().min(1).max(255).parse(p.id)))?.run()??undefined,
                 path: '/edit/:id',
                 method: 'post',
                 zod: () => ({

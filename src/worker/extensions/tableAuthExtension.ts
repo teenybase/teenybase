@@ -14,9 +14,8 @@ import {parseRequestBody} from '../util/parseRequestBody'
 import {recordToSqlValues} from '../../sql/parse/parse'
 import {JWTPayload} from '../../types/jwt'
 import {generateUid, randomString} from '../../security/random'
-import {SQLLiteral, SQLQuery, sqlValSchema} from '../../types/sql'
+import {InsertParams, SQLLiteral, SQLQuery, sqlValSchema} from '../../types/sql'
 import {passwordProcessors} from '../util/passwordProcessors'
-import {InsertParams} from '../../sql/parse/insert'
 import {Context} from 'hono'
 
 type UserFields = {
@@ -417,7 +416,7 @@ export class TableAuthExtension extends TableExtension<TableAuthExtensionData> {
             selects: this._userFields(true, asAdmin),
             limit: 1,
             _readOnly: true,
-        })
+        })?.run() ?? []
         return this._fieldsToUser(res[0], true)
     }
     private async getUser(id: string) {
@@ -430,7 +429,7 @@ export class TableAuthExtension extends TableExtension<TableAuthExtensionData> {
             selects: this._userFields(),
             limit: 1,
             _readOnly: true,
-        })
+        })?.run() ?? []
         return this._fieldsToUser(res[0])
     }
 
@@ -443,12 +442,12 @@ export class TableAuthExtension extends TableExtension<TableAuthExtensionData> {
             },
             set: data,
             returning: this._userFields(),
-        })
+        })?.run() ?? []
         return this._fieldsToUser(res[0])
     }
 
     private async _createUser(data: Required<InsertParams>['values']) {
-        const res = await this.table.insert({values: data, returning: this._userFields(false)})
+        const res = await (await this.table.insert({values: data, returning: this._userFields(false)}))?.run() ?? []
         const user = res ? this._fieldsToUser(res[0]) : null
         if (!user) throw new HTTPException(400, {message: 'Unable to create user'}) // todo maybe tell user it can be because of rules?
         return user
@@ -484,7 +483,7 @@ export class TableAuthExtension extends TableExtension<TableAuthExtensionData> {
             table: this.jc.tableName,
             values,
             returning: this._userFields(),
-        })
+        })?.run() ?? []
         return this._fieldsToUser(res[0])
     }
 

@@ -2,6 +2,8 @@ import {AlterTable, TableData, tableDataSchema, validateTableChange} from "./tab
 import {BaseTemplateProps, baseTemplatePropsSchema} from "./email";
 import {MailgunBindings, mailgunBindingsSchema} from "./mailgun";
 import {z} from 'zod'
+import {QueryTypes} from '../sql/build/query'
+import {SQLProcedure, zSQLProcedure} from './sql'
 
 export interface DatabaseSettings {
     tables: TableData[]
@@ -11,6 +13,8 @@ export interface DatabaseSettings {
 
     appName?: string
     appUrl: string
+
+    procedures?: SQLProcedure[]
 
     email?: {
         from: string // default, in-case not provided in sendEmail
@@ -40,6 +44,7 @@ export const databaseSettingsSchema = z.object({
     version: z.number().optional(),
     appName: z.string().optional(),
     appUrl: z.string(),
+    procedures: z.array(zSQLProcedure).optional(),
     email: z.object({
         from: z.string(),
         variables: baseTemplatePropsSchema,

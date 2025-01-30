@@ -47,10 +47,10 @@ LEFT JOIN
 `
 }
 export async function getTableInfo(db: $Database, collections: { name: string, fields?: TableFieldData[] }[]): Promise<(TableInfo)[]> {
-    const res = await db.rawSQLTransaction<TableInfoStmtRes>(collections.map(col => ({q:tableInfoStmt(col.name), v:[]})))
-    if(!res.every(r=>r.success)) throw new HTTPException(500, {message: 'Error - ' + res.map(r=>r.error).join(', ')})
+    const res = await db.rawSQLTransaction<TableInfoStmtRes>(collections.map(col => ({q:tableInfoStmt(col.name), v:[]}))).run()
+    if(!res) throw new HTTPException(500, {message: 'Error - Unable to get table info'})
     return res.map((r1, i) => {
-        const results = r1.results
+        const results = r1
         let logs = [] as string[]
         return {
             name: collections[i].name,
@@ -107,7 +107,7 @@ export async function getSQLiteSchema(db: $Database<any>){
         tbl_name: string,
         type: string,
         sql: string
-    }>({q: `SELECT * from sqlite_schema`, v: []})
+    }>({q: `SELECT * from sqlite_schema`, v: []}).run() ?? []
 
     const tableCheck = (r: any)=>{
         return r.type === 'table'

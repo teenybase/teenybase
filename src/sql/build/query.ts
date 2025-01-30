@@ -11,6 +11,8 @@ export interface QueryTypes{
     delete: DeleteQuery
 }
 
+export type QueryType = keyof QueryTypes
+
 /**
  * Warning - use only for logging, not for building queries.
  * @param query

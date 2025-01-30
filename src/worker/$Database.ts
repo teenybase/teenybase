@@ -12,7 +12,7 @@ import {$Env} from './env'
 import {JWTPayloadOp} from '../types/jwt'
 import {TableAuthExtensionData} from '../types/tableExtensions'
 import {createJsepContext, honoToJsep, ident} from '../sql/parse/jsep'
-import {logSQLQuery, QueryTypes} from '../sql/build/query'
+import {logSQLQuery, QueryType, QueryTypes} from '../sql/build/query'
 import {D1Query, sqlQueryToD1Query} from '../sql/build/d1'
 import {z} from 'zod'
 import {
@@ -29,14 +29,21 @@ import {LinearRouter} from 'hono/router/linear-router'
 import {parseRequestBody} from './util/parseRequestBody'
 import {HttpRoute, RawRouterHandlerFunction} from '../types/route'
 import {$DBExtension} from './$DBExtension'
-import {SQLQuery} from '../types/sql'
+import {SQLProcedure, SQLQuery} from '../types/sql'
 import {buildDeleteQuery, DeleteQuery} from '../sql/build/delete'
 import {buildInsertQuery, InsertQuery} from '../sql/build/insert'
 import {buildUpdateQuery, UpdateQuery} from '../sql/build/update'
 import {buildSelectQuery, SelectQuery} from '../sql/build/select'
 import {generateUid} from '../security/random'
 import {getSQLiteSchema} from '../sql/schema/tableInfo'
-import {D1RunEvent, D1RunFailEvent, SQLRunContext, SQLRunTransactionContext} from './util/sql'
+import {
+    D1PreparedQuery,
+    D1PreparedTransaction,
+    D1RunEvent,
+    D1RunFailEvent,
+    SQLRunContext,
+    SQLRunTransactionContext
+} from './util/sql'
 
 export type $DatabaseEventMap = {
     run_sql: D1RunEvent
@@ -292,7 +299,11 @@ export class $Database<T extends $Env = $Env> extends EventTarget<$DatabaseEvent
 
     // region crud
 
-    async rawDelete<T1 = any>(table: $Table, query: OptionalOmit<DeleteQuery, 'table'>, filesToDelete?: string[]){
+    rawDelete<T1 = any, TRet = T1[]>(
+        table: $Table, query: OptionalOmit<DeleteQuery, 'table'>,
+        filesToDelete?: string[],
+        then?: (r:T1[])=>TRet
+    ){
         if(this.readOnlyMode) throw new ProcessError('DELETE not allowed in read only mode')
 
         if((query as DeleteQuery).table && (query as DeleteQuery).table !== table.jc.tableName) throw new ProcessError('Invalid table')
@@ -300,18 +311,34 @@ export class $Database<T extends $Env = $Env> extends EventTarget<$DatabaseEvent
         const deleteQuery = {...query, table: table.jc.tableName}
         const sql = buildDeleteQuery(deleteQuery, table.jc.autoSimplifyExpr)
 
-        // todo make beforeDelete
-        const res = await this.run<T1, 'delete'>(sql, 'Failed to run delete query', {table, type: 'delete', crudQuery: deleteQuery, query: sql})
-
-        // todo make onDelete
-        // ignore error on fail
-        if(filesToDelete && table.autoDeleteR2Files){
-            await this._deleteFiles(filesToDelete, table).catch(()=>{})
-        }
-        return res
+        return this.prepare<T1, TRet, 'delete'>({
+            table,
+            type: 'delete',
+            crudQuery: deleteQuery,
+            query: sql,
+            errorMessage: 'Failed to run delete query',
+            onRun: async ()=>{
+                // todo make beforeDelete
+            },
+            onError: async (e) => {
+                // ignoring error on fail. todo
+                return e
+            },
+            onSuccess: async (r) => {
+                // todo make onDelete
+                if(filesToDelete && table.autoDeleteR2Files){
+                    await this._deleteFiles(filesToDelete, table).catch(()=>{})
+                }
+            },
+            then,
+        })
     }
 
-    async rawInsert<T1 = any>(table: $Table, query: OptionalOmit<InsertQuery, 'table'>, filesToUpload?: Record<string, File>, filesToRef?: string[]){
+    rawInsert<T1 = any, TRet=T1[]>(
+        table: $Table, query: OptionalOmit<InsertQuery, 'table'>,
+        filesToUpload?: Record<string, File>, filesToRef?: string[],
+        then?: (r:T1[])=>TRet
+    ){
         if(this.readOnlyMode) throw new ProcessError('INSERT not allowed in read only mode')
 
         if((query as InsertQuery).table && (query as InsertQuery).table !== table.jc.tableName) throw new ProcessError('Invalid table')
@@ -336,37 +363,52 @@ export class $Database<T extends $Env = $Env> extends EventTarget<$DatabaseEvent
         }
         // const sql = buildInsertQuery({...query, table: table.jc.tableName}, table.jc.autoSimplifyExpr)
 
-        // todo - make beforeInsert
-        // will throw error on fail
-        filesToRef && await this._refCheckFiles(filesToRef, table)
-        filesToUpload && await this._uploadFiles(filesToUpload, table)
+        // todo since we are authenticating with rules, its possible an unauthenticated user can DOS by putting in loop upload and delete files
 
-        let res: T1[] | null = null
-        let err = null as any
-        try {
-            if(sqlQs.length === 1) {
-                res = await this.run<T1, 'insert'>(sqlQs[0][1], 'Failed to run insert query', {table, type: 'insert', crudQuery: sqlQs[0][0], query: sqlQs[0][1]})
-            }else {
-                res = (await this.transaction<T1>(sqlQs.map(q=>q[1]), 'Failed to run insert query', {table, type: 'insert', crudQuery: sqlQs.map(q=>q[0]), query: sqlQs.map(q=>q[1])})).flatMap(r => r.results)
-            }
-        }catch (e){
-            console.error(e)
-            err = e
-            res = null
+        const onRun = async ()=>{
+            // todo - make beforeInsert
+            // will throw error on fail
+            filesToRef && await this._refCheckFiles(filesToRef, table)
+            filesToUpload && await this._uploadFiles(filesToUpload, table)
         }
-
-        // todo - make onInsertFail
-        // if error, delete uploaded files
-        if(res === null){
+        const onError = async (e: any) => {
+            // todo - make onInsertFail
+            // if error, delete uploaded files
             // TODO: its possible that some rows are not inserted because of where/rule in sql. those files need to be deleted. same in update and delete. we need to add a force returning clause with id? or can we use some other metadata
             if(filesToUpload) await this._deleteFiles(Object.keys(filesToUpload), table)
-            throw (err ?? new HTTPException(500, { message: 'Failed to insert' }))
+            return e
         }
 
-        return res
+        if(sqlQs.length === 1) {
+           return this.prepare<T1, TRet, 'insert'>({
+                table, type: 'insert',
+                crudQuery: sqlQs[0][0],
+                query: sqlQs[0][1],
+                errorMessage: 'Failed to run insert query',
+                onRun,
+                onError,
+                then,
+            })
+        }else {
+            return this.transaction<T1, TRet, 'insert'>({
+                table, type: 'insert',
+                crudQuery: sqlQs.map(q=>q[0]),
+                query: sqlQs.map(q=>q[1]),
+                errorMessage: 'Failed to run insert query',
+                onRun,
+                onError,
+                // @ts-ignore
+                then: async (r)=> then ? then(r.flat()) : r.flat()
+            })
+        }
+
     }
 
-    async rawUpdate<T1 = any>(table: $Table, query: OptionalOmit<UpdateQuery, 'table'>, filesToUpload?: Record<string, File>, filesToRef?: string[], filesToDelete?: string[]){
+    rawUpdate<T1 = any, TRet = T1[]>(
+        table: $Table, query: OptionalOmit<UpdateQuery, 'table'>,
+        filesToUpload?: Record<string, File>, filesToRef?: string[], filesToDelete?: string[],
+        then?: (r:T1[])=>TRet
+    ){
         if(this.readOnlyMode) throw new ProcessError('UPDATE not allowed in read only mode')
 
         if((query as UpdateQuery).table && (query as UpdateQuery).table !== table.jc.tableName) throw new ProcessError('Invalid table')
@@ -374,50 +416,59 @@ export class $Database<T extends $Env = $Env> extends EventTarget<$DatabaseEvent
         const updateQuery = {...query, table: table.jc.tableName}
         const sql = buildUpdateQuery(updateQuery, table.jc.autoSimplifyExpr)
 
-        // todo - make beforeUpdate
-
-        // will throw error on fail
-        filesToRef && await this._refCheckFiles(filesToRef, table)
-        filesToUpload && await this._uploadFiles(filesToUpload, table)
-
-        let res: T1[]|null
-        let err = null as any
-        try {
-            res = await this.run<T1, 'update'>(sql, 'Failed to run update query', {table, type: 'update', crudQuery: updateQuery, query: sql})
-        }catch (e){
-            console.error(e)
-            err = e
-            res = null
+        const onRun = async ()=>{
+            // todo - make beforeUpdate
+            // will throw error on fail
+            filesToRef && await this._refCheckFiles(filesToRef, table)
+            filesToUpload && await this._uploadFiles(filesToUpload, table)
         }
-
-        // todo - make onUpdateFail
-        // if error, delete uploaded files
-        if(res === null){
+        const onError = async (e: any) => {
+            // todo - make onUpdateFail
+            // if error, delete uploaded files
+            // TODO: its possible that some rows are not inserted because of where/rule in sql. those files need to be deleted. same in update and delete. we need to add a force returning clause with id? or can we use some other metadata
             if(filesToUpload) await this._deleteFiles(Object.keys(filesToUpload), table)
-            throw (err ?? new HTTPException(500, { message: 'Failed to update' }))
+            return e
+        }
+        const onSuccess = async ()=>{
+            // todo - make onUpdate
+            // ignore error on fail
+            if(filesToDelete && table.autoDeleteR2Files){
+                await this._deleteFiles(filesToDelete, table).catch(()=>{})
+            }
         }
 
-        // todo - make onUpdate
-        // ignore error on fail
-        if(filesToDelete && table.autoDeleteR2Files){
-            await this._deleteFiles(filesToDelete, table).catch(()=>{})
-        }
-
-        return res
+        return this.prepare<T1, TRet, 'update'>({
+            table, type: 'update',
+            crudQuery: updateQuery,
+            query: sql,
+            errorMessage: 'Failed to run update query',
+            onRun,
+            onError,
+            onSuccess,
+            then,
+        })
     }
 
-    async rawSelect<T=any>(table: $Table, query: OptionalOmit<SelectQuery, 'from'>): Promise<T[]>
-    async rawSelect<T=any>(table: $Table, query: OptionalOmit<SelectQuery, 'from'>, countTotal: boolean): Promise<{ items: T[], total: number }>
-    async rawSelect<T=any>(table: $Table, query: OptionalOmit<SelectQuery, 'from'>, countTotal?: boolean){
+    rawSelect<T=any, TRet=T[]>(table: $Table, query: OptionalOmit<SelectQuery, 'from'>, then?: (r:T[])=>TRet): D1PreparedQuery<T, T[], 'select'>|null
+    rawSelect<T=any>(table: $Table, query: OptionalOmit<SelectQuery, 'from'>, countTotal: boolean): D1PreparedQuery<T, { items: T[], total: number }, 'select'>|null
+    rawSelect<T=any, TRet=T[]>(table: $Table, query: OptionalOmit<SelectQuery, 'from'>, countTotal?: (boolean|((r:T[])=>TRet))){
         if((query as SelectQuery).from && (query as SelectQuery).from !== table.jc.tableName) throw new ProcessError('Invalid from table')
         const selectQuery = {...query, from: table.jc.tableName}
         const sql = buildSelectQuery(selectQuery, table.jc.autoSimplifyExpr)
         // console.log(query, sql)
 
-        if(!countTotal) {
-            const res = await this.run<T, 'select'>(sql, 'Failed to run select query', {table, type: 'select', crudQuery: selectQuery, query: sql})
-            // console.log(res)
-            return countTotal === undefined ? res : {items: res, total: -1}
+        if(!countTotal || typeof countTotal === 'function') {
+            return countTotal === undefined || typeof countTotal === 'function' ?
+                this.prepare<T, TRet, 'select'>({
+                    table, type: 'select', crudQuery: selectQuery, query: sql,
+                    errorMessage: 'Failed to run select query',
+                    then: countTotal
+                }) :
+                this.prepare<T, {items: T[], total: number}, 'select'>({
+                    table, type: 'select', crudQuery: selectQuery, query: sql,
+                    errorMessage: 'Failed to run select query',
+                    then: async (res)=> ({items: res, total: -1})
+                })
         }
 
         const countField = table.mapping.uid ? ident(table.mapping.uid, table.jc) : '*'
@@ -435,21 +486,74 @@ export class $Database<T extends $Env = $Env> extends EventTarget<$DatabaseEvent
         }
         const countQuery = buildSelectQuery(countSelectQuery, table.jc.autoSimplifyExpr)
 
-        const res = await this.transaction([sql, countQuery], 'Failed to run select query', {table, type: 'select', crudQuery: [selectQuery, countSelectQuery], query: [sql, countQuery]})
-
-        return {items: res[0].results, total: (res[1].results[0] as any)?.total ?? -1}
+        return this.transaction<T, {items: T[], total: number}, 'select'>({
+            table, type: 'select',
+            crudQuery: [selectQuery, countSelectQuery],
+            query: [sql, countQuery],
+            errorMessage: 'Failed to run select query',
+            then: async (r)=> ({items: r[0], total: (r[1][0] as any)?.total ?? -1})
+        })
     }
 
     // endregion crud
 
     // region sql
 
-    async rawSQL<T>(d1Expr: D1Query, onErr?: (er: any) => any, c?: SQLRunContext) {
-        return this._rawSQL<T>(d1Expr, onErr, false, c)
+    rawSQL<T>(d1Expr: D1Query, c?: SQLRunContext) {
+        return this._prepareD1Query<T>(d1Expr, false, c)
     }
 
-    async rawSQLTransaction<T>(d1Expr: D1Query[], onErr?: (er: any) => any, c?: SQLRunTransactionContext) {
-        return this._rawSQLTransaction<T>(d1Expr, onErr, false, c)
+    rawSQLTransaction<T>(d1Expr: D1Query[], c?: SQLRunTransactionContext) {
+        return this._prepareD1Transaction<T>(d1Expr, false, c)
+    }
+
+    // todo
+    private async _rawProcedure(procedure: SQLProcedure){
+        if(this.dryRunMode || this.c.env.RESPOND_WITH_QUERY_LOG)
+            this.queryLog.push('PROCEDURE: ' + procedure.name)
+        if(this.dryRunMode) return
+        const statements = Array.isArray(procedure.statement) ? procedure.statement : procedure.statement ? [procedure.statement] : []
+        const queries = Array.isArray(procedure.query) ? procedure.query ? procedure.query : [procedure.query] : []
+        if(!statements.length && !queries.length) return // todo throw error?
+        if(statements.length && queries.length) throw new ProcessError(`Invalid procedure ${procedure.name}, cannot have both statements and queries`)
+        const rule = procedure.rule ?? true
+        const prepared: (D1PreparedQuery<any, any, QueryType>|D1PreparedTransaction<any, any, QueryType>|null)[] = []
+        if(queries.length){
+            if(rule) throw new ProcessError(`Invalid procedure ${procedure.name}, cannot have raw queries without rule`)
+            for (const query of queries) {
+                if(!query) continue
+                if(query.type === 'SELECT'){
+                    if(Array.isArray(query.from)) throw new ProcessError(`Invalid procedure ${procedure.name}, cannot have multiple tables in select query`)
+                    if(!query.from) throw new ProcessError(`Invalid procedure ${procedure.name}, missing from table in select query`)
+                    prepared.push(this.rawSelect(this.table(query.from), query))
+                }else if(query.type === 'UPDATE'){
+                    prepared.push(this.rawUpdate(this.table(query.table), query))
+                }else if(query.type === 'INSERT'){
+                    prepared.push(this.rawInsert(this.table(query.table), query))
+                }else if(query.type === 'DELETE'){
+                    prepared.push(this.rawDelete(this.table(query.table), query))
+                }
+            }
+        }
+        if(statements.length){
+            for (const statement of statements) {
+                if(!statement) continue
+                // todo handle when rule is false
+                const table = this.table(statement.table)
+                if(statement.type === 'SELECT'){
+                    prepared.push(await table.select(statement))
+                }else if(statement.type === 'UPDATE'){
+                    prepared.push(await table.update(statement))
+                }else if(statement.type === 'INSERT'){
+                    prepared.push(await table.insert(statement))
+                }else if(statement.type === 'DELETE'){
+                    prepared.push(await table.delete(statement))
+                }
+            }
+        }
+
+        if(!prepared.length) return // todo throw error?
+
     }
 
     // endregion sql
@@ -501,98 +605,228 @@ export class $Database<T extends $Env = $Env> extends EventTarget<$DatabaseEvent
     // region private sql
     private readonly database: D1Database
 
-    private async run<T, TC extends keyof QueryTypes>(q: SQLQuery, err: string, c: SQLRunContext<TC>) {
+    private prepare<T, TRet = T[], TC extends QueryType = QueryType>(c: SQLRunContext<T, TRet, TC>) {
+        const q = c.query
         if (this.dryRunMode || this.c.env.RESPOND_WITH_QUERY_LOG) {
             this.queryLog.push(logSQLQuery(q))
         }
-        if (!q.q) return []
         const d1Expr = sqlQueryToD1Query(q)
         // return await runD1Query<T>(this.d1, d1Expr, err)
-        const onErr = (er: any)=>{
-            // console.error(er, err, d1Expr)
-            const msg = er.message ? er.message.replace(/D1_ERROR: /g, '') : 'Unknown error'
-            // throw new HTTPException(500, { message: err + ' - ' + msg, asd });
-            const e = new D1Error(err || 'Unknown SQL Error', msg, er, logSQLQuery(q))
-            return c?.table?.parseD1Error(e) ?? e
-        }
-        if(this.dryRunMode) return [] // todo add dummy data?
-        return await this._rawSQL<T>(d1Expr, onErr, q._readOnly, c)
+        if(this.dryRunMode) return null // todo add dummy data?
+        return this._prepareD1Query(d1Expr, q._readOnly, c)
     }
-    private async transaction<T>(q: SQLQuery[], err: string, c: SQLRunTransactionContext) {
+    private transaction<T, TRet = T[][], TC extends QueryType = QueryType>(c: SQLRunTransactionContext<T, TRet, TC>) {
+        const q = c.query
         if (this.dryRunMode || this.c.env.RESPOND_WITH_QUERY_LOG) {
             this.queryLog.push(q.map(q1 => logSQLQuery(q1)).join(';\n'))
         }
         const d1Expr = q.map(sqlQueryToD1Query)
         // return await runD1Transaction(this.d1, d1Expr, err)
-        const onErr = (er: any)=>{
-            // console.error(er, err, d1Expr)
-            const msg = er.message ? er.message.replace(/D1_ERROR: /g, '') : 'Unknown error'
-            // throw new HTTPException(500, { message: err??'Error running transaction' });
-            const e = new D1Error(err || 'Unknown SQL Error(t)', msg, er, q.map(q1 => logSQLQuery(q1)).join(';\n'))
-            return c?.table?.parseD1Error(e) ?? e
-        }
-        if(this.dryRunMode) return [] // todo add dummy data?
-        return await this._rawSQLTransaction<T>(d1Expr, onErr, q.every(q1=>q1._readOnly), c)
+        if(this.dryRunMode) return null // todo add dummy data?
+        return this._prepareD1Transaction(d1Expr, q.every(q1=>q1._readOnly), c)
     }
 
-    private async _rawSQL<T>(d1Expr: D1Query, onErr?: (er: any) => any, readOnly = false, c?: SQLRunContext) {
+    // private async _rawSQL<T>(d1Expr: D1Query, onErr?: (er: any) => any, readOnly = false, c?: SQLRunContext) {
+    //     return this._prepareD1Query(d1Expr, onErr, readOnly, c)
+    // }
+
+    private _prepareD1Query<T, TRet = T[], TC extends QueryType = QueryType>(d1Expr: D1Query, readOnly = true, c?: SQLRunContext<T, TRet, TC>){
         if (this.readOnlyMode && !readOnly) throw new ProcessError('Running raw SQL is not allowed in read only mode.')
         if (this.dryRunMode) throw new ProcessError('Running raw SQL is not allowed in dry run.')
-        const onError = (er: any)=>{
-            this.dispatchEvent(new D1RunFailEvent({input: {...c, d1Expr}, error: er}))
-            return onErr ? onErr(er) : er
-        }
+        const prep: D1PreparedQuery<T, TRet, TC> = {
+            prepared: d1Expr.q ? this.database.prepare(d1Expr.q).bind(...d1Expr.v) : null,
+            c,
+            onError: async (er: any)=>{
+                // todo only dispatch event if the error is from this query in transaction
+                const msg = er.message ? er.message.replace(/D1_ERROR: /g, '') : 'Unknown error'
+                // throw new HTTPException(500, { message: err??'Error running transaction' });
+                const e = new D1Error(prep.c?.errorMessage || 'Unknown SQL Error', msg, er, prep.c?.query ? logSQLQuery(prep.c.query) : '')
+                const error = prep.c?.table?.parseD1Error(e) ?? e
+                this.dispatchEvent(new D1RunFailEvent({input: {...prep.c, d1Expr}, error: er}))
+                return c?.onError ? c.onError(error) : error
+            },
+            onSuccess: async (res): Promise<T[]>=> {
+                if (!res) throw new Error('Unknown error - No result')
+                else if (!res.success) throw new Error(res.error)
+                else {
+                    // console.log('Query result:', res)
+                    this.dispatchEvent(new D1RunEvent({input: {...prep.c, d1Expr}, result: res}))
+                    c?.onSuccess && await c.onSuccess(res)
+                    return res.results
+                }
+            },
 
-        const prepared = this.database.prepare(d1Expr.q).bind(...d1Expr.v)
-        // console.log('Running query:', query.q, query.v)
-        const res = await prepared.run<T>().catch((e)=> {throw onError(e)})
-        if (!res) throw onError({message: 'No result'})
-        else if (!res.success) throw onError(res.error)
-        else {
-            // console.log('Query result:', res)
-            this.dispatchEvent(new D1RunEvent({input: {...c, d1Expr}, result: res}))
-            return res.results
+            run: async ()=> this._exec(prep)
+        }
+        return prep
+    }
+
+    private _prepareD1Transaction<T, TRet = T[][], TC extends QueryType = QueryType>(d1Exprs: D1Query[], readOnly = false, c?: SQLRunTransactionContext<T, TRet, TC>): D1PreparedTransaction<T, TRet, TC> {
+        const prepared = d1Exprs.map((query, i) => {
+            return this._prepareD1Query<T, T[], TC>(query, readOnly, c ? {
+                ...c,
+                query: c.query[i],
+                crudQuery: c.crudQuery[i],
+                onError: undefined,
+                onSuccess: undefined,
+                onRun: undefined,
+                then: undefined,
+            } : undefined)
+        })
+        const prep = {
+            prepared,
+            c,
+            run: async ()=> this._execBatch(prep)
+        } as D1PreparedTransaction<T, TRet, TC>
+        return prep
+        // const onError = (er: any)=>{
+        //     let i = 0
+        //     for (const d1Expr of d1Exprs) {
+        //         this.dispatchEvent(new D1RunFailEvent({input: {...c, d1Expr, query: c?.query[i], crudQuery: c?.crudQuery[i]}, error: er}))
+        //         i++
+        //     }
+        //     return onErr ? onErr(er) : er
+        // }
+        // const onSuccess = (res: D1Result<T>[])=>{
+        //     if (!res) throw onError({message: 'No result'})
+        //     let ki = 0
+        //     let i = 0
+        //     const events: D1RunEvent[] = []
+        //     const results = [] as (D1Result<T>|Omit<D1Result<T>, 'meta'>)[]
+        //     for (const d1Expr of d1Exprs) {
+        //         const p = prepared[i]
+        //         const r = p ? res[ki] : ({success: true, results: []} as Omit<D1Result<T>, 'meta'>)
+        //         if(p) events.push(new D1RunEvent({input: {...c, d1Expr, query: c?.query[i], crudQuery: c?.crudQuery[i]}, result: res[ki]}))
+        //         if(!r.success) throw onError(r.error)
+        //         results.push(r)
+        //         i++
+        //         if(p) ki++
+        //     }
+        //     events.forEach(e=>this.dispatchEvent(e))
+        //
+        //     return results
+        // }
+        //
+        // // console.log('Running batch queries:', qs)
+        //
+        // // todo proper error return for transaction
+        // const p2 = prepared.filter(p => !!p) as D1PreparedStatement[]
+        // return [p2, onSuccess, onError]
+        // return async ()=>{
+        //     const res = p2.length ? await this.database.batch<T>(p2).catch((e)=>{
+        //         throw onError(e)
+        //     }) : []
+        //     return onSuccess(res)
+        // }
+    }
+
+
+    private async _exec<T, TRet = T[]>(prep: D1PreparedQuery<T, TRet>): Promise<TRet|null> {
+        let res
+        try{
+            prep.c?.onRun && await prep.c.onRun()
+            res = await prep.prepared?.run<T>()
+        }catch (e){
+            throw await prep.onError(e)
+        }
+        let ret
+        try{
+            ret = await prep.onSuccess(res ?? {success: true, results: []})
+        }catch (e){
+            console.error('Unknown error in onSuccess', res, e)
+            ret = res?.results||[]
+        }
+        try {
+            // @ts-expect-error TS2322 unavoidable
+            return prep.c?.then ? await prep.c.then(ret) : ret
+        }catch (e){
+            console.error('Unknown error in then, ignored', ret, e)
+            return null
         }
     }
-    private async _rawSQLTransaction<T>(d1Exprs: D1Query[], onErr?: (er: any) => any, readOnly = false, c?: SQLRunTransactionContext) {
-        if (this.readOnlyMode && !readOnly) throw new ProcessError('Running raw SQL is not allowed in read only mode.')
-        if (this.dryRunMode) throw new ProcessError('Running raw SQL is not allowed in dry run.')
-        const onError = (er: any)=>{
-            let i = 0
-            for (const d1Expr of d1Exprs) {
-                this.dispatchEvent(new D1RunFailEvent({input: {...c, d1Expr, query: c?.query[i], crudQuery: c?.crudQuery[i]}, error: er}))
-                i++
+
+    private async _execBatch<T = any, TRet = T[][]>(transaction: D1PreparedTransaction<T, TRet>): Promise<TRet|null>{
+        const statements: D1PreparedStatement[] = []
+        const onRuns: (()=>Promise<void>)[] = []
+        const onErrors: ((e: any)=>any)[] = []
+        function collect(t: D1PreparedTransaction<T, TRet>){
+            t.c?.onRun && onRuns.push(t.c.onRun)
+            t.c?.onError && onErrors.push(t.c.onError)
+            for (const prep of t.prepared) {
+                if(Array.isArray(prep.prepared)){
+                    collect(prep as D1PreparedTransaction<T, TRet>)
+                }else if (prep.prepared) {
+                    const prep1 = prep as D1PreparedQuery<T, TRet>;
+                    prep.c?.onRun && onRuns.push(prep.c.onRun)
+                    prep1.onError && onErrors.push(prep1.onError)
+                    statements.push(prep.prepared)
+                }
             }
-            return onErr ? onErr(er) : er
         }
+        collect(transaction)
 
-        const prepared = d1Exprs.map(query => query.q ? this.database.prepare(query.q).bind(...query.v) : null)
-        // console.log('Running batch queries:', qs)
-
-        // todo proper error return for transaction
-
-        const p2 = prepared.filter(p => !!p) as D1PreparedStatement[]
-        const res = p2.length ? await this.database.batch<T>(p2).catch((e)=>{
-            throw onError(e)
-        }) : []
-        if (!res) throw onError({message: 'No result'})
-
-        let ki = 0
+        let res: D1Result<T>[]
+        try {
+            for (const onRun of onRuns) { // todo promise.all in batch?
+                await onRun()
+            }
+            res = await this.database.batch<T>(statements)
+        }catch (e) {
+            for (const onError of onErrors) {
+                try {
+                    e = await onError(e)
+                }catch (e1){
+                    console.error('Unknown error in onError', e1)
+                    e = e1
+                }
+            }
+            throw e
+        }
         let i = 0
-        const events: D1RunEvent[] = []
-        const results = [] as (D1Result<T>|Omit<D1Result<T>, 'meta'>)[]
-        for (const d1Expr of d1Exprs) {
-            const p = prepared[i]
-            const r = p ? res[ki] : ({success: true, results: []} as Omit<D1Result<T>, 'meta'>)
-            if(p) events.push(new D1RunEvent({input: {...c, d1Expr, query: c?.query[i], crudQuery: c?.crudQuery[i]}, result: res[ki]}))
-            if(!r.success) throw onError(r.error)
-            results.push(r)
-            i++
-            if(p) ki++
+        async function collectResults(t: D1PreparedTransaction<T, TRet>){
+            let res2: T[][] = []
+            for (const prep1 of t.prepared) {
+                if(Array.isArray(prep1.prepared)){
+                    const prep = prep1 as D1PreparedTransaction<T, TRet>
+                    const res3 = await collectResults(prep)
+                    if (Array.isArray(res3)) {
+                        res2.push(...res3)
+                    } else {
+                        console.error('Invalid result in nested transaction, expected array, ignored', res3)
+                        // res2.push()
+                    }
+                }else {
+                    const prep = prep1 as D1PreparedQuery<T, T[], 'select'>;
+                    const r = prep.prepared ? res[i++] : ({success: true, results: []} as Omit<D1Result<T>, 'meta'>)
+                    let ret: T[]
+                    try{
+                        ret = await prep.onSuccess(r)
+                    }catch (e){
+                        console.error('Unknown error in onSuccess, ignored', r, e)
+                        ret = r?.results||[]
+                    }
+                    try {
+                        res2.push(prep.c?.then ? await prep.c.then(ret) : ret)
+                    }catch (e){
+                        console.error('Unknown error in then, ignored', ret, e)
+                        // res2.push(null)
+                    }
+                }
+            }
+            try{
+                t.c?.onSuccess && await t.c.onSuccess(res2)
+            }catch (e){
+                console.error('Unknown error in onSuccess, ignored', res, e)
+            }
+            try{
+                return (t.c?.then ? await t.c.then(res2) : res2) as TRet
+            }catch (e){
+                console.error('Unknown error in then, ignored', res2, e)
+                return null
+            }
         }
-        events.forEach(e=>this.dispatchEvent(e))
 
-        return results
+        return await collectResults(transaction)
     }
 
     // endregion private sql
