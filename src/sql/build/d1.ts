@@ -5,6 +5,7 @@ export interface D1Query{
     v: any[]
 }
 
+// todo check cf when they support named parameters - https://developers.cloudflare.com/d1/worker-api/prepared-statements/#guidance
 // todo benchmark and optimise, might be slow when inserting lots of values
 export function sqlQueryToD1Query(query: SQLQuery): D1Query{
     if(!query.p) return {q: query.q, v: []}
@@ -18,7 +19,7 @@ export function sqlQueryToD1Query(query: SQLQuery): D1Query{
         const key = m.split('{:')[1].split('}')[0]
         let v = p?.[key]
         if(v === undefined) {
-            console.warn('Missing parameter', key, 'in params.', p)
+            console.warn('Missing parameter', key, 'in params.', q, p)
             throw new Error(`Missing parameter ${key} in params.`)
         }
         q = q.replace('{:'+key+'}', '?')

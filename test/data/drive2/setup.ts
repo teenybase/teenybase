@@ -1,15 +1,14 @@
-import generated from './generated.json'
-import {DatabaseSettings} from '../../../src'
+import {config, migrations} from './generated.json'
 import {applyMigrations} from '../apply-migrations'
 import {passwordProcessors} from '../../../src/worker/util/passwordProcessors'
 
 // to regenerate config, see ../../generateMigrations.test.ts
 export async function setup() {
-    await applyMigrations([...generated.migrations, {
+    await applyMigrations([...migrations, {
         name: '1000_Fill_Dummy_Data.sql',
         sql: await dummyData()
     }])
-    return structuredClone(generated.config satisfies DatabaseSettings)
+    return structuredClone(config)
 }
 
 export const dummyData = async () => {

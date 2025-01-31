@@ -113,5 +113,31 @@ export default {
                 deleteRule: null,
             } as TableRulesExtensionData]
         }
+    ],
+    procedures: [
+        {
+            name: 'mark_verified',
+            rule: false,
+            params: ['email', 'id'],
+            // todo only allow logged in users to call this function, also check if uid is the same
+            query: {
+                type: 'UPDATE',
+                table: 'users',
+                set: {email_verified: sqlValue(true)},
+                where: sql`{:email} LIKE '%@example.com' AND email = {:email} AND email_verified = false AND id = {:id}`,
+                returning: ['*'], // todo this should throw error or unwrap all the fields, which isn't happening
+            }
+        },
+        {
+            name: 'mark_verified_stat',
+            rule: false,
+            params: ['email'],
+            statement: {
+                type: 'UPDATE',
+                table: 'users',
+                setValues: {email_verified: true},
+                where: "email = params.email & email_verified = false & email ~ '%@example.com' & id = auth.uid",
+            }
+        },
     ]
 } satisfies DatabaseSettings

@@ -10,7 +10,7 @@ beforeAll(async () => {
     console.log('Before All - Setup Drive 1')
 })
 
-const fetch = (input: RequestInfo, init?: RequestInit)=>SELF.fetch('https://example.com/api/v1/table/'+input, {...init, ...{
+const fetch = (input: RequestInfo, init?: RequestInit)=>SELF.fetch('https://example.com/api/v1/'+input, {...init, ...{
         headers: {
             ...init?.headers,
             '$DB_TEST_DATABASE_SETTINGS': JSON.stringify(settings),
@@ -19,13 +19,13 @@ const fetch = (input: RequestInfo, init?: RequestInit)=>SELF.fetch('https://exam
     }})
 
 test('without auth should fail', async () => {
-    const res = await fetch(`users/select?limit=4&select=name,email&where=${encodeURIComponent(`name~'%o%'`)}`)
+    const res = await fetch(`table/users/select?limit=4&select=name,email&where=${encodeURIComponent(`name~'%o%'`)}`)
     expect(res.status).toEqual(200)
     expect((await res.text()).trim()).toEqual(`[]`)
 })
 
 test('sign up user fail no confirm', async () => {
-    const res = await fetch(`users/auth/sign-up`, {
+    const res = await fetch(`table/users/auth/sign-up`, {
         method: 'POST',
         body: JSON.stringify({
             username: 'admin',
@@ -41,7 +41,7 @@ test('sign up user fail no confirm', async () => {
 })
 
 async function createUser(data: any, status = 200) {
-    const res = await fetch(`users/auth/sign-up`, {
+    const res = await fetch(`table/users/auth/sign-up`, {
         method: 'POST',
         body: JSON.stringify({
             username: 'admin',
@@ -99,7 +99,7 @@ test('sign up with password - fail', async () => {
 test('login with pass - wrong pass', async () => {
     await createUser({username: 'a'})
 
-    const res = await fetch(`users/auth/login-password`, {
+    const res = await fetch(`table/users/auth/login-password`, {
         method: 'POST',
         body: JSON.stringify({
             username: 'a', password: 'aaaaaaaa',
@@ -112,7 +112,7 @@ test('login with pass - wrong pass', async () => {
 test('login with pass and token refresh', async () => {
     await createUser({username: 'a'})
 
-    const res = await fetch(`users/auth/login-password`, {
+    const res = await fetch(`table/users/auth/login-password`, {
         method: 'POST',
         body: JSON.stringify({username: 'a', password: '12345678',}),
     })
@@ -128,7 +128,7 @@ test('login with pass and token refresh', async () => {
     expect((decode as any).cid).toEqual('users')
     expect(decode.sub).toEqual('admin@example.com')
 
-    const res2 = await fetch(`users/auth/login-token`, {
+    const res2 = await fetch(`table/users/auth/login-token`, {
         method: 'POST',
         headers: {'Authorization': 'Bearer ' + json.token,},
     })
@@ -146,7 +146,7 @@ test('login with pass and token refresh', async () => {
 test('login with email, pass', async () => {
     await createUser({username: 'testuser', email: 'adm.in+3.hello123@gmail.com'})
 
-    const res = await fetch(`users/auth/login-password`, {
+    const res = await fetch(`table/users/auth/login-password`, {
         method: 'POST',
         body: JSON.stringify({email: 'ADMI.N+23@gmaIL.cOm', password: '12345678',}),
     })
@@ -167,7 +167,7 @@ test('login with email, pass', async () => {
 test('list users - *', async () => {
     const token = await createUser({username: 'a'})
 
-    const res = await fetch(`users/select`, {
+    const res = await fetch(`table/users/select`, {
         method: 'GET',
         headers: {'Authorization': 'Bearer ' + token.token},
     })
@@ -184,10 +184,160 @@ test('list users - *', async () => {
 })
 test('list users', async () => {
     const token = await createUser({username: 'a'})
-    const res = await fetch(`users/select?select=name,username,email`, {
+    const res = await fetch(`table/users/select?select=name,username,email`, {
         method: 'GET',
         headers: {'Authorization': 'Bearer ' + token.token},
     })
     expect(res.status).toEqual(200)
     expect(await res.text()).toEqual('[{"name":"Admin User","username":"a","email":"admin@example.com"}]')
+})
+
+test('rpc mark verified', async () => {
+    let json = await createUser({})
+    let json3 = await createUser({username: 'admin2', email: 'admin2@example.com'})
+    expect(json.verified).toEqual(false)
+    // console.log(json)
+    const res1 = await fetch(`rpc/mark_verified`, {
+        method: 'POST',
+        body: JSON.stringify({
+            email: 'admin@example.com',
+            id: json.record.id,
+        }),
+        headers: {'Authorization': 'Bearer ' + json.token,},
+    })
+    expect(res1.status).toEqual(200)
+    const res1json = (await res1.json() as any)[0][0]
+    // todo this should be `true`
+    expect(res1json.email_verified).toEqual(1)
+    // todo this should be undefined
+    expect(res1json.password).toBeDefined() // shouldn't return the password when * is used...
+
+    const res2 = await fetch(`table/users/auth/login-password`, {
+        method: 'POST',
+        body: JSON.stringify({ email: 'admin@example.com', password: '12345678',}),
+    })
+    expect(res2.status).toEqual(200)
+    const res2json = await res2.json() as any
+    console.log(res2json)
+    expect(res2json.token).toBeDefined()
+    expect(res2json.record.email_verified).toEqual(true)
+    expect(res2json.record.password).toBeUndefined()
+
+
+    const res3 = await fetch(`table/users/auth/login-password`, {
+        method: 'POST',
+        body: JSON.stringify({ email: 'admin2@example.com', password: '12345678',}),
+    })
+    expect(res3.status).toEqual(200)
+    const res3json = await res3.json() as any
+    expect(res3json.record.email_verified).toEqual(false)
+    expect(res3json.record.password).toBeUndefined()
+
+})
+
+test('rpc mark verified statement', async () => {
+    let json = await createUser({})
+    let json2 = await createUser({username: 'admin1', email: 'admin1@example.com'})
+    let json3 = await createUser({username: 'admin2', email: 'admin2@example.com'})
+    expect(json.verified).toEqual(false)
+    // console.log(json)
+    const res1 = await fetch(`rpc/mark_verified_stat`, {
+        method: 'POST',
+        body: JSON.stringify({
+            email: 'admin@example.com',
+        }),
+        headers: {'Authorization': 'Bearer ' + json.token,},
+    })
+    expect(res1.status).toEqual(200)
+    const res1json = (await res1.json() as any)[0][0]
+    // todo this should be `true`
+    expect(res1json.email_verified).toEqual(1)
+    expect(res1json.password).toBeUndefined() // shouldn't return the password when * is used...
+
+    const res2 = await fetch(`table/users/auth/login-password`, {
+        method: 'POST',
+        body: JSON.stringify({ email: 'admin@example.com', password: '12345678',}),
+    })
+    expect(res2.status).toEqual(200)
+    const res2json = await res2.json() as any
+    console.log(res2json)
+    expect(res2json.token).toBeDefined()
+    expect(res2json.record.email_verified).toEqual(true)
+    expect(res2json.record.password).toBeUndefined()
+
+    const res3 = await fetch(`table/users/auth/login-password`, {
+        method: 'POST',
+        body: JSON.stringify({ email: 'admin2@example.com', password: '12345678',}),
+    })
+    expect(res3.status).toEqual(200)
+    const res3json = await res3.json() as any
+    expect(res3json.record.email_verified).toEqual(false)
+    expect(res3json.record.password).toBeUndefined()
+
+})
+
+test('change password', async () => {
+    let json = await createUser({})
+    expect(json.verified).toEqual(false)
+    // console.log(json)
+    const res1 = await fetch(`rpc/mark_verified`, {
+        method: 'POST',
+        body: JSON.stringify({
+            email: 'admin@example.com',
+            id: json.record.id,
+        }),
+        headers: {'Authorization': 'Bearer ' + json.token,},
+    })
+    expect(res1.status).toEqual(200)
+
+    const res2 = await fetch(`table/users/auth/login-password`, {
+        method: 'POST',
+        body: JSON.stringify({ email: 'admin@example.com', password: '12345678',}),
+    })
+    expect(res2.status).toEqual(200)
+    const res2json = await res2.json() as any
+
+    let res = await fetch(`table/users/auth/change-password`, {
+        method: 'POST',
+        body: JSON.stringify({
+            email: 'admin@example.com',
+            password: '1234567899',
+            passwordConfirm: '1234567899',
+        }),
+        headers: {'Authorization': 'Bearer ' + res2json.token,},
+    })
+    expect(res.status).toEqual(400)
+    json = await res.json()
+    expect(json.message).toEqual('passwordCurrent is required') // todo proper validation error here.
+
+    res = await fetch(`table/users/auth/change-password`, {
+        method: 'POST',
+        body: JSON.stringify({
+            email: 'admin@example.com',
+            password: '1234567899',
+            passwordCurrent: '12345678',
+        }),
+        headers: {'Authorization': 'Bearer ' + res2json.token,},
+    })
+    expect(res.status).toEqual(400)
+    json = await res.json()
+    expect(json.message).toEqual('Validation Error')
+    expect(json.data).toEqual({_errors: [], passwordConfirm: { _errors: [ 'password and passwordConfirm do not match' ] }})
+
+    res = await fetch(`table/users/auth/change-password`, {
+        method: 'POST',
+        body: JSON.stringify({
+            email: 'admin@example.com',
+            password: '1234567899',
+            passwordConfirm: '1234567899',
+            passwordCurrent: '12345678',
+        }),
+        headers: {'Authorization': 'Bearer ' + res2json.token,},
+    })
+    expect(res.status).toEqual(200)
+    res = await fetch(`table/users/auth/login-password`, {
+        method: 'POST',
+        body: JSON.stringify({ email: 'admin@example.com', password: '1234567899',}),
+    })
+    expect(res.status).toEqual(200)
 })

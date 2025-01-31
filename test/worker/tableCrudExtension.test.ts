@@ -404,6 +404,7 @@ test('edit(upsert insert), view', async () => {
     expect(json2).toEqual(json)
 })
 
+// custom routing defined in sampleHonoApp
 test('test custom routing', async () => {
     const res = await fetch(`https://localhost/teeny/test/v1/route/api/api/v1/table/users/select?select=count(id)=>count`)
     const json = (await res.text()).trim()
@@ -411,4 +412,39 @@ test('test custom routing', async () => {
     expect(res.status).toEqual(200)
     expect(json).toEqual(`[{"count":10}]`)
     // console.log(JSON.parse(json))
+})
+
+// todo write versions of this with rules extension
+test('procedure run query', async () => {
+    const pms = []
+    for (let i = 0; i < 10; i++) {
+        pms.push(fetch(`https://localhost/api/v1/rpc/inc_counter_query`, {
+            method: 'POST',
+            body: JSON.stringify({
+                file_id: 1
+            })
+        }))
+    }
+    const res = await Promise.all(pms)
+    expect(res.every(r=>r.status === 200))
+    const jsons = await Promise.all(res.map(r => r.json()))
+    expect(jsons.length).toEqual(10)
+    expect(jsons.every((j:any, i)=>j[0][0].counter === i+1)).toEqual(true)
+})
+
+test('procedure run statement', async () => {
+    const pms = []
+    for (let i = 0; i < 10; i++) {
+        pms.push(fetch(`https://localhost/api/v1/rpc/inc_counter_statement`, {
+            method: 'POST',
+            body: JSON.stringify({
+                file_id: 1
+            })
+        }))
+    }
+    const res = await Promise.all(pms)
+    expect(res.every(r=>r.status === 200))
+    const jsons = await Promise.all(res.map(r => r.json()))
+    expect(jsons.length).toEqual(10)
+    expect(jsons.every((j:any, i)=>j[0][0].counter === i+1)).toEqual(true)
 })

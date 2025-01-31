@@ -1,9 +1,8 @@
-import generated from './generated.json'
-import {DatabaseSettings} from '../../../src'
+import {config, migrations} from './generated.json'
 import {applyMigrations} from '../apply-migrations'
 
 // to regenerate config, see ../../generateMigrations.test.ts
 export async function setup(){
-    await applyMigrations(generated.migrations)
-    return structuredClone(generated.config satisfies DatabaseSettings)
+    await applyMigrations(migrations)
+    return structuredClone(config)
 }

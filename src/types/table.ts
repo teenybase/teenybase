@@ -88,7 +88,7 @@ export interface TableData<TF extends TableFieldData=TableFieldData, TE extends 
 // export interface TableExtensionData<T=ExtensionsKeys> {
 export interface TableExtensionData<T=string> {
     name: T
-    // [key: string]: any
+    [key: string]: any
 }
 
 export const tableDataSchema = z.object({

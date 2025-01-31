@@ -11,7 +11,7 @@ import {InternalKV} from './internalKV'
 import {$Env} from './env'
 import {JWTPayloadOp} from '../types/jwt'
 import {TableAuthExtensionData} from '../types/tableExtensions'
-import {createJsepContext, honoToJsep, ident} from '../sql/parse/jsep'
+import {columnify, createJsepContext, honoToJsep, ident} from '../sql/parse/jsep'
 import {logSQLQuery, QueryType, QueryTypes} from '../sql/build/query'
 import {D1Query, sqlQueryToD1Query} from '../sql/build/d1'
 import {z} from 'zod'
@@ -222,7 +222,7 @@ export class $Database<T extends $Env = $Env> extends EventTarget<$DatabaseEvent
     }
 
     async generateAdminToken(role: string, tok?: string) {
-        if(tok !== this.c.env.ADMIN_SERVICE_TOKEN && !this.auth.superadmin) throw new HTTPException(401, {message: 'Unauthorized'})
+        if((tok !== this.c.env.ADMIN_SERVICE_TOKEN) && !this.auth.superadmin) throw new HTTPException(401, {message: 'Unauthorized'})
         const adminJwtSecret = this.adminJwtSecret()
         if (!adminJwtSecret) throw new HTTPException(500, {message: 'Invalid configuration - ADMIN_JWT_SECRET not set'})
         const tokenDuration = 3 * 60 * 60 // 3 hours
@@ -324,7 +324,7 @@ export class $Database<T extends $Env = $Env> extends EventTarget<$DatabaseEvent
     ){
         if(this.readOnlyMode) throw new ProcessError('DELETE not allowed in read only mode')
 
-        if((query as DeleteQuery).table && (query as DeleteQuery).table !== table.jc.tableName) throw new ProcessError('Invalid table')
+        if((query as DeleteQuery).table && (query as DeleteQuery).table !== table.jc.tableName && columnify((query as DeleteQuery).table) !== table.jc.tableName) throw new ProcessError('Invalid table')
 
         const deleteQuery = {...query, table: table.jc.tableName}
         const sql = buildDeleteQuery(deleteQuery, table.jc.autoSimplifyExpr)
@@ -359,7 +359,7 @@ export class $Database<T extends $Env = $Env> extends EventTarget<$DatabaseEvent
     ){
         if(this.readOnlyMode) throw new ProcessError('INSERT not allowed in read only mode')
 
-        if((query as InsertQuery).table && (query as InsertQuery).table !== table.jc.tableName) throw new ProcessError('Invalid table')
+        if((query as InsertQuery).table && (query as InsertQuery).table !== table.jc.tableName && columnify((query as InsertQuery).table) !== table.jc.tableName) throw new ProcessError('Invalid table')
 
         const sqlQs: [InsertQuery, SQLQuery][] = []
         if(Array.isArray(query.values)){
@@ -429,7 +429,7 @@ export class $Database<T extends $Env = $Env> extends EventTarget<$DatabaseEvent
     ){
         if(this.readOnlyMode) throw new ProcessError('UPDATE not allowed in read only mode')
 
-        if((query as UpdateQuery).table && (query as UpdateQuery).table !== table.jc.tableName) throw new ProcessError('Invalid table')
+        if((query as UpdateQuery).table && (query as UpdateQuery).table !== table.jc.tableName && columnify((query as UpdateQuery).table) !== table.jc.tableName) throw new ProcessError('Invalid table')
 
         const updateQuery = {...query, table: table.jc.tableName}
         const sql = buildUpdateQuery(updateQuery, table.jc.autoSimplifyExpr)
@@ -470,7 +470,8 @@ export class $Database<T extends $Env = $Env> extends EventTarget<$DatabaseEvent
     rawSelect<T=any, TRet=T[]>(table: $Table, query: OptionalOmit<SelectQuery, 'from'>, then?: (r:T[])=>TRet): D1PreparedQuery<T, T[], 'select'>|null
     rawSelect<T=any>(table: $Table, query: OptionalOmit<SelectQuery, 'from'>, countTotal: boolean): D1PreparedQuery<T, { items: T[], total: number }, 'select'>|null
     rawSelect<T=any, TRet=T[]>(table: $Table, query: OptionalOmit<SelectQuery, 'from'>, countTotal?: (boolean|((r:T[])=>TRet))){
-        if((query as SelectQuery).from && (query as SelectQuery).from !== table.jc.tableName) throw new ProcessError('Invalid from table')
+        let qFrom = (query as SelectQuery).from
+        if(qFrom && (typeof qFrom !== 'string' || ((qFrom as any) !== table.jc.tableName && columnify(qFrom as any) !== table.jc.tableName))) throw new ProcessError('Invalid from table')
         const selectQuery = {...query, from: table.jc.tableName}
         const sql = buildSelectQuery(selectQuery, table.jc.autoSimplifyExpr)
         // console.log(query, sql)
@@ -531,53 +532,86 @@ export class $Database<T extends $Env = $Env> extends EventTarget<$DatabaseEvent
     // }
 
     // todo
-    private async _rawProcedure(procedure: SQLProcedure){
+    private async _rawProcedure(name: string, body: Record<string, any>){
+        const procedure = this.settings.procedures?.find(p=>p.name === name)
+        if(!procedure) throw new ProcessError(`Procedure not found - ${name}`, 404)
         if(this.dryRunMode || this.c.env.RESPOND_WITH_QUERY_LOG)
             this.queryLog.push('PROCEDURE: ' + procedure.name)
         if(this.dryRunMode) return
         const statements = Array.isArray(procedure.statement) ? procedure.statement : procedure.statement ? [procedure.statement] : []
-        const queries = Array.isArray(procedure.query) ? procedure.query ? procedure.query : [procedure.query] : []
-        if(!statements.length && !queries.length) return // todo throw error?
-        if(statements.length && queries.length) throw new ProcessError(`Invalid procedure ${procedure.name}, cannot have both statements and queries`)
+        const queries = Array.isArray(procedure.query) ? procedure.query : procedure.query ? [procedure.query] : []
+        if(!statements.length && !queries.length) throw new ProcessError(`Invalid procedure ${procedure.name}, missing statements or queries`, 500)
+        if(statements.length && queries.length) throw new ProcessError(`Invalid procedure ${procedure.name}, cannot have both statements and queries`, 500)
+        const paramsBody = {} as Record<string, any>
+        const params = procedure.params ?? []
+        for (const param of params) {
+            if(!param) throw new ProcessError(`Invalid procedure ${procedure.name}, missing parameter`, 500)
+            const val = body[param]
+            if(val === undefined) throw new ProcessError(`Procedure ${procedure.name}, missing required parameter ${param}`, 400)
+            paramsBody[param] = val
+        }
         const rule = procedure.rule ?? true
-        const prepared: (D1PreparedQuery<any, any, QueryType>|D1PreparedTransaction<any, any, QueryType>|null)[] = []
+        const prepared: (D1PreparedQuery<any, any, QueryType>|D1PreparedTransaction<any, any, QueryType>)[] = []
         if(queries.length){
             if(rule) throw new ProcessError(`Invalid procedure ${procedure.name}, cannot have raw queries with rule`)
-            for (const query of queries) {
-                if(!query) continue
-                if(query.type === 'SELECT'){
-                    if(Array.isArray(query.from)) throw new ProcessError(`Invalid procedure ${procedure.name}, cannot have multiple tables in select query`)
-                    if(!query.from) throw new ProcessError(`Invalid procedure ${procedure.name}, missing from table in select query`)
-                    prepared.push(this.rawSelect(this.table(query.from), query))
-                }else if(query.type === 'UPDATE'){
-                    prepared.push(this.rawUpdate(this.table(query.table), query))
-                }else if(query.type === 'INSERT'){
-                    prepared.push(this.rawInsert(this.table(query.table), query))
-                }else if(query.type === 'DELETE'){
-                    prepared.push(this.rawDelete(this.table(query.table), query))
+            for (const query1 of queries) {
+                if(!query1) continue
+                const query = structuredClone(query1)
+                query.params = {
+                    ...query.params,
+                    ...paramsBody
                 }
+                let prep
+                if(query.type === 'SELECT'){
+                    if(Array.isArray(query.from)) throw new ProcessError(`Invalid procedure ${procedure.name}, cannot have multiple tables in select query`, 500)
+                    if(!query.from) throw new ProcessError(`Invalid procedure ${procedure.name}, missing from table in select query`, 500)
+                    prep = this.rawSelect(this.table(query.from), query)
+                }else if(query.type === 'UPDATE'){
+                    prep = this.rawUpdate(this.table(query.table), query)
+                }else if(query.type === 'INSERT'){
+                    prep = this.rawInsert(this.table(query.table), query)
+                }else if(query.type === 'DELETE'){
+                    prep = this.rawDelete(this.table(query.table), query)
+                }
+                if(!prep) continue // todo throw error?
+                prepared.push(prep)
             }
         }
         if(statements.length){
             // todo handle when rule is false
-            if(!rule) throw new ProcessError(`Invalid procedure ${procedure.name}, cannot have statements without rule, not supported yet`)
+            if(!rule) throw new ProcessError(`Invalid procedure ${procedure.name}, cannot have statements without rule, not supported yet`, 500)
             for (const statement of statements) {
                 if(!statement) continue
                 const table = this.table(statement.table)
-                if(statement.type === 'SELECT'){
-                    prepared.push(await table.rawSelect(statement))
-                }else if(statement.type === 'UPDATE'){
-                    prepared.push(await table.rawUpdate(statement))
-                }else if(statement.type === 'INSERT'){
-                    prepared.push(await table.rawInsert(statement))
-                }else if(statement.type === 'DELETE'){
-                    prepared.push(await table.rawDelete(statement))
+                const globals = table.jc.globals.params
+                table.jc.globals.params = {
+                    ...table.jc.globals.params,
+                    ...paramsBody
                 }
+                let prep
+                if(statement.type === 'SELECT'){
+                    prep = await table.rawSelect(statement)
+                }else if(statement.type === 'UPDATE'){
+                    prep = await table.rawUpdate(statement)
+                }else if(statement.type === 'INSERT'){
+                    prep = await table.rawInsert(statement)
+                }else if(statement.type === 'DELETE'){
+                    prep = await table.rawDelete(statement)
+                }
+                table.jc.globals.params = globals
+                if(!prep) continue // todo throw error?
+                prepared.push(prep)
             }
         }
 
         if(!prepared.length) return // todo throw error?
 
+        const res: D1PreparedTransaction<any, any[][], QueryType> = {
+            prepared,
+            c: undefined,
+            run: async ()=>this._execBatch(res)
+        }
+        return res
     }
 
     // endregion sql
@@ -948,6 +982,7 @@ export class $Database<T extends $Env = $Env> extends EventTarget<$DatabaseEvent
 
     // region routing
 
+    // todo write tests for these routes
     private routes: HttpRoute[] = [{
         path: '/setup-db',
         method: 'post',
@@ -1020,6 +1055,32 @@ export class $Database<T extends $Env = $Env> extends EventTarget<$DatabaseEvent
             },
         }),
     }, {
+        path: '/rpc/:fn_name',
+        method: 'post',
+        handler: async(body, params)=>{
+            if(!body || typeof body !== 'object' || Array.isArray(body)) throw new HTTPException(400, {message: 'Invalid request body'})
+            const fn_name = z.string().min(1).max(255).describe('Name of the stored procedure').parse(params.fn_name, {path: ['fn_name']})
+            const res = await (await this._rawProcedure(fn_name, body))?.run()
+            return res ?? []
+        },
+        zod: ()=>({
+            description: 'Run a stored procedure',
+            request: {
+                params: z.object({fn_name: z.string().min(1).max(255).describe('Function name')}),
+                headers: z.object({authorization: z.string().min(1).max(255).optional()}).describe('Auth token'),
+                body: {
+                    description: 'Function parameters',
+                    content: {'application/json': {schema: z.record(z.any()).describe('Function parameters')}},
+                    required: false,
+                },
+            },
+            responses: {
+                '200': {description: 'Success'},
+                '404': {description: 'Not found'},
+                '400': {description: 'Invalid Arguments/Bad request'},
+            },
+        }),
+    }, {
         method: 'get',
         path: '/explain/*',
         handler: {
@@ -1062,7 +1123,6 @@ export class $Database<T extends $Env = $Env> extends EventTarget<$DatabaseEvent
                 },
             },
         })
-
     }]
     private router: LinearRouter<RawRouterHandlerFunction> | undefined
     protected _routesInit = false

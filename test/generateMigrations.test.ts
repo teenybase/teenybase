@@ -5,28 +5,33 @@ import path from 'node:path'
 import {loadConfigFromFile} from '../src/node/config'
 
 const basePath = 'test/data/'
-const regenerateJsons = false
+const regenerateJsons = true
 
+// saving as .json.ts and not .json because - https://github.com/microsoft/TypeScript/issues/26552, https://github.com/microsoft/TypeScript/issues/32063
 async function testFn(test: string) {
     const testPath = path.join(basePath, test)
     const config = await loadConfigFromFile(testPath, undefined, 'debug')
     const res = generateMigrations(config.config, undefined)
-    const generatedPath = path.join(testPath, 'generated.json')
+    const generatedPath = path.join(testPath, 'generated.json.ts')
+    const generatedText = `import {DatabaseSettings} from '../../../src'
+export const migrations = ${JSON.stringify(res.migrations, null, 2)}
+export const config = ${JSON.stringify(res.config, null, 2)} as const satisfies DatabaseSettings\n`
     if (!fs.existsSync(generatedPath)) {
-        fs.writeFileSync(generatedPath, JSON.stringify(res, null, 2))
+        fs.writeFileSync(generatedPath, generatedText)
         throw new Error(`Generated file written to${generatedPath}. check and commit to git.`)
     }
-    const generated = JSON.parse(fs.readFileSync(generatedPath, 'utf-8'))
+    const generated = fs.readFileSync(generatedPath, 'utf-8')
     try {
-        expect(res).toEqual(generated)
+        expect(generatedText).toEqual(generated)
     }catch (e){
         if(regenerateJsons){
-            fs.writeFileSync(generatedPath, JSON.stringify(res, null, 2))
+            fs.writeFileSync(generatedPath, generatedText)
             console.error(`Generated file written to${generatedPath}. check and commit to git.`)
         }
         throw e
     }
-    const compareRes = generateMigrations(config.config, generated.config)
+    const lastJSON = generated.split('export const config = ')[1].split(' as const satisfies DatabaseSettings')[0]
+    const compareRes = generateMigrations(config.config, JSON.parse(lastJSON))
     expect(compareRes.migrations.length).toEqual(0)
 
 }

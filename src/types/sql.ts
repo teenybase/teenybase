@@ -120,9 +120,9 @@ export type DeleteParams = z.infer<typeof deleteSchema>
 
 export const tableDeleteSchema = deleteSchema
 export type TableDeleteParams = DeleteParams
-export const tableInsertSchema = insertSchema.omit({values: true}).and(z.object({values: sqlValSchemaFile3}))
+export const tableInsertSchema = insertSchema.omit({values: true}).extend({values: sqlValSchemaFile3})
 export type TableInsertParams = z.infer<typeof tableInsertSchema>
-export const tableUpdateSchema = updateSchema.omit({setValues: true}).and(z.object({setValues: sqlValSchemaFile2.optional()}))
+export const tableUpdateSchema = updateSchema.omit({setValues: true}).extend({setValues: sqlValSchemaFile2.optional()})
 export type TableUpdateParams = z.infer<typeof tableUpdateSchema>
 export const tableSelectSchema = selectSchema
 export type TableSelectParams = SelectParams
@@ -131,25 +131,25 @@ export type TableViewParams = z.infer<typeof tableViewSchema>
 export const tableEditSchema = z.object({setValues: sqlValSchemaFile2, or: updateSchema.shape.or.or(z.literal('INSERT')), returning: updateSchema.shape.returning})
 export type TableEditParams = z.infer<typeof tableEditSchema>
 
-export const selectStatementSchema = tableSelectSchema.and(z.object({
+export const selectStatementSchema = tableSelectSchema.extend({
     type: z.literal('SELECT'),
     table: tableColumnNameSchema,
-}))
+})
 export type SelectStatement = z.infer<typeof selectStatementSchema>
-export const insertStatementSchema = tableInsertSchema.and(z.object({
+export const insertStatementSchema = tableInsertSchema.extend({
     type: z.literal('INSERT'),
     table: tableColumnNameSchema,
-}))
+})
 export type InsertStatement = z.infer<typeof insertStatementSchema>
-export const updateStatementSchema = tableUpdateSchema.and(z.object({
+export const updateStatementSchema = tableUpdateSchema.extend({
     type: z.literal('UPDATE'),
     table: tableColumnNameSchema,
-}))
+})
 export type UpdateStatement = z.infer<typeof updateStatementSchema>
-export const deleteStatementSchema = tableDeleteSchema.and(z.object({
+export const deleteStatementSchema = tableDeleteSchema.extend({
     type: z.literal('DELETE'),
     table: tableColumnNameSchema,
-}))
+})
 export type DeleteStatement = z.infer<typeof deleteStatementSchema>
 
 export interface StatementTypes{
@@ -233,7 +233,7 @@ export interface SQLProcedure{
      * @default true
      */
     rule?: boolean /*| string*/
-    params: string[]
+    params?: string[]
     query?: QueryTypes[QueryType]|((QueryTypes[QueryType])[])
     statement?: StatementTypes[QueryType]|((StatementTypes[QueryType])[])
 }

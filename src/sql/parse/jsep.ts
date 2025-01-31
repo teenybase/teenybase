@@ -109,6 +109,7 @@ export interface JsepGlobals{
         query: Record<string, string>
     },
     auth?: AuthContext
+    params?: Record<string, any> // rpc params, arbitrary params etc.
 }
 
 export const emptyGlobals = {
@@ -736,15 +737,16 @@ export function treeToSql(tree: jsep.Expression, context: JsepContext): SQLQuery
         let obj: SQLLiteral | undefined
         if(exp.object.type === 'Identifier'){
             const ob = exp.object as jsep.Identifier
-            if((context.globals as any)[ob.name]){
-                obj = {l: (context.globals as any)[ob.name], key: ob.name}
+            const global = (context.globals as any)[ob.name]
+            if(global){
+                obj = {l: global, key: ob.name}
             }else {
                 let table = columnify(ob.name)
-                const extra = context.extras[table] // for new. stuff. see parseUpdateQuery
+                const extra = context.extras[table] // for `new.` stuff. see parseUpdateQuery
                 if (extra) {
                     const v = extra.literals[prop.name]
                     if (v) return literalToQuery(v)
-                    if (extra.table) table = extra.table // replace new. with users. to match the current val in the table
+                    if (extra.table) table = extra.table // replace `new.` with users. to match the current val in the table
                 }
                 const column = columnify(prop.name)
                 if (context.allowedTables[table]?.find(f => f.name === column)

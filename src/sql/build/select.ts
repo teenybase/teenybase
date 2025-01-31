@@ -166,6 +166,7 @@ export function buildSelectQuery(query: SelectQuery|SelectSubQuery, simplify = t
         if(where === null || (!where.q && !allowAllWhere)) // null or true(literal) or empty string
             return {q: ''} // empty list? todo. or throw an error if allowAllWhere is false?
 
+        // todo this will be an issue in case we allow RAISE in select. this will not raise and continue the transaction
         q += ' WHERE ' + (where.q||'1'); // empty string means true if allowAllWhere is true. false otherwise
         if(where.p) Object.assign(p, where.p)
     } else if (!allowAllWhere){

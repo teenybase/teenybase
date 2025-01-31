@@ -1,4 +1,4 @@
-import {DatabaseSettings, sql, TableRulesExtensionData} from '../../../src'
+import {DatabaseSettings, sql, sqlValue, TableRulesExtensionData} from '../../../src'
 
 export default {
     appUrl: "https://localhost",
@@ -12,22 +12,18 @@ export default {
             fields: [{
                 name: 'id', sqlType: 'integer', type: 'integer', usage: 'record_uid',
                 primary: true, noUpdate: true, noInsert: true, autoIncrement: true,
-            }, {
-                name: 'name', sqlType: 'text', type: 'text', notNull: true,
-            }, {
-                name: 'email', sqlType: 'text', type: 'email', notNull: true, unique: true
-            }, {
-                name: 'uid', sqlType: 'text', type: 'text', notNull: true, unique: true,
-            }, {
-                name: 'pass_hash', sqlType: 'text', type: 'text', notNull: true
-            }, {
+            },
+            {name: 'name', sqlType: 'text', type: 'text', notNull: true,},
+            {name: 'email', sqlType: 'text', type: 'email', notNull: true, unique: true},
+            {name: 'uid', sqlType: 'text', type: 'text', notNull: true, unique: true,},
+            {name: 'pass_hash', sqlType: 'text', type: 'text', notNull: true},
+            {
                 name: 'created', sqlType: 'timestamp', type: 'date', usage: 'record_created',
                 default: sql`CURRENT_TIMESTAMP`, noInsert: true, noUpdate: true,
             }, {
                 name: 'updated', sqlType: 'timestamp', type: 'date', usage: 'record_updated',
                 default: sql`CURRENT_TIMESTAMP`, noInsert: true, noUpdate: true,
-            },
-            ],
+            }],
             triggers: [{
                 name: "raise_on_created_update",
                 seq: "BEFORE",
@@ -59,11 +55,10 @@ export default {
             fields: [{
                 name: 'id', sqlType: 'integer', type: 'integer', usage: 'record_uid',
                 primary: true, noUpdate: true, noInsert: true, autoIncrement: true,
-            }, {
-                name: 'name', sqlType: 'text', type: 'text', notNull: true
-            }, {
-                name: 'url', sqlType: 'text', type: 'url', notNull: true
-            }, {
+            },
+            {name: 'name', sqlType: 'text', type: 'text', notNull: true},
+            {name: 'url', sqlType: 'text', type: 'url', notNull: true},
+            {
                 name: 'metadata', sqlType: 'json', type: 'json',
                 check: sql`json_valid(metadata)`
             }, {
@@ -72,7 +67,10 @@ export default {
             }, {
                 name: 'created', sqlType: 'timestamp', type: 'date', usage: 'record_created',
                 default: sql`CURRENT_TIMESTAMP`, noInsert: true, noUpdate: true,
-            },],
+            },
+            {
+                name: 'counter', sqlType: 'integer', type: 'integer', notNull: true, default: sqlValue(0), noInsert: true, noUpdate: true},  // can only be updated by procedure
+            ],
             indexes: [{
                 fields: "name",
             },{
@@ -87,5 +85,36 @@ export default {
                 deleteRule: 'true',
             } as TableRulesExtensionData]
         }
-    ]
+    ],
+    procedures: [{
+        name: 'inc_counter_query',
+        params: ['file_id'],
+        rule: false,
+        query: [
+            {
+                type: 'UPDATE',
+                table: 'files',
+                set: {
+                    counter: sql`counter + 1`
+                },
+                where: sql`id = {:file_id}`,
+                    returning: ['counter']
+            }
+        ],
+    }, {
+        name: 'inc_counter_statement',
+        params: ['file_id'],
+        rule: false,
+        statement: [
+            {
+                type: 'UPDATE',
+                table: 'files',
+                set: {
+                    'counter': 'counter + 1',
+                },
+                where: 'id = params.file_id',
+                returning: ['counter']
+            }
+        ],
+    }]
 } satisfies DatabaseSettings

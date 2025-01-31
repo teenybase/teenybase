@@ -61,6 +61,7 @@ export class $Table<T extends $Env = any>{
 
     readonly autoDeleteR2Files: boolean
     readonly allowMultipleFileRef: boolean
+    readonly allowWildcard: boolean // this is allow direct wildcard in select/returning instead of expanding it automatically. todo maybe this should be renamed
 
     extension<T extends ExtensionsKeys>(key: T): TableExtensions[T]{
         const ext = this.extensions.find(e=>e.name === key)
@@ -90,6 +91,7 @@ export class $Table<T extends $Env = any>{
             created: z.string().optional().parse(this.fieldsUsage.record_created), // created
             updated: z.string().optional().parse(this.fieldsUsage.record_updated), // updated
         } as const
+        this.allowWildcard = data.allowWildcard ?? false
 
         this.fields = Object.fromEntries(this.data.fields.map(f => [f.name, f]))
 
@@ -378,7 +380,7 @@ export class $Table<T extends $Env = any>{
                 // if (!field) throw new ProcessError: 'Invalid field ' + key}) // this check is moved below.
                 if (!field) continue
                 // if (field.usage && noInsertSetUsages.includes(field.usage)) throw new ProcessError('Cannot insert ' + key + ' field')
-                if (field.noInsert) throw new ProcessError('Cannot insert ' + key + ' field')
+                if (field.noInsert) throw new ProcessError('Cannot insert ' + key + ' field', this.jc.globals.auth?.uid ? 403 : 401)
             }
             if (this.mapping.uid && this.data.autoSetUid) {
                 for (const val of v) {
@@ -389,7 +391,7 @@ export class $Table<T extends $Env = any>{
 
         // todo notNull check
 
-        if(query.returning) query.returning = this.checkColsWildcard(Array.isArray(query.returning) ? query.returning : [query.returning], this.data.allowWildcard ?? false)
+        if(query.returning) query.returning = this.checkColsWildcard(Array.isArray(query.returning) ? query.returning : [query.returning])
 
         for (const ext of this.extensions) {
             ext.onInsertParse && await ext.onInsertParse(query)
@@ -408,7 +410,7 @@ export class $Table<T extends $Env = any>{
     }
 
     protected async onDeleteParse(query: DeleteQuery) {
-        if(query.returning) query.returning = this.checkColsWildcard(Array.isArray(query.returning) ? query.returning : [query.returning], this.data.allowWildcard ?? false)
+        if(query.returning) query.returning = this.checkColsWildcard(Array.isArray(query.returning) ? query.returning : [query.returning])
 
         for (const ext of this.extensions) {
             ext.onDeleteParse && await ext.onDeleteParse(query, this.jc.globals.auth?.admin??false)
@@ -416,24 +418,29 @@ export class $Table<T extends $Env = any>{
     }
 
     protected async onUpdateParse(query: UpdateQuery) {
-        const setKeys = Object.keys(query.set)
+        let setKeys = Object.keys(query.set)
         for (const key of setKeys) {
             const field = this.fields[key]
-            if(!field) throw new ProcessError('Invalid field ' + key)
+            if(!field) continue
             // if(field.usage && noUpdateSetUsages.includes(field.usage)) throw new ProcessError('Cannot update ' + key + ' field')
-            if(field.noUpdate) throw new ProcessError('Cannot update ' + key + ' field')
+            if(field.noUpdate) throw new ProcessError('Cannot update ' + key + ' field', this.jc.globals.auth?.uid ? 403 : 401)
         }
         // todo notNull check
 
         // todo autodate?
         if(this.mapping.updated) query.set[this.mapping.updated] = {q: 'CURRENT_TIMESTAMP'}
 
-        if(query.returning) query.returning = this.checkColsWildcard(Array.isArray(query.returning) ? query.returning : [query.returning], this.data.allowWildcard ?? false)
+        if(query.returning) query.returning = this.checkColsWildcard(Array.isArray(query.returning) ? query.returning : [query.returning])
 
         for (const ext of this.extensions) {
             ext.onUpdateParse && await ext.onUpdateParse(query)
         }
 
+        setKeys = Object.keys(query.set) // again, could have been changed
+        for (const key of setKeys) {
+            const field = this.fields[key]
+            if(!field) throw new ProcessError('Invalid field ' + key)
+        }
     }
 
     protected async onSelectParse(query: SelectQuery) {
@@ -443,8 +450,7 @@ export class $Table<T extends $Env = any>{
         const allowSubqueries = true
 
         query.selects = this.checkColsWildcard(
-            Array.isArray(query.selects) ? query.selects : [query.selects || '*'],
-            this.data.allowWildcard ?? false, allowSubqueries)
+            Array.isArray(query.selects) ? query.selects : [query.selects || '*'], allowSubqueries)
 
         this.handleSelectDeps(query)
 
@@ -459,7 +465,7 @@ export class $Table<T extends $Env = any>{
         // todo make data.allowSubqueries and check
         const allowSubqueries = true
 
-        query.selects = this.checkColsWildcard(Array.isArray(query.selects) ? query.selects : [query.selects || '*'], this.data.allowWildcard ?? false, allowSubqueries)
+        query.selects = this.checkColsWildcard(Array.isArray(query.selects) ? query.selects : [query.selects || '*'], allowSubqueries)
 
         this.handleSelectDeps(query)
 
@@ -688,12 +694,12 @@ export class $Table<T extends $Env = any>{
     }
 
     // todo rename, as it also does other column checks
-    checkColsWildcard(cols: SelectQuerySelect[], allowWildcard: boolean, allowSubqueries?: false): string[];
-    checkColsWildcard(cols: SelectQuerySelect[], allowWildcard: boolean, allowSubqueries: true): SelectQuerySelect[];
-    checkColsWildcard(cols: SelectQuerySelect[], allowWildcard: boolean, allowSubqueries = false) {
+    checkColsWildcard(cols: SelectQuerySelect[], allowSubqueries?: false): string[];
+    checkColsWildcard(cols: SelectQuerySelect[], allowSubqueries: true): SelectQuerySelect[];
+    checkColsWildcard(cols: SelectQuerySelect[], allowSubqueries = false) {
         const res = []
-        // const hidden = this.jc.globals.auth?.admin ? [] : this.data.fields.filter(f=>!f.noSelect).map(f=>f.name)
         const isAdmin = !!this.jc.globals.auth?.admin
+        // const hidden = isAdmin ? [] : this.data.fields.filter(f=>!f.noSelect).map(f=>f.name)
         // console.log('select ', cols, hidden)
         const aliases = new Set<string>()
         const addAlias = (alias: string)=>{
@@ -702,7 +708,7 @@ export class $Table<T extends $Env = any>{
         }
         for (const col of cols) {
             if(col === '*') {
-                if(!allowWildcard/* || hidden.length*/) {
+                if(!this.allowWildcard/* || hidden.length*/) {
                     const fields = Object.entries(this.fields).filter(f => isAdmin || !f[1].noSelect)
                     const fieldsSql = fields.map(s => ident(s[0], this.jc))
                     res.push(...fieldsSql)

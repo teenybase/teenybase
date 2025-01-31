@@ -40,7 +40,9 @@ export function teenyHono<T extends $Env=$Env>(
         }
         const base = c.req.routePath.replace('/api/*', '')
         const path = c.req.path.replace(base, '')
-        return (await c.get('$db').route(path)) ?? await next()
+        let res = (await c.get('$db').route(path))
+        if(!res) res = await next()
+        return res
     })
 
     return app
