@@ -1,6 +1,6 @@
 {
     "name": "teenybase",
-    "version": "0.0.5-dev.1",
+    "version": "0.0.5",
     "type": "module",
     "bin": {
         "teeny": "bin/teeny.js"
