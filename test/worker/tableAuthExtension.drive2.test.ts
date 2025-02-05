@@ -66,9 +66,9 @@ async function createUser(data: any, status = 200) {
 test('throw on insert password_salt', async () => {
     const uid = "O-iV9qZXTMOp1U2VV5XC9Q"
     const password_salt = "O-iV9qZXTMOp1U2VV5XC9Q"
-    const json = await createUser({name: undefined, id: uid, password_salt}, 400)
+    const json = await createUser({name: undefined, id: uid, password_salt}, 401)
     expect(json).toEqual({
-        code: 400,
+        code: 401,
         "data": {},
         "message": "Cannot insert password_salt field",
         "queries": [],

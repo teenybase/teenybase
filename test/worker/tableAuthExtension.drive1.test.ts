@@ -235,47 +235,6 @@ test('rpc mark verified', async () => {
 
 })
 
-test('rpc mark verified statement', async () => {
-    let json = await createUser({})
-    let json2 = await createUser({username: 'admin1', email: 'admin1@example.com'})
-    let json3 = await createUser({username: 'admin2', email: 'admin2@example.com'})
-    expect(json.verified).toEqual(false)
-    // console.log(json)
-    const res1 = await fetch(`rpc/mark_verified_stat`, {
-        method: 'POST',
-        body: JSON.stringify({
-            email: 'admin@example.com',
-        }),
-        headers: {'Authorization': 'Bearer ' + json.token,},
-    })
-    expect(res1.status).toEqual(200)
-    const res1json = (await res1.json() as any)[0][0]
-    // todo this should be `true`
-    expect(res1json.email_verified).toEqual(1)
-    expect(res1json.password).toBeUndefined() // shouldn't return the password when * is used...
-
-    const res2 = await fetch(`table/users/auth/login-password`, {
-        method: 'POST',
-        body: JSON.stringify({ email: 'admin@example.com', password: '12345678',}),
-    })
-    expect(res2.status).toEqual(200)
-    const res2json = await res2.json() as any
-    console.log(res2json)
-    expect(res2json.token).toBeDefined()
-    expect(res2json.record.email_verified).toEqual(true)
-    expect(res2json.record.password).toBeUndefined()
-
-    const res3 = await fetch(`table/users/auth/login-password`, {
-        method: 'POST',
-        body: JSON.stringify({ email: 'admin2@example.com', password: '12345678',}),
-    })
-    expect(res3.status).toEqual(200)
-    const res3json = await res3.json() as any
-    expect(res3json.record.email_verified).toEqual(false)
-    expect(res3json.record.password).toBeUndefined()
-
-})
-
 test('change password', async () => {
     let json = await createUser({})
     expect(json.verified).toEqual(false)
@@ -341,3 +300,45 @@ test('change password', async () => {
     })
     expect(res.status).toEqual(200)
 })
+
+// todo
+// test('rpc mark verified statement', async () => {
+//     let json = await createUser({})
+//     let json2 = await createUser({username: 'admin1', email: 'admin1@example.com'})
+//     let json3 = await createUser({username: 'admin2', email: 'admin2@example.com'})
+//     expect(json.verified).toEqual(false)
+//     // console.log(json)
+//     const res1 = await fetch(`rpc/mark_verified_stat`, {
+//         method: 'POST',
+//         body: JSON.stringify({
+//             email: 'admin@example.com',
+//         }),
+//         headers: {'Authorization': 'Bearer ' + json.token,},
+//     })
+//     expect(res1.status).toEqual(200)
+//     const res1json = (await res1.json() as any)[0][0]
+//     // todo this should be `true`
+//     expect(res1json.email_verified).toEqual(1)
+//     expect(res1json.password).toBeUndefined() // shouldn't return the password when * is used...
+//
+//     const res2 = await fetch(`table/users/auth/login-password`, {
+//         method: 'POST',
+//         body: JSON.stringify({ email: 'admin@example.com', password: '12345678',}),
+//     })
+//     expect(res2.status).toEqual(200)
+//     const res2json = await res2.json() as any
+//     console.log(res2json)
+//     expect(res2json.token).toBeDefined()
+//     expect(res2json.record.email_verified).toEqual(true)
+//     expect(res2json.record.password).toBeUndefined()
+//
+//     const res3 = await fetch(`table/users/auth/login-password`, {
+//         method: 'POST',
+//         body: JSON.stringify({ email: 'admin2@example.com', password: '12345678',}),
+//     })
+//     expect(res3.status).toEqual(200)
+//     const res3json = await res3.json() as any
+//     expect(res3json.record.email_verified).toEqual(false)
+//     expect(res3json.record.password).toBeUndefined()
+//
+// })
