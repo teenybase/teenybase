@@ -209,7 +209,7 @@ export function alterTable([table, lastTable, changes]: AlterTable, others: Tabl
     logs = [
         // todo better logs
         ...dropTriggers.map(t => `⚠ Trigger Dropped - ${t[0].split('TRIGGER')[1].split('ON')[0].trim()}`),
-        ...dropIndexes.map(t => `⚠ Index Dropped - ${t[0].split('INDEX')[1].split('ON')[0].trim()}`),
+        ...dropIndexes.map(t => `⚠ Index Dropped - ${t[0].split('INDEX')[1].split('ON')[0].split('IF EXISTS').pop()!.trim()}`),
         ...dropFts.map(t => `⚠ FTS Dropped for ${lastTable.name}`),
         ...logs
     ]

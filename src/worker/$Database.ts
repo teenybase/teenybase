@@ -81,6 +81,7 @@ export class $Database<T extends $Env = $Env> extends EventTarget<$DatabaseEvent
             if(h) settings = JSON.parse(h) as DatabaseSettings
         }
         this.settings = databaseSettingsSchema.parse(settings ?? JSON.parse(c.env.DATABASE_SETTINGS||''))
+        if(!database) throw new HTTPException(500, {message: 'Invalid configuration - database not set'})
         this.database = database
         this.storage = storage
         this.extensions.push(new MigrationHelper(this))
@@ -233,7 +234,7 @@ export class $Database<T extends $Env = $Env> extends EventTarget<$DatabaseEvent
             aud: role,
             verified: true,
             admin: true,
-        } as any
+        }
         return await this.jwt.createJwtToken(data, adminJwtSecret, tokenDuration)
     }
 

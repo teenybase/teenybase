@@ -11,7 +11,7 @@ export type MGSendEmailProps = {
     html: string,
     tags: string[]
 }
-const emailBlockList = 'yopmail.com,mailinator.com,guerrillamail.com,sharklasers.com'
+const emailBlockList = 'yopmail.com,mailinator.com,guerrillamail.com,sharklasers.com,maildrop.cc'
 
 export class MailgunHelper{
     baseUrl = 'https://api.mailgun.net/v3/'

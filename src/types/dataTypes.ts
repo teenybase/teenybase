@@ -18,6 +18,8 @@ export enum TableFieldDataType {
     blob = 'blob',
 }
 
+export type TableFieldDataType0 = keyof typeof TableFieldDataType
+
 export enum TableFieldSqlDataType0 {
     text = 'text',
     integer = 'integer',

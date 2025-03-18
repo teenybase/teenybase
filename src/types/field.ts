@@ -4,7 +4,7 @@ import {
     sqlDataTypeAliases,
     sqlDataTypeToDataTypeDefaults,
     supportedTypesForSql,
-    TableFieldDataType,
+    TableFieldDataType, TableFieldDataType0,
     TableFieldSqlDataType,
     TableFieldSqlDataType0,
     TableFieldSqlDataType1
@@ -14,11 +14,16 @@ import {literalToQuery, logSQLQuery} from '../sql/build/query'
 import {SQLLiteral, SQLQuery, zSQLQueryOrLiteral} from './sql'
 import {TableFieldUsage} from '../worker/usages'
 
-export interface TableFieldData<TU=TableFieldUsage|string> {
-    name: string
-    sqlType: string | TableFieldSqlDataType // sql
-    type: string | keyof typeof TableFieldDataType // ours
-    usage?: TU
+export interface TableFieldData<
+    NAME = string,
+    TYPE extends TableFieldDataType0 = TableFieldDataType0,
+    SQLTYPE extends TableFieldSqlDataType = TableFieldSqlDataType,
+    USAGE extends TableFieldUsage|string = TableFieldUsage|string
+> {
+    name: NAME
+    sqlType: SQLTYPE // sql
+    type: TYPE // ours
+    usage?: USAGE
     // other data
 
     primary?: boolean,
@@ -40,6 +45,16 @@ export interface TableFieldData<TU=TableFieldUsage|string> {
     // todo
     // presentable
 }
+
+export function tableField<
+    NAME = string,
+    TYPE extends TableFieldDataType0 = TableFieldDataType0,
+    SQLTYPE extends TableFieldSqlDataType = TableFieldSqlDataType,
+    USAGE extends TableFieldUsage|string = TableFieldUsage|string
+>(name: NAME, type: TYPE, sqlType: SQLTYPE, data: Omit<TableFieldData<never, never, never, USAGE>, 'name' | 'type' | 'sqlType'>): TableFieldData<NAME, TYPE, SQLTYPE, USAGE> {
+    return { name, type, sqlType, ...data }
+}
+
 export type FieldForeignKey = {
     table: string,
     column: string,
@@ -104,6 +119,7 @@ export function validateFieldChange(field: TableFieldData|undefined, lastField: 
     if(lastField && JSON.stringify(field) === JSON.stringify(lastField)) return {}
 
     const fPrefix = `Table Field ${tableName}:${field.name} - `
+    // @ts-ignore todo is this required if we are validating with zod
     field.sqlType = field.sqlType.toLowerCase()
     if(!field.type && !field.sqlType){
         throw new Error(fPrefix + `type or sqlType is required`)

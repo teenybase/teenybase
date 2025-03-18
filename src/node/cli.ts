@@ -301,7 +301,7 @@ async function fetchWorker(c: CliContext, fPath: string, reqOptions?: RequestIni
         let message = rest
         try{
             const json = JSON.parse(rest)
-            message = json.message || json.error || json
+            message = ((json.message || '') + ((json.error || json.data?.error) + '')) || json
             if(logging) c.logger.error(`Failed to fetch ${fPath}. Status: ${res.status}, Response: ${message}\n${JSON.stringify(json, null, 2)}`)
         }catch (_e){}
         throw new Error(`Failed to fetch ${fPath}. Status: ${res.status}, Response: ${typeof message==='string' ? message.slice(0, 1024) : message}`)
@@ -317,7 +317,7 @@ async function fetchDeployedMigrations(c: CliContext) {
     c.logger.info(`Fetching deployed migrations from ${c.isLocal ? 'local' : 'remote'} deployment`)
     loadLocalPersistConfig(c)
     const json = await fetchWorker(c, '/api/v1/migrations', {}).catch(e => {
-        if (e.message?.includes('D1_ERROR: no such table: _db_migrations: SQLITE_ERROR')) {
+        if (e.message?.includes('no such table: _db_migrations')) {
             c.logger.info('No migrations found in deployment')
             return {settings: null, migrations: []}
         }
@@ -684,6 +684,7 @@ async function migrateAndDeploy(c: CliContext, clean: boolean, doMigrate: boolea
                     throw new Error('Deployment route not found')
                 }
 
+                // c.logger.info('Setting up db')
                 // make sure db is deployed and initial setup is done. Note - don't setup during first deployment.
                 await fetchWorker(c, '/api/v1/setup-db', {
                     method: 'POST',

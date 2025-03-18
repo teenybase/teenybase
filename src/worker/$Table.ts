@@ -38,7 +38,7 @@ import {
     TableViewParams
 } from '../types/sql'
 import {$Env} from './env'
-import {TableFieldDataType, tableFieldTypeToZod} from '../types/dataTypes'
+import {TableFieldDataType0, tableFieldTypeToZod} from '../types/dataTypes'
 import {LinearRouter} from 'hono/router/linear-router'
 import {HttpRoute, RawRouterHandlerFunction} from '../types/route'
 import {normalizeFileName} from './util/string'
@@ -86,6 +86,10 @@ export class $Table<T extends $Env = any>{
             acc[f.usage] = v
             return acc
         }, {} as Record<TableFieldUsage, string|string[]>)
+        // todo generic error for any non array usages
+        if(Array.isArray(this.fieldsUsage.record_uid)) throw new ProcessError('Multiple fields for record_uid not supported', 500)
+        if(Array.isArray(this.fieldsUsage.record_created)) throw new ProcessError('Multiple fields for record_created not supported', 500)
+        if(Array.isArray(this.fieldsUsage.record_updated)) throw new ProcessError('Multiple fields for record_updated not supported', 500)
         this.mapping = {
             uid: z.string().optional().parse(this.fieldsUsage.record_uid), // uid. this is for unique id(used in view route, auth etc).
             created: z.string().optional().parse(this.fieldsUsage.record_created), // created
@@ -155,17 +159,17 @@ export class $Table<T extends $Env = any>{
     }) {
         return await (await this.rawSelectRaise(data))?.run()
     }
-    async update(data: TableUpdateParams, then?: (r: any[])=>any) {
-        return await (await this.rawUpdate(data, then))?.run()
+    async update<T1 = any, TRet=T1[]>(data: TableUpdateParams, then?: (r:T1[])=>TRet) {
+        return await (await this.rawUpdate<T1, TRet>(data, then))?.run()
     }
-    async insert(data: TableInsertParams, then?: (r: any[])=>any) {
-        return await (await this.rawInsert(data, then))?.run()
+    async insert<T1=any,TRet=T1[]>(data: TableInsertParams, then?: (r:T1[])=>TRet) {
+        return await (await this.rawInsert<T1, TRet>(data, then))?.run()
     }
-    async delete(data: TableDeleteParams, then?: (r: any[])=>any) {
-        return await (await this.rawDelete(data, then))?.run()
+    async delete<T1 = any, TRet=T1[]>(data: TableDeleteParams, then?: (r:T1[])=>TRet) {
+        return await (await this.rawDelete<T1, TRet>(data, then))?.run()
     }
 
-    async rawDelete(data: TableDeleteParams, then?: (r: any[])=>any) {
+    async rawDelete<T1 = any, TRet=T1[]>(data: TableDeleteParams, then?: (r:T1[])=>TRet) {
 
         let query
 
@@ -184,7 +188,7 @@ export class $Table<T extends $Env = any>{
         return res
     }
 
-    async rawInsert(data: TableInsertParams, then?: (r: any[])=>any) {
+    async rawInsert<T1 = any, TRet=T1[]>(data: TableInsertParams, then?: (r:T1[])=>TRet) {
         // console.error('insert', data)
         const values = Array.isArray(data.values) ? data.values : data.values ? [data.values] : undefined
         let filesToUpload = {} as Record<string, File>
@@ -220,7 +224,7 @@ export class $Table<T extends $Env = any>{
         return res
     }
 
-    async rawUpdate(data: TableUpdateParams, then?: (r: any[])=>any) {
+    async rawUpdate<T1 = any, TRet=T1[]>(data: TableUpdateParams, then?: (r:T1[])=>TRet) {
         const set = data.set
         if(set && this.fileFields) for (const [key, val] of Object.entries(set)) {
             if(this.fileFields.includes(key)) throw new ProcessError('File fields can only be set using setValues')
@@ -532,7 +536,7 @@ export class $Table<T extends $Env = any>{
 
             // for these types, any string "null" will be coersed to null(this is required for FormData as it only sends strings)
             // todo relation, password, editor, text, select
-            const directNullableTypes: (keyof typeof TableFieldDataType)[] = ['file', 'number', 'bool', 'email', 'url', 'date', 'json', 'integer', 'blob']
+            const directNullableTypes: TableFieldDataType0[] = ['file', 'number', 'bool', 'email', 'url', 'date', 'json', 'integer', 'blob']
             if (directNullableTypes.includes(field.type as any) && val === 'null') {
                 // todo notnull check required?
                 setValues[key] = null // any existing file will be deleted in filesToDelete

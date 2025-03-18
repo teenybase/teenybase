@@ -1,15 +1,17 @@
-export {DatabaseSettings, databaseSettingsSchema} from './types/config'
-export {TableData, TableExtensionData, tableDataSchema} from './types/table'
-export {TableFieldData, tableFieldDataSchema} from './types/field'
+
 export {TableAuthExtensionData, TableRulesExtensionData, tableAuthDataSchema, tableExtensionSchemas, tableRulesDataSchema, emailTemplateSchema, PasswordTypes } from './types/tableExtensions'
-export {TableFieldSqlDataType1} from "./types/dataTypes";
-export {TableFieldSqlDataType0} from "./types/dataTypes";
-export {TableFieldDataType} from "./types/dataTypes";
 
-export {TableFieldUsageAuth, TableFieldUsageRecord} from './worker/usages'
+export {TableFieldUsageAuth, TableFieldUsageRecord, TableFieldUsage} from './worker/usages'
 
-export {randomString} from './security/random'
+export {randomString, generateUid, uuidV4} from './security/random'
 export {zJsonString, zStringToJSON} from './utils/zod'
 
 export {literalToQuery} from './sql/build/query'
+export {generateMigrations} from './sql/schema/generateMigrations'
+export {ddbErrorHandler, honoErrorHandler} from './worker/util/honoErrorHandler'
+
+export * from './types/config'
+export * from './types/table'
+export * from './types/field'
 export * from './types/sql'
+export * from "./types/dataTypes";

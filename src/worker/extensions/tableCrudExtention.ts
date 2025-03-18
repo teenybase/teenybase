@@ -112,7 +112,7 @@ export class TableCrudExtension extends TableExtension<TableCrudExtensionData> {
             }),
         })
         this.routes.push({
-            handler: async(body: any, p?: any)=>await this.table.delete(body),
+            handler: async(body: any, p?: any)=>await this.table.delete(body)??[],
             path: '/delete',
             method: 'post',
             zod: ()=>({

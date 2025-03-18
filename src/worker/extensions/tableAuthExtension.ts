@@ -36,6 +36,7 @@ type UserFieldsAdmin = UserFields & {
 const SALT_LENGTH = 20
 
 const defaultSchema = {
+    // todo username should be case insensitive?
     username: z.string().min(1).max(32).regex(/^[a-zA-Z][a-zA-Z0-9_]*$/), // username should not include `@`
     password: z.string().min(8, {message: 'Password must be at least 8 characters long'}).max(255, {message: 'Password must be less than 255 characters long'}),
     email: z.string().min(1).max(255).email(),
@@ -637,7 +638,7 @@ export class TableAuthExtension extends TableExtension<TableAuthExtensionData> {
             to: user.email,
             variables: {
                 message_title: 'Password Reset',
-                message_description: 'Click the button below to reset your password for your {{APP_NAME}} account.',
+                message_description: 'Click the button below to reset the password for your {{APP_NAME}} account.',
                 message_footer: 'If you did not request this, you can safely ignore this email.',
                 action_text: 'Reset Password',
                 action_link: '{{APP_URL}}/reset-password/{{TOKEN}}',
