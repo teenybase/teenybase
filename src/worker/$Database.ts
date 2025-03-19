@@ -44,6 +44,7 @@ import {
     SQLRunContext,
     SQLRunTransactionContext
 } from './util/sql'
+import {OptionalOmit} from './util/types'
 
 export type $DatabaseEventMap = {
     run_sql: D1RunEvent
@@ -142,7 +143,7 @@ export class $Database<T extends $Env = $Env> extends EventTarget<$DatabaseEvent
         if(!tok) {
             // request header bearer. This takes priority over extensions. Extensions should call initAuth manually if required
             if(!tok) {
-                const auth = this.c.req.header('Authorization')
+                const auth = this.c.req.header('Authorization') ?? this.c.req.header('X-Authorization')
                 const isBearer = auth && auth.startsWith('Bearer ')
                 tok = auth ? isBearer ? auth.slice(7) : auth : ''
             }
@@ -1161,8 +1162,6 @@ export class SecretResolver{
         return secret && secret[0] === '$' ? env[secret.slice(1)] || '' : secret
     }
 }
-
-export type OptionalOmit<T, K extends keyof T> = Omit<T, K> & Pick<Partial<T>, K>;
 
 
 // export type NotifyModes = 'email'|'discord'/*|'slack'|'webhook'*/

@@ -533,6 +533,7 @@ export class TableAuthExtension extends TableExtension<TableAuthExtensionData> {
 
     private _kvVerificationSentKey = (user: UserFields)=> '@email_verification_sent_at_' + this.table.name + user.id
     private _kvPasswordResetSentKey = (user: UserFields)=> '@password_reset_sent_at_' + this.table.name + user.id
+    private _kvPasswordResetTokenKey = (user: UserFields)=> '@password_reset_token_' + this.table.name + user.id
 
     private _getEmailVars(){
         return {
@@ -549,10 +550,10 @@ export class TableAuthExtension extends TableExtension<TableAuthExtensionData> {
         if(user.emailVerified) return
 
         const verificationKey = this._kvVerificationSentKey(user)
-        const emailVerifyTokenDuration = this.data.emailVerifyTokenDuration || 2 * 60 * 60 * 1000
+        const emailVerifyEmailDuration = this.data.emailVerifyEmailDuration || 2 * 60 // 2 min
 
-        const res = await this.table.$db.kv.get<number>(verificationKey, '(CURRENT_TIMESTAMP - CAST(value as INTEGER))')
-        if(res !== null && res < emailVerifyTokenDuration-1000){
+        const res = await this.table.$db.kv.get<number>(verificationKey, '(unixepoch(CURRENT_TIMESTAMP) - unixepoch(value))')
+        if(res !== null && res < emailVerifyEmailDuration-1){
             // throw new Error('Verification email already sent') // todo better error for frontend
             throw new HTTPException(400, {message: 'Verification email already sent'})
         }
@@ -562,7 +563,7 @@ export class TableAuthExtension extends TableExtension<TableAuthExtensionData> {
             sub: user.email,
             typ: 'verify_email',
             cid: this.table.name,
-        }, this.jwtSecret, emailVerifyTokenDuration)
+        }, this.jwtSecret, this.data.emailVerifyTokenDuration || 1 * 60 * 60)
 
         const email = this.table.$db.email
         if(!email) throw new HTTPException(500, {message: 'Email not configured'})
@@ -587,6 +588,7 @@ export class TableAuthExtension extends TableExtension<TableAuthExtensionData> {
         })
 
         await this.table.$db.kv.setSql(verificationKey, 'CURRENT_TIMESTAMP')
+        // no need to save token as the user is verified when the token is used, or the token expires.
     }
 
     private async _confirmVerification(token: string, uid?: string){
@@ -614,10 +616,11 @@ export class TableAuthExtension extends TableExtension<TableAuthExtensionData> {
         if(!user.email) throw new HTTPException(500, {message: 'No user'})
 
         const resetKey = this._kvPasswordResetSentKey(user)
-        const passwordResetTokenDuration = this.data.passwordResetTokenDuration || 20 * 60 * 60 * 1000
+        const resetTokenKey = this._kvPasswordResetTokenKey(user)
+        const passwordResetEmailDuration = this.data.passwordResetEmailDuration || 2 * 60 // 2 min
 
-        const res = await this.table.$db.kv.get<number>(resetKey, '(CURRENT_TIMESTAMP - CAST(value as INTEGER))')
-        if(res !== null && res < passwordResetTokenDuration-1000){
+        const res = await this.table.$db.kv.get<number>(resetKey, '(unixepoch(CURRENT_TIMESTAMP) - unixepoch(value))')
+        if(res !== null && res < passwordResetEmailDuration-1){
             throw new Error('Password reset email already sent') // todo better error for frontend
         }
 
@@ -626,7 +629,7 @@ export class TableAuthExtension extends TableExtension<TableAuthExtensionData> {
             sub: user.email,
             typ: 'reset_password',
             cid: this.table.name,
-        }, this.jwtSecret, passwordResetTokenDuration)
+        }, this.jwtSecret, this.data.passwordResetTokenDuration || 60 * 60)
 
         const email = this.table.$db.email
         if(!email) throw new HTTPException(500, {message: 'Email not configured'})
@@ -648,7 +651,10 @@ export class TableAuthExtension extends TableExtension<TableAuthExtensionData> {
             }
         })
 
-        await this.table.$db.kv.setSql(resetKey, 'CURRENT_TIMESTAMP')
+        await this.table.$db.kv.setMultiple({
+            [resetKey]: {sql: 'CURRENT_TIMESTAMP'},
+            [resetTokenKey]: token,
+        })
     }
 
     // record should have password, passwordSalt
@@ -662,6 +668,10 @@ export class TableAuthExtension extends TableExtension<TableAuthExtensionData> {
 
         const user = await this.getUser(id)
         if(!user || user.id !== id) throw new HTTPException(400, {message: 'Invalid user'})
+
+        const resetTokenKey = this._kvPasswordResetTokenKey(user)
+        const tokenSaved = await this.table.$db.kv.get(resetTokenKey)
+        if(token !== tokenSaved) throw new HTTPException(400, {message: 'Invalid token (mismatch)'})
 
         if(sub !== user.email)  // todo is there any case for this? (pocketbase also has this check for unverified emails)
             throw new HTTPException(400, {message: 'Invalid email'})

@@ -1,5 +1,6 @@
+
 export {teenyHono} from './honoApp'
-export {$Database} from './$Database'
+export {$Database, $DatabaseEventMap} from './$Database'
 export {$Table} from './$Table'
 export {parseRequestBody} from './util/parseRequestBody'
 
@@ -9,3 +10,4 @@ export {OpenApiExtension} from './util/openapi'
 export {PocketUIExtension} from './util/pocketui'
 
 export {D1Error, HTTPError, ProcessError} from './util/error'
+export {D1RunEvent, D1RunEventInput, D1RunFailEvent, SQLRunContext, SQLRunTransactionContext, D1PreparedTransaction, D1PreparedQuery} from './util/sql'

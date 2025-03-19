@@ -264,7 +264,7 @@ export class $Table<T extends $Env = any>{
 
         try {
             query = parseSelectQuery({
-                where: `${this.data.name}.${this.mapping.uid}=${JSON.stringify(id)}`,
+                where: `${this.data.name}.${this.mapping.uid}=${JSON.stringify(id)}` + (data.where ? `& (${data.where})` : ''),
                 limit: 1,
                 select: data.select,
             }, this.jc)

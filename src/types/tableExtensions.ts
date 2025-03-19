@@ -32,6 +32,8 @@ export interface TableAuthExtensionData extends TableExtensionData {
     passwordCurrentSuffix?: string // Current
     passwordResetTokenDuration?: number
     emailVerifyTokenDuration?: number
+    passwordResetEmailDuration?: number
+    emailVerifyEmailDuration?: number
     autoSendVerificationEmail?: boolean // default = false
     normalizeEmail?: boolean // default = true. converts to lower case, remove + suffix and remove dots from gmail. todo should this be in field level?
 
@@ -73,6 +75,8 @@ export const tableAuthDataSchema = z.object({
     passwordCurrentSuffix: z.string().optional(),
     passwordResetTokenDuration: z.number().optional(),
     emailVerifyTokenDuration: z.number().optional(),
+    passwordResetEmailDuration: z.number().optional(),
+    emailVerifyEmailDuration: z.number().optional(),
     autoSendVerificationEmail: z.coerce.boolean().optional(),
     emailTemplates: z.object({
         verification: emailTemplateSchema.optional(),

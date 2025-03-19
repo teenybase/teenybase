@@ -38,6 +38,21 @@ export class InternalKV<T extends $Env = $Env> {
         if(!s) b.push(value)
         return this.db.rawSQL({q, v: b}).run()
     }
+
+    async setMultiple(data: Record<string, (string | { sql: string })>) {
+        const qs = [] as string[]
+        const b = []
+        for (const [key, value] of Object.entries(data)) {
+            const s = typeof value !== 'string'
+            qs.push(`(?, ${s ? value.sql || "''" : "?"})`)
+            // console.log(q)
+            b.push(key)
+            if(!s) b.push(value)
+        }
+        const q = `INSERT OR REPLACE INTO ${this.tableName} (key, value) VALUES ${qs.join(', ')}`
+        return this.db.rawSQL({q, v: b}).run()
+    }
+
     async setSql(key: string, value: string) {
         return await this.set(key, {sql: value})
     }

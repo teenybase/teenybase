@@ -230,6 +230,28 @@ test('edit, view', async () => {
     expect(json2).toEqual(json)
 })
 
+test('edit, view + where', async () => {
+    const res = await fetch(`${basePath}/users/edit/1?returning=id,uid,name,email`, {
+        method: 'POST',
+        body: JSON.stringify({
+            name: 'Test Name Updated',
+            email: 'test@example.com',
+        }),
+    })
+    const json = (await res.text()).trim()
+    // console.log(json)
+    expect(res.status).toEqual(200)
+    expect(json).toEqual(`{"id":1,"uid":"john123","name":"Test Name Updated","email":"test@example.com"}`)
+    const res2 = await fetch(`${basePath}/users/view/1?select=id,uid,name,email&where=${encodeURIComponent(`name~"%Updated"`)}`)
+    const json2 = (await res2.text()).trim()
+    expect(res2.status).toEqual(200)
+    expect(json2).toEqual(json)
+    const res3 = await fetch(`${basePath}/users/view/1?select=id,uid,name,email&where=${encodeURIComponent(`name~"%1Updated"`)}`)
+    const json3 = (await res3.text()).trim()
+    expect(json3).toEqual(`{"code":404,"message":"Not found","data":{},"queries":["SELECT [users].[id], [users].[uid], [users].[name], [users].[email] FROM [users] WHERE (((([users].[id]) = 1) AND (([users].[name]) LIKE \\"%1Updated\\" ESCAPE '\\\\')) AND (1)) LIMIT 1;"]}`)
+    expect(res3.status).toEqual(404)
+})
+
 test('edit formdata', async () => {
     const formData = new FormData()
     formData.append('name', 'Test Name Updated')
