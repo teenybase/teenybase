@@ -31,7 +31,7 @@ export const triggers = {
         name: "update_updated_on_update",
         seq: "AFTER",
         event: "UPDATE",
-        body: sql`UPDATE users SET {fields.updated.name} = CURRENT_TIMESTAMP WHERE id = NEW.id AND OLD.{fields.updated.name} = NEW.{fields.updated.name}`,
+        body: sql`UPDATE users SET ${fields.updated.name} = CURRENT_TIMESTAMP WHERE id = NEW.id AND OLD.${fields.updated.name} = NEW.${fields.updated.name}`,
     } as const satisfies SQLTrigger,
 } as const
 
