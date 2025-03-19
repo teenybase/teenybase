@@ -35,3 +35,6 @@ export class D1Error extends Error{
     }
 }
 
+export class HTTPError extends HTTPException{
+    readonly isHTTPException = true
+}

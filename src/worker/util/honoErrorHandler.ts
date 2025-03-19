@@ -3,16 +3,17 @@ import {Context} from "hono";
 import {$Env} from "../env";
 import {HTTPException} from "hono/http-exception";
 import {ZodError} from "zod";
-import {D1Error, ProcessError} from "./error";
+import {D1Error, HTTPError, ProcessError} from "./error";
 import {$Database} from '../$Database'
 
 export function ddbErrorHandler<T extends $Env>($db: $Database, err: Error | HTTPResponseError, respondWithErrors: boolean, respondWithQueryLog: boolean) {
-    const isHTTP = err instanceof HTTPException
+    const isHTTP = err instanceof HTTPError || err instanceof HTTPException
     const isD1Error = err instanceof D1Error
     const isZodError = err instanceof ZodError
-    const status = isHTTP ? err.status || 500 : (isD1Error || isZodError) ? 400 : 500
+    const status = isHTTP ? (err.status || 500) : ((isD1Error || isZodError) ? 400 : 500)
     console.error(`Request Error: ${status}`)
-    console.error(err, (err as any).status)
+    console.error(err, (err as any).status, `http: ${isHTTP}`)
+    // console.error(err.stack)
     return {
         code: status,
         message: isZodError ? 'Validation Error' : ((isHTTP || respondWithErrors || isD1Error) ? (err.message) : 'Internal server error'),
@@ -25,7 +26,7 @@ export function ddbErrorHandler<T extends $Env>($db: $Database, err: Error | HTT
     }
 }
 export function honoErrorHandler<T extends $Env>(err: Error | HTTPResponseError, c: Context<T>) {
-    if(err instanceof HTTPException && err.res) {
+    if((err instanceof HTTPError || err instanceof HTTPException) && err.res) {
         return err.res
     }
     const res = ddbErrorHandler(c.get('$db'), err, c.env?.RESPOND_WITH_ERRORS, c.env?.RESPOND_WITH_QUERY_LOG)
