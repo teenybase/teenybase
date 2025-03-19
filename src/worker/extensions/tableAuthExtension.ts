@@ -687,6 +687,9 @@ export class TableAuthExtension extends TableExtension<TableAuthExtensionData> {
 
         const user2 = await this.updateUser(user.id, data)
         if(!user2) throw new HTTPException(500, {message: 'Failed to verify email'})
+
+        await this.table.$db.kv.remove(resetTokenKey)
+
         return user2
     }
 

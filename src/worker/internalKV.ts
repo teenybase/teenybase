@@ -53,6 +53,11 @@ export class InternalKV<T extends $Env = $Env> {
         return this.db.rawSQL({q, v: b}).run()
     }
 
+    async remove(key: string) {
+        const q = `DELETE FROM ${this.tableName} WHERE key = ?`
+        await this.db.rawSQL({q, v: [key]}).run()
+    }
+
     async setSql(key: string, value: string) {
         return await this.set(key, {sql: value})
     }
