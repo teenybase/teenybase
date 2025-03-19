@@ -15,3 +15,5 @@ export * from './types/table'
 export * from './types/field'
 export * from './types/sql'
 export * from "./types/dataTypes";
+
+export * from './utils/string'

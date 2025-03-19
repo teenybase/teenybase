@@ -1,5 +1,6 @@
 import {$Database} from './$Database'
 import {$Env} from './env'
+import {D1Query} from '../sql/build/d1'
 
 export class InternalKV<T extends $Env = $Env> {
     constructor(private db: $Database<T>, readonly tableName = '_ddb_internal_kv') {
@@ -31,12 +32,16 @@ export class InternalKV<T extends $Env = $Env> {
     }
 
     async set(key: string, value: string | { sql: string }) {
+        return this.db.rawSQL(this.setQuery(key, value)).run()
+    }
+
+    setQuery(key: string, value: string | { sql: string }) {
         const s = typeof value !== 'string'
         const q = `INSERT OR REPLACE INTO ${this.tableName} (key, value) VALUES (?, ${s ? value.sql || "''" : "?"})`
         // console.log(q)
         const b = [key]
         if(!s) b.push(value)
-        return this.db.rawSQL({q, v: b}).run()
+        return {q, v: b} as D1Query
     }
 
     async setMultiple(data: Record<string, (string | { sql: string })>) {

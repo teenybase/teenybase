@@ -1,0 +1,6 @@
+
+// sorted JSON.stringify for comparison
+export const jsonStringify = (key: any) =>
+    JSON.stringify(key, (_, v) =>
+        v && v.constructor === Object ? Object.entries(v).sort() : v
+    );

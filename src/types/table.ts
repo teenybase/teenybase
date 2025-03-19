@@ -5,6 +5,7 @@ import {DatabaseSettings} from './config'
 import {TableFieldUsageRecord} from '../worker/usages'
 import {tableExtensionSchemas} from './tableExtensions'
 import {indexName} from '../sql/schema/tableQueries'
+import {jsonStringify} from '../utils/string'
 
 export interface TableData<TF extends TableFieldData=TableFieldData, TE extends TableExtensionData=TableExtensionData>{
     // id: string
@@ -127,7 +128,7 @@ export function validateTableChange(nextTable: TableData|undefined, lastTable: T
         // throw new Error('not implemented')
         return {drop: lastTable}
     }
-    if(lastTable && JSON.stringify(nextTable) === JSON.stringify(lastTable)) return {}
+    if(lastTable && jsonStringify(nextTable) === jsonStringify(lastTable)) return {}
 
     const prefix = `Table ${nextTable.name} - `
 
@@ -261,7 +262,7 @@ export function validateTableChange(nextTable: TableData|undefined, lastTable: T
     if(nextTable.indexes) {
         for (const index of nextTable.indexes) {
             const last = lastTable?.indexes?.find(i=>indexName(i).name === indexName(index).name)
-            const changed = !last || JSON.stringify(index) !== JSON.stringify(last)
+            const changed = !last || jsonStringify(index) !== jsonStringify(last)
             if(changed) {
                 res.indexes.create.push(index)
                 if(last) res.indexes.drop.push(last)
@@ -281,7 +282,7 @@ export function validateTableChange(nextTable: TableData|undefined, lastTable: T
     if(nextTable.triggers) {
         for (const trigger of nextTable.triggers) {
             const last = lastTable?.triggers?.find(i=>i.name === trigger.name)
-            const changed = !last || JSON.stringify(trigger) !== JSON.stringify(last)
+            const changed = !last || jsonStringify(trigger) !== jsonStringify(last)
             if(changed) {
                 res.triggers.create.push(trigger)
                 if(last) res.triggers.drop.push(last)
@@ -304,7 +305,7 @@ export function validateTableChange(nextTable: TableData|undefined, lastTable: T
     //     }
     // }
 
-    if(JSON.stringify(nextTable.fullTextSearch ?? {}) !== JSON.stringify(lastTable?.fullTextSearch ?? {})) {
+    if(jsonStringify(nextTable.fullTextSearch ?? {}) !== jsonStringify(lastTable?.fullTextSearch ?? {})) {
         res.fts = true
     }
     if(nextTable.fullTextSearch){

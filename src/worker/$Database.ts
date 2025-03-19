@@ -85,7 +85,8 @@ export class $Database<T extends $Env = $Env> extends EventTarget<$DatabaseEvent
         if(!database) throw new HTTPException(500, {message: 'Invalid configuration - database not set'})
         this.database = database
         this.storage = storage
-        this.extensions.push(new MigrationHelper(this))
+        this.kv = new InternalKV(this, this.settings._kvTableName)
+        this.extensions.push(new MigrationHelper(this, undefined, this.kv))
         this.secretResolver = new SecretResolver(()=>c.env)
 
         // this can be set in the admin frontend to make sure we are working with the correct deployment of the worker
@@ -114,7 +115,6 @@ export class $Database<T extends $Env = $Env> extends EventTarget<$DatabaseEvent
         if (!jwtSecret()?.length) throw new HTTPException(500, {message: 'Invalid configuration - jwt secret is required'})
         this.adminJwtSecret = ()=>this.c.env.ADMIN_JWT_SECRET ? this.secretResolver.resolve(this.c.env.ADMIN_JWT_SECRET) : ''
         this.jwt = new JWTTokenHelper(jwtSecret, this.settings.jwtIssuer, this.settings.jwtAlgorithm)
-        this.kv = new InternalKV(this, this.settings._kvTableName)
     }
 
     // setup db etc
@@ -129,6 +129,16 @@ export class $Database<T extends $Env = $Env> extends EventTarget<$DatabaseEvent
             ...this.extensions.map(e => e.setup && e.setup(version)),
             ...this.settings.tables.map(t => this.table(t.name).setup(version))
         ])
+        const settings = await this.kv.get('$settings')
+        let message = 'Success'
+        if(!settings) {
+            message = 'Migrations not run yet - $settings not found - Run migrations to update $settings in the db'
+        }else {
+            const settings2 = JSON.parse(settings)
+            if(settings2.version !== this.settings.version)
+                message = `Settings version mismatch - ${settings2.version} !== ${this.settings.version} - deploy the worker again with the latest settings`
+        }
+        return message
     }
 
     // region auth
@@ -989,8 +999,10 @@ export class $Database<T extends $Env = $Env> extends EventTarget<$DatabaseEvent
         path: '/setup-db',
         method: 'post',
         handler: async()=>{
-            await this.setup()
-            return this.settings
+            const message = await this.setup()
+            return {
+                message, settings: this.settings,
+            }
         },
         zod: ()=>({
             description: 'Setup database and get settings (create metadata tables etc)',

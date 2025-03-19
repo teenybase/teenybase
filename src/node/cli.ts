@@ -15,6 +15,7 @@ import dotenv from 'dotenv'
 import {URL} from 'url'
 import {exportLocal} from './wrangler/export'
 import {generateMigrations} from '../sql/schema/generateMigrations'
+import {jsonStringify} from '../utils/string'
 
 const adminTokenKey = 'ADMIN_SERVICE_TOKEN'
 const apiRouteKey = 'API_ROUTE'
@@ -393,8 +394,8 @@ async function generateMigrationsDir(c: CliContext, clean = false, write = true)
         // compare with the last config
         // if different, throw error
         // todo proper check
-        const migrationsChanged = JSON.stringify(currentMigrations) !== JSON.stringify(lastMigrations)
-        const configChanged = JSON.stringify(currentConfig||{}) !== JSON.stringify(lastConfig||{})
+        const migrationsChanged = jsonStringify(currentMigrations) !== jsonStringify(lastMigrations)
+        const configChanged = jsonStringify(currentConfig||{}) !== jsonStringify(lastConfig||{})
         if (migrationsChanged) {
             throw new Error('Migrations folder has been modified. Apply the migrations first or run with --clean to reset migrations from deployment')
         }
@@ -543,6 +544,7 @@ async function migrateAndDeploy(c: CliContext, clean: boolean, doMigrate: boolea
             throw new Error('There are unapplied migrations. Run with --migrate to apply them')
         }
     }
+    let newSettingsSavedInDb = false
 
     const {migrations, config: lastConfig, nextConfig: _nextConfig} = readMigrationsFolder(c.migrationsPath)
     try {
@@ -686,7 +688,7 @@ async function migrateAndDeploy(c: CliContext, clean: boolean, doMigrate: boolea
 
                 // c.logger.info('Setting up db')
                 // make sure db is deployed and initial setup is done. Note - don't setup during first deployment.
-                await fetchWorker(c, '/api/v1/setup-db', {
+                await fetchWorker(c, '/api/v1/setup-db', { // todo handle database settings mismatch error from this endpoint. we need to first deploy the worker with the settings in the db and then apply migrations.
                     method: 'POST',
                     headers: {
                         'Content-Type': 'application/json',
@@ -715,7 +717,7 @@ async function migrateAndDeploy(c: CliContext, clean: boolean, doMigrate: boolea
                     const json = await fetchWorker(c, '/api/v1/migrations', {
                         method: 'POST',
                         headers: {'Content-Type': 'application/json'},
-                        body: JSON.stringify({migrations, settings: nextConfig || lastConfig}),
+                        body: JSON.stringify({migrations, settings: nextConfig || lastConfig}), // this will also save the settings in the db
                     }, false, deployRoute)
                     if (!json.applied?.length) {
                         if (newMigrations?.length) {
@@ -732,6 +734,7 @@ async function migrateAndDeploy(c: CliContext, clean: boolean, doMigrate: boolea
                             throw new Error(`Unknown error - Only ${json.applied.length} of ${newMigrations?.length} new migrations applied`)
                         }
                     }
+                    newSettingsSavedInDb = true
                 }catch (e: any){
                     // const message = `Failed to apply migrations: ${e?.message??e}\n\nDo you want to deploy the worker anyway()?`
                     // const res = await prompts({
@@ -746,13 +749,12 @@ async function migrateAndDeploy(c: CliContext, clean: boolean, doMigrate: boolea
 
             }
 
-            // todo deploy first and rollback if migration fails
             if (true /*!deployed*//* && (nextConfig || newMigrations?.length || forceDeploy)*/) {
                 if (!c.isLocal) {
+                    // todo incase of error during deployment, we need to prompt user to run the migrate again
                     wranglerDeploy(c)
                 } else {
                     // local worker is automatically deployed with new settings when next-config.json is written to config.json
-
                     if(nextConfig) {
                         // write the nextConfig also to localPersist
                         const localConfigPath = path.join(c.localPersistPath, 'config.json')
@@ -776,7 +778,7 @@ async function migrateAndDeploy(c: CliContext, clean: boolean, doMigrate: boolea
                 c.logger.info('Skipping worker deployment. No changes detected in database config and migrations. Run with --deploy to deploy anyway')
         }
     } catch (e: any) {
-        if (nextConfig) {
+        if (nextConfig && !newSettingsSavedInDb) {
             c.logger.warn('Reverting config.json due to error')
             const cp = path.join(c.migrationsPath, 'config.json')
             if (lastConfig) {

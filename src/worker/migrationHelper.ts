@@ -1,12 +1,13 @@
 import {HTTPException} from 'hono/http-exception'
 import {z} from 'zod'
 import splitSqlQuery from './wrangler/d1/splitter'
-import {databaseSettingsSchema} from '../types/config'
+import {DatabaseSettings, databaseSettingsSchema} from '../types/config'
 import {$Database} from './$Database'
 import {HttpRoute, HttpRouteZod} from '../types/route'
 import {$DBExtension} from './$DBExtension'
 import {D1Query} from '../sql/build/d1'
 import {$Env} from './env'
+import {InternalKV} from './internalKV'
 
 export interface DBMigration{
     id: number
@@ -21,7 +22,7 @@ export const zDBMigration = z.object({
 })
 
 export class MigrationHelper<T extends $Env = $Env> extends $DBExtension<T>{
-    constructor(db: $Database<T>, private readonly tableName = '_db_migrations') {
+    constructor(db: $Database<T>, private readonly tableName = '_db_migrations', private readonly kv: InternalKV<any>) {
         super(db)
     }
 
@@ -45,16 +46,17 @@ export class MigrationHelper<T extends $Env = $Env> extends $DBExtension<T>{
         if (!this.db.auth.superadmin) throw new HTTPException(403, {message: 'Forbidden'})
         const q = `SELECT id, name, sql, sql_revert FROM ${this.tableName}`
         // const res = await this.db.database.prepare(q).run<DBMigration>()
-        const res = await this.db.rawSQL<DBMigration>({q, v:[]}).run() || []
-        return res
+        const migrations = await this.db.rawSQL<DBMigration>({q, v:[]}).run() || []
+        const settings = await this.kv.get('$settings')
+        return {migrations, settings: settings ? JSON.parse(settings) as DatabaseSettings : this.db.settings}
     }
 
-    async apply(migrations: Omit<DBMigration, 'id'>[]) {
+    async apply(migrations: Omit<DBMigration, 'id'>[], settings: DatabaseSettings) {
         if (!this.db.auth.superadmin) throw new HTTPException(403, {message: 'Forbidden'})
         const last = await this.list()
         const names: string[] = []
         const prepared = z.array(zDBMigration).parse(migrations).flatMap(m => {
-            let last1 = last.find(r=>r.name === m.name)
+            let last1 = last.migrations.find(r=>r.name === m.name)
             if(last1) {
                 if (last1.sql !== m.sql) throw new Error(`Migration ${m.name} already applied but sql mismatch`)
                 if ((last1.sql_revert||null) !== (m.sql_revert||null)) throw new Error(`Migration ${m.name} already applied but sql_revert mismatch`)
@@ -72,6 +74,11 @@ export class MigrationHelper<T extends $Env = $Env> extends $DBExtension<T>{
                 }
             ]
         }).filter(q=>!!q) as D1Query[]
+        const settings1 = JSON.stringify(settings)
+        prepared.push(this.kv.setQuery('$settings', settings1))
+        prepared.push(this.kv.setQuery('$settings_'+Date.now(), settings1))
+        prepared.push(this.kv.setQuery('$settings_version', settings.version?.toString() ?? '0'))
+
         if(!prepared.length) return []
         try {
             await this.db.rawSQLTransaction(prepared).run()
@@ -85,8 +92,8 @@ export class MigrationHelper<T extends $Env = $Env> extends $DBExtension<T>{
         path: '/migrations',
         method: 'get',
         handler: async () => {
-            const migrations = await this.list()
-            return {settings: this.db.settings, migrations: migrations}
+            const res = await this.list()
+            return res
         },
         zod: () => (<HttpRouteZod>{
             description: 'List all migrations',
@@ -109,10 +116,10 @@ export class MigrationHelper<T extends $Env = $Env> extends $DBExtension<T>{
         path: '/migrations',
         method: 'post',
         handler: async (data) => {
-            // if(data.settings.version !== this.db.settings.version){
+            // if(this.db.settings.version && data.settings.version !== this.db.settings.version){
             //     throw new HTTPException(400, {message: 'Settings version mismatch'})
             // }
-            const migrations = await this.apply(data.migrations)
+            const migrations = await this.apply(data.migrations, data.settings)
             if (!migrations) throw new HTTPException(500, {message: 'Unable to apply migrations'})
             return {applied: migrations}
         },

@@ -13,6 +13,7 @@ import {DatabaseSettings} from './config'
 import {literalToQuery, logSQLQuery} from '../sql/build/query'
 import {SQLLiteral, SQLQuery, zSQLQueryOrLiteral} from './sql'
 import {TableFieldUsage} from '../worker/usages'
+import {jsonStringify} from '../utils/string'
 
 export interface TableFieldData<
     NAME = string,
@@ -116,7 +117,7 @@ export function validateFieldChange(field: TableFieldData|undefined, lastField: 
         return {drop: lastField}
     }
 
-    if(lastField && JSON.stringify(field) === JSON.stringify(lastField)) return {}
+    if(lastField && jsonStringify(field) === jsonStringify(lastField)) return {}
 
     const fPrefix = `Table Field ${tableName}:${field.name} - `
     // @ts-ignore todo is this required if we are validating with zod
@@ -180,8 +181,8 @@ export function validateFieldChange(field: TableFieldData|undefined, lastField: 
         // todo try to parse and check valid sql string
         if(!allowFieldSchemaChange) throw new Error(fPrefix + `Field default cannot be changed - ${buildSql(field.check)} !== ${buildSql(lastField.check)}`)
     }
-    const foreignKey = JSON.stringify(field.foreignKey)
-    const lastForeignKey = JSON.stringify(lastField.foreignKey)
+    const foreignKey = jsonStringify(field.foreignKey)
+    const lastForeignKey = jsonStringify(lastField.foreignKey)
     if (foreignKey !== lastForeignKey) {
         let trivial = false
         if(field.foreignKey && lastField.foreignKey && field.foreignKey.table !== lastField.foreignKey.table){
@@ -197,7 +198,7 @@ export function validateFieldChange(field: TableFieldData|undefined, lastField: 
 
     // if (field.usage !== lastField.usage) throw new Error(`Field usage cannot be changed - ${field.usage} !== ${lastField.usage}`)
 
-    const changes = JSON.stringify(field) !== JSON.stringify(lastField)
+    const changes = jsonStringify(field) !== jsonStringify(lastField)
     return changes ? {alter: [field, lastField] as AlterField} : {}
 }
 

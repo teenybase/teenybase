@@ -4,6 +4,7 @@ import {MailgunBindings, mailgunBindingsSchema} from "./mailgun";
 import {z} from 'zod'
 import {QueryTypes} from '../sql/build/query'
 import {SQLProcedure, zSQLProcedure} from './sql'
+import {jsonStringify} from '../utils/string'
 
 export interface DatabaseSettings {
     tables: TableData[]
@@ -70,7 +71,7 @@ export function validateSettingsChange(nextConfig: DatabaseSettings, lastConfig:
         const l = {...lastConfig}
         delete l.version
         delete l['//']
-        if (JSON.stringify(n) === JSON.stringify(l)) return {config: null, changes: null}
+        if (jsonStringify(n) === jsonStringify(l)) return {config: null, changes: null}
     }
 
     // diff
