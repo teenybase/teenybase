@@ -4,7 +4,9 @@ export {TableAuthExtensionData, TableRulesExtensionData, tableAuthDataSchema, ta
 export {TableFieldUsageAuth, TableFieldUsageRecord, TableFieldUsage} from './worker/usages'
 
 export {randomString, generateUid, uuidV4} from './security/random'
+export {aesGcmEncrypt, aesGcmDecrypt} from './security/encryption'
 export {zJsonString, zStringToJSON} from './utils/zod'
+export {pathJoin} from './utils/helpers'
 
 export {literalToQuery} from './sql/build/query'
 export {generateMigrations} from './sql/schema/generateMigrations'

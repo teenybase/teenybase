@@ -12,7 +12,7 @@ import {$Env} from './env'
 import {JWTPayloadOp} from '../types/jwt'
 import {TableAuthExtensionData} from '../types/tableExtensions'
 import {columnify, createJsepContext, honoToJsep, ident} from '../sql/parse/jsep'
-import {logSQLQuery, QueryType, QueryTypes} from '../sql/build/query'
+import {logSQLQuery, QueryType} from '../sql/build/query'
 import {D1Query, sqlQueryToD1Query} from '../sql/build/d1'
 import {z} from 'zod'
 import {
@@ -29,7 +29,7 @@ import {LinearRouter} from 'hono/router/linear-router'
 import {parseRequestBody} from './util/parseRequestBody'
 import {HttpRoute, RawRouterHandlerFunction} from '../types/route'
 import {$DBExtension} from './$DBExtension'
-import {SQLProcedure, SQLQuery} from '../types/sql'
+import {SQLQuery} from '../types/sql'
 import {buildDeleteQuery, DeleteQuery} from '../sql/build/delete'
 import {buildInsertQuery, InsertQuery} from '../sql/build/insert'
 import {buildUpdateQuery, UpdateQuery} from '../sql/build/update'
@@ -45,6 +45,7 @@ import {
     SQLRunTransactionContext
 } from './util/sql'
 import {OptionalOmit} from './util/types'
+import {SecretResolver} from './secretResolver'
 
 export type $DatabaseEventMap = {
     // run_sql: D1RunEvent
@@ -67,12 +68,12 @@ export class $Database<T extends $Env = $Env> extends EventTarget<$DatabaseEvent
     readonly extensions: $DBExtension<T>[] = []
 
     public readonly c: Context<T>
-    readonly secretResolver
+    readonly secretResolver: SecretResolver
 
     protected dryRunMode = false
     protected readOnlyMode = false
 
-    private readonly adminJwtSecret: ()=>string
+    private readonly adminJwtSecret: ()=>Promise<string>
 
     constructor(c: Context<T>, settings: z.infer<typeof databaseSettingsSchema>|DatabaseSettings|undefined, database: D1Database, storage?: R2Bucket) {
         super()
@@ -87,7 +88,7 @@ export class $Database<T extends $Env = $Env> extends EventTarget<$DatabaseEvent
         this.storage = storage
         this.kv = new InternalKV(this, this.settings._kvTableName)
         this.extensions.push(new MigrationHelper(this, undefined, this.kv))
-        this.secretResolver = new SecretResolver(()=>c.env)
+        this.secretResolver = new SecretResolver(()=>c.env, 'TEENY_SECRET_ENCRYPTION_KEY')
 
         // this can be set in the admin frontend to make sure we are working with the correct deployment of the worker
         const sv = c.req.header('DDB_SETTINGS_VERSION') // todo set in frontend
@@ -99,21 +100,24 @@ export class $Database<T extends $Env = $Env> extends EventTarget<$DatabaseEvent
         if (this.c.get('auth')) this.auth = this.c.get('auth')!
         else c.set('auth', this.auth);
 
+        const mgApiKey = this.settings.email?.mailgun?.MAILGUN_API_KEY
+        const mgSigningKey = this.settings.email?.mailgun?.MAILGUN_API_KEY
         this.email = this.settings.email ? new EmailSendClient(this, {
             from: this.settings.email.from || undefined,
             variables: this.settings.email.variables,
             tags: this.settings.email.tags || [],
         }, this.settings.email.mailgun ? {
             ...this.settings.email.mailgun,
-            MAILGUN_API_KEY: this.secretResolver.resolve(this.settings.email.mailgun.MAILGUN_API_KEY || ''),
+            MAILGUN_API_KEY: mgApiKey ? this.secretResolver.resolver(mgApiKey, false) : '',
+            MAILGUN_WEBHOOK_SIGNING_KEY: mgSigningKey ? this.secretResolver.resolver(mgSigningKey, false) : '',
         } : undefined) : null
         if(this.email) this.extensions.push(this.email)
 
         // this.notify = new NotifyClient({}, this.email)
 
-        const jwtSecret = ()=>this.secretResolver.resolve(this.settings.jwtSecret)
-        if (!jwtSecret()?.length) throw new HTTPException(500, {message: 'Invalid configuration - jwt secret is required'})
-        this.adminJwtSecret = ()=>this.c.env.ADMIN_JWT_SECRET ? this.secretResolver.resolve(this.c.env.ADMIN_JWT_SECRET) : ''
+        const jwtSecret = this.secretResolver.resolver(this.settings.jwtSecret, true, 'JWT_SECRET for the database')
+        // if (!jwtSecret()?.length) throw new HTTPException(500, {message: 'Invalid configuration - jwt secret is required'})
+        this.adminJwtSecret = this.c.env.ADMIN_JWT_SECRET ? this.secretResolver.resolver(this.c.env.ADMIN_JWT_SECRET, false) : async ()=>''
         this.jwt = new JWTTokenHelper(jwtSecret, this.settings.jwtIssuer, this.settings.jwtAlgorithm)
     }
 
@@ -172,7 +176,7 @@ export class $Database<T extends $Env = $Env> extends EventTarget<$DatabaseEvent
             // }
         }
 
-        let jwtSecret = this.adminJwtSecret()
+        let jwtSecret = this.adminJwtSecret
 
         // todo hack, remove
         if (this.c.env.ADMIN_SERVICE_TOKEN && tok === this.c.env.ADMIN_SERVICE_TOKEN) {
@@ -191,13 +195,14 @@ export class $Database<T extends $Env = $Env> extends EventTarget<$DatabaseEvent
             const table = this.settings.tables.find(t => t.name === payload!.cid)
             if (!table) throw new HTTPException(400, {message: 'Invalid auth table'})
             const auth = table.extensions.find(e => e.name === "auth") as TableAuthExtensionData
-            jwtSecret = this.secretResolver.resolve(auth.jwtSecret)
+            jwtSecret = this.secretResolver.resolver(auth.jwtSecret, true, `JWT_SECRET for ${table.name}`)
         }
 
-        if (!jwtSecret?.length) throw new HTTPException(401, {message: 'Invalid jwt'})
+        const secret = await jwtSecret()
+        if (!secret?.length) throw new HTTPException(401, {message: 'Invalid jwt'})
 
-        // console.log('init', payload, jwtSecret)
-        payload = await this.jwt.decodeAuth(tok!, jwtSecret, false, undefined, payload).catch(e => {
+        // console.log('init', payload, secret)
+        payload = await this.jwt.decodeAuth(tok!, secret, false, undefined, payload).catch(e => {
             console.error(e)
             return null
         })
@@ -235,7 +240,7 @@ export class $Database<T extends $Env = $Env> extends EventTarget<$DatabaseEvent
 
     async generateAdminToken(role: string, tok?: string) {
         if((tok !== this.c.env.ADMIN_SERVICE_TOKEN) && !this.auth.superadmin) throw new HTTPException(401, {message: 'Unauthorized'})
-        const adminJwtSecret = this.adminJwtSecret()
+        const adminJwtSecret = await this.adminJwtSecret()
         if (!adminJwtSecret) throw new HTTPException(500, {message: 'Invalid configuration - ADMIN_JWT_SECRET not set'})
         const tokenDuration = 3 * 60 * 60 // 3 hours
         const data = {
@@ -1169,15 +1174,6 @@ export class $Database<T extends $Env = $Env> extends EventTarget<$DatabaseEvent
     }
 
     // endregion routing
-}
-
-export class SecretResolver{
-    constructor(private readonly env: ()=>any) {
-    }
-    resolve(secret?: string){
-        const env = this.env()
-        return secret && secret[0] === '$' ? env[secret.slice(1)] || '' : secret
-    }
 }
 
 

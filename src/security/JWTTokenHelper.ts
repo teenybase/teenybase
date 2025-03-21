@@ -5,7 +5,7 @@ import {HTTPException} from 'hono/http-exception'
 export class JWTTokenHelper{
     allowedIssuers: string[] = []
     constructor(
-        private secret: ()=>string,
+        private secret: ()=>Promise<string>,
         readonly issuer: string = '$db',
         private algorithm: JwtAlgorithm|string = 'HS256',
         allowedIssuers?: string[]) {
@@ -22,7 +22,7 @@ export class JWTTokenHelper{
             // admin: false,
             iss: this.issuer,
         }
-        return sign(claims, this.secret() + secret, {algorithm: this.algorithm, header: {typ: 'JWT'}})
+        return sign(claims, await this.secret() + secret, {algorithm: this.algorithm, header: {typ: 'JWT'}})
     }
 
     async decodeAuth(auth: string, secret: string, /*hasOtp: boolean,*/ onlyVerified = true, issuers?: string[], payload?: JWTPayloadOp) {
@@ -47,7 +47,7 @@ export class JWTTokenHelper{
 
         if (payload.iss !== this.issuer) throw new HTTPException(400, {message: 'Invalid issuer'})
 
-        const valid = await verify(auth, this.secret() + secret, {
+        const valid = await verify(auth, await this.secret() + secret, {
             throwError: false,
             algorithm: this.algorithm,
         })

@@ -55,15 +55,14 @@ export class TableAuthExtension extends TableExtension<TableAuthExtensionData> {
     static readonly name = 'auth'
 
     readonly mapping
-    private jwtSecret: string
+    private jwtSecret: ()=>Promise<string>
 
     // todo remove c from here
     constructor(data: TableAuthExtensionData, table: $Table, jc: JsepContext, private c: Context) {
         super(tableAuthDataSchema.parse(data), table, jc)
         if (data.name !== TableAuthExtension.name) throw new HTTPException(500, {message: 'Invalid Configuration'})
         if(!this.table.mapping.uid) throw new HTTPException(500, {message: 'Invalid Configuration - id field required'})
-        this.jwtSecret = this.table.$db.secretResolver.resolve(this.data.jwtSecret)
-        if (!this.jwtSecret?.length) throw new HTTPException(500, {message: 'Invalid configuration - jwt secret is required for table'})
+        this.jwtSecret = this.table.$db.secretResolver.resolver(this.data.jwtSecret, true, `JWT_SECRET for ${data.name}`)
         const aud = this.table.fieldsUsage.auth_audience
         this.mapping = {
             uid: this.table.mapping.uid,
@@ -314,7 +313,7 @@ export class TableAuthExtension extends TableExtension<TableAuthExtensionData> {
     async loginWithToken(){
         const tok = this.c.req.header('Authorization')?.replace(/^Bearer /, '')
         if (!tok) throw new HTTPException(400, {message: 'Authorization header required'})
-        const payload = await this.table.$db.jwt.decodeAuth(tok, this.jwtSecret, false).catch(() => null)
+        const payload = await this.table.$db.jwt.decodeAuth(tok, await this.jwtSecret(), false).catch(() => null)
         if (!payload) throw new HTTPException(401, {message: 'Unauthorized'})
 
         let res = await this.findUser(payload.sub)
@@ -392,7 +391,7 @@ export class TableAuthExtension extends TableExtension<TableAuthExtensionData> {
         if(rc) data.rc = rc
         if(res.audience && res.audience.length) data.aud = res.audience
         if(res.emailVerified !== undefined) data.verified = res.emailVerified
-        return await this.table.$db.jwt.createJwtToken(data, this.jwtSecret, this.data.jwtTokenDuration)
+        return await this.table.$db.jwt.createJwtToken(data, await this.jwtSecret(), this.data.jwtTokenDuration)
     }
 
     /**
@@ -563,7 +562,7 @@ export class TableAuthExtension extends TableExtension<TableAuthExtensionData> {
             sub: user.email,
             typ: 'verify_email',
             cid: this.table.name,
-        }, this.jwtSecret, this.data.emailVerifyTokenDuration || 1 * 60 * 60)
+        }, await this.jwtSecret(), this.data.emailVerifyTokenDuration || 1 * 60 * 60)
 
         const email = this.table.$db.email
         if(!email) throw new HTTPException(500, {message: 'Email not configured'})
@@ -594,7 +593,7 @@ export class TableAuthExtension extends TableExtension<TableAuthExtensionData> {
     private async _confirmVerification(token: string, uid?: string){
         if(!this.mapping.emailVerified) throw new HTTPException(500, {message: 'Invalid Configuration - emailVerified field required'})
 
-        const {id, sub, typ, cid} = await this.table.$db.jwt.decodeAuth(token, this.jwtSecret, false)
+        const {id, sub, typ, cid} = await this.table.$db.jwt.decodeAuth(token, await this.jwtSecret(), false)
         if(!id || !sub) throw new HTTPException(400, {message: 'Invalid token'})
         if(uid && uid !== id) throw new Error('User mismatch')
         if(cid !== this.table.name) throw new HTTPException(400, {message: 'Invalid table'})
@@ -629,7 +628,7 @@ export class TableAuthExtension extends TableExtension<TableAuthExtensionData> {
             sub: user.email,
             typ: 'reset_password',
             cid: this.table.name,
-        }, this.jwtSecret, this.data.passwordResetTokenDuration || 60 * 60)
+        }, await this.jwtSecret(), this.data.passwordResetTokenDuration || 60 * 60)
 
         const email = this.table.$db.email
         if(!email) throw new HTTPException(500, {message: 'Email not configured'})
@@ -661,7 +660,7 @@ export class TableAuthExtension extends TableExtension<TableAuthExtensionData> {
     async _confirmPasswordReset(token: string, record: Record<string, SQLLiteral>){
         if(!this.mapping.password) throw new HTTPException(500, {message: 'Invalid Configuration - password field required'})
 
-        const {id, sub, typ, cid} = await this.table.$db.jwt.decodeAuth(token, this.jwtSecret, false)
+        const {id, sub, typ, cid} = await this.table.$db.jwt.decodeAuth(token, await this.jwtSecret(), false)
         if(!id || !sub) throw new HTTPException(400, {message: 'Invalid token'})
         if(cid !== this.table.name) throw new HTTPException(400, {message: 'Invalid table'})
         if(typ !== 'reset_password') throw new HTTPException(400, {message: 'Invalid token type'})

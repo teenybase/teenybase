@@ -1,4 +1,4 @@
-import {MailgunHelper} from './mailgun'
+import {MailgunHelper, MailgunProps} from './mailgun'
 import {replaceTemplateVariables} from '../util/replaceTemplateVariables'
 import {HTTPException} from 'hono/http-exception'
 import {baseLayout1} from './templates/base-layout-1'
@@ -57,7 +57,7 @@ export class EmailSendClient<T extends $Env = $Env> extends $DBExtension<T> {
 
     constructor(db: $Database<T>, private props: Partial<SendEmailProps> & {
         variables: BaseTemplateProps
-    }, mg?: MailgunBindings) {
+    }, mg?: MailgunProps) {
         super(db)
         this.mg = mg ? new MailgunHelper(mg) : null
         // todo also make a webhook that logs everything to an r2 bucket with encryption

@@ -4,6 +4,7 @@ import {MailgunBindings} from '../../types/mailgun'
 import {HttpRoute, HttpRouteZod, RouteFunction} from '../../types/route'
 import {Context} from 'hono'
 import {z} from 'zod'
+import {pathJoin} from '../../utils/helpers'
 
 export type MGSendEmailProps = {
     from: string, to: string,
@@ -13,15 +14,19 @@ export type MGSendEmailProps = {
 }
 const emailBlockList = 'yopmail.com,mailinator.com,guerrillamail.com,sharklasers.com,maildrop.cc'
 
+export interface MailgunProps extends Omit<MailgunBindings, 'MAILGUN_API_KEY' | 'MAILGUN_WEBHOOK_SIGNING_KEY'>{
+    MAILGUN_API_KEY: string | (()=>Promise<string>)
+    MAILGUN_WEBHOOK_SIGNING_KEY?: string | (()=>Promise<string>)
+}
 export class MailgunHelper{
     baseUrl = 'https://api.mailgun.net/v3/'
-    private bindings: MailgunBindings
+    private bindings: MailgunProps
 
-    constructor(bindings: MailgunBindings) {
+    constructor(bindings: MailgunProps) {
         this.bindings = bindings
         if(bindings.MAILGUN_API_URL?.startsWith('https://')) this.baseUrl = bindings.MAILGUN_API_URL
         else if(bindings.MAILGUN_API_URL) throw new HTTPException(400, {message: 'Invalid mailgun configuration - MAILGUN_API_URL must start with https://'})
-        if(!this.bindings.MAILGUN_API_SERVER || !this.bindings.MAILGUN_API_KEY) throw new HTTPException(400, {message: 'Invalid mailgun configuration - missing MAILGUN_API_SERVER or MAILGUN_API_KEY'})
+        if(!this.bindings.MAILGUN_API_SERVER) throw new HTTPException(400, {message: 'Invalid mailgun configuration - missing MAILGUN_API_SERVER or MAILGUN_API_KEY'})
     }
 
     async sendEmail({from, to, subject, html, tags}: MGSendEmailProps){
@@ -37,10 +42,15 @@ export class MailgunHelper{
         // form.append('h:X-Mailgun-Variables', JSON.stringify(variables))
         tags.forEach(tag => form.append('o:tag', tag))
 
-        let res = await fetch(this.baseUrl + this.bindings.MAILGUN_API_SERVER + '/messages', {
+        const _key = this.bindings.MAILGUN_API_KEY
+        const key = typeof _key === 'string' || !_key ? _key : await _key()
+
+        if(!key) throw new HTTPException(500, {message: 'Invalid mailgun configuration - missing MAILGUN_API_KEY'})
+
+        let res = await fetch(pathJoin([this.baseUrl, this.bindings.MAILGUN_API_SERVER, '/messages']), {
             method: 'POST',
             headers: {
-                'Authorization': 'Basic ' + btoa('api:' + this.bindings.MAILGUN_API_KEY),
+                'Authorization': 'Basic ' + btoa('api:' + key),
                 // don't add content-type header for multipart
             },
             body: form
@@ -72,7 +82,8 @@ export class MailgunHelper{
         // If Mailgun receives a 406 (Not Acceptable) code, Mailgun will determine the POST is rejected and not retry.
         // For any other code, Mailgun will retry POSTing according to the following schedule (other than the delivery notification): 10 minutes, 10 minutes, 15 minutes, 30 minutes, 1 hour, 2 hour and 4 hours.
 
-        const key = this.bindings.MAILGUN_WEBHOOK_SIGNING_KEY
+        const _key = this.bindings.MAILGUN_WEBHOOK_SIGNING_KEY
+        const key = typeof _key === 'string' || !_key ? _key : await _key()
         const signature = data.signature
         const verified = (!key || !signature) ? false : await verify({signingKey: key, ...signature})
         let message = ''
