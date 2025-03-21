@@ -41,8 +41,8 @@ export function createFieldsQuery(Type: TableFieldData[]): string {
 }
 
 export function indexName(index: SQLIndex){
-    const fields = (Array.isArray(index.fields) ? index.fields : [index.fields])
-    const name = index.name ?? fields.map(f=>f.toLowerCase().split(' ')[0]!.replace(/[^a-z0-9]/g, '_')).join('_')
+    const fields = (Array.isArray(index.fields) ? index.fields : index.fields.split(','))
+    const name = index.name ?? fields.map(f=>f.trim().toLowerCase().split(' ')[0]!.replace(/[^a-z0-9]/g, '_')).join('_')
     return {name, fields}
 }
 export function createIndexQuery(table: TableData, index: SQLIndex){
