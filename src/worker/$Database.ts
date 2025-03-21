@@ -47,8 +47,8 @@ import {
 import {OptionalOmit} from './util/types'
 
 export type $DatabaseEventMap = {
-    run_sql: D1RunEvent
-    run_sql_fail: D1RunFailEvent
+    // run_sql: D1RunEvent
+    // run_sql_fail: D1RunFailEvent
 }
 export class $Database<T extends $Env = $Env> extends EventTarget<$DatabaseEventMap>{
     protected readonly tables: Record<string, $Table<T>> = {}
@@ -700,6 +700,9 @@ export class $Database<T extends $Env = $Env> extends EventTarget<$DatabaseEvent
     //     return this._prepareD1Query(d1Expr, onErr, readOnly, c)
     // }
 
+    onRunSQL: ((e:D1RunEvent)=>void | Promise<void>) [] = []
+    onRunFailSQL: ((e:D1RunFailEvent)=>void | Promise<void>) [] = []
+
     private _prepareD1Query<T, TRet = T[], TC extends QueryType = QueryType>(d1Expr: D1Query, readOnly = true, c?: SQLRunContext<T, TRet, TC>){
         if (this.readOnlyMode && !readOnly) throw new ProcessError('Running raw SQL is not allowed in read only mode.')
         if (this.dryRunMode) throw new ProcessError('Running raw SQL is not allowed in dry run.')
@@ -712,7 +715,8 @@ export class $Database<T extends $Env = $Env> extends EventTarget<$DatabaseEvent
                 // throw new HTTPException(500, { message: err??'Error running transaction' });
                 const e = new D1Error(prep.c?.errorMessage || 'Unknown SQL Error', msg, er, prep.c?.query ? logSQLQuery(prep.c.query) : '')
                 const error = prep.c?.table?.parseD1Error(e) ?? e
-                this.dispatchEvent(new D1RunFailEvent({input: {...prep.c, d1Expr}, error: er}))
+                const event = (new D1RunFailEvent({input: {...prep.c, d1Expr}, error: er}))
+                for (const listener of this.onRunFailSQL) await listener(event)
                 return c?.onError ? c.onError(error) : error
             },
             onSuccess: async (res): Promise<T[]>=> {
@@ -720,7 +724,8 @@ export class $Database<T extends $Env = $Env> extends EventTarget<$DatabaseEvent
                 else if (!res.success) throw new Error(res.error)
                 else {
                     // console.log('Query result:', res)
-                    this.dispatchEvent(new D1RunEvent({input: {...prep.c, d1Expr}, result: res}))
+                    const event = (new D1RunEvent({input: {...prep.c, d1Expr}, result: res}))
+                    for (const listener of this.onRunSQL) await listener(event)
                     c?.onSuccess && await c.onSuccess(res)
                     return res.results
                 }

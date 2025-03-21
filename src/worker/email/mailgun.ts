@@ -1,7 +1,7 @@
 import {HTTPException} from 'hono/http-exception'
 import {discordNotify} from './discordNotify'
 import {MailgunBindings} from '../../types/mailgun'
-import {HttpRoute, HttpRouteZod, RawRouterHandlerFunction, RouteFunction} from '../../types/route'
+import {HttpRoute, HttpRouteZod, RouteFunction} from '../../types/route'
 import {Context} from 'hono'
 import {z} from 'zod'
 
@@ -37,24 +37,28 @@ export class MailgunHelper{
         // form.append('h:X-Mailgun-Variables', JSON.stringify(variables))
         tags.forEach(tag => form.append('o:tag', tag))
 
-        const res = await fetch(this.baseUrl + this.bindings.MAILGUN_API_SERVER + '/messages', {
+        let res = await fetch(this.baseUrl + this.bindings.MAILGUN_API_SERVER + '/messages', {
             method: 'POST',
             headers: {
                 'Authorization': 'Basic ' + btoa('api:' + this.bindings.MAILGUN_API_KEY),
-                // dont add content-type header for multipart
+                // don't add content-type header for multipart
             },
             body: form
-        });
+        }).catch(e=>{
+            console.error('Failed to fetch mailgun', e)
+            return new Response('Failed to fetch mailgun - ' + e.message || e, {status: 500})
+        })
         let resJson = undefined
         let resp = ''
-        try{
+        try {
             resp = await res.text()
             resJson = JSON.parse(resp)
-        }catch (e) {
+        } catch (e: any) {
             console.error('Failed to parse mailgun response', e)
+            // resp = e?.message || e
         }
         if(!resJson) {
-            console.error('Error sending email, ', res.status, resp)
+            console.error('Error sending email, ', res?.status, resp)
             if(this.bindings.DISCORD_MAILGUN_NOTIFY_WEBHOOK)
                 await discordNotify(this.bindings.DISCORD_MAILGUN_NOTIFY_WEBHOOK, `Failed to send email(\`${res.status}\`) to \`${to}\` \n\`\`\`${resp}\`\`\``)
             throw new HTTPException(500, {message: 'Failed to send email'})
