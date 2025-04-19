@@ -1,13 +1,14 @@
 import {HTTPException} from 'hono/http-exception'
 import {z} from 'zod'
 import splitSqlQuery from './wrangler/d1/splitter'
-import {DatabaseSettings, databaseSettingsSchema} from '../types/config'
+import {DatabaseSettings} from '../types/config'
 import {$Database} from './$Database'
 import {HttpRoute, HttpRouteZod} from '../types/route'
 import {$DBExtension} from './$DBExtension'
 import {D1Query} from '../sql/build/d1'
 import {$Env} from './env'
 import {InternalKV} from './internalKV'
+import {databaseSettingsSchema} from '../types/zod/databaseSettingsSchema';
 
 export interface DBMigration{
     id: number

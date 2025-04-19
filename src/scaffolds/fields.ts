@@ -1,6 +1,7 @@
-import {tableField} from '../types/field'
 import {TableFieldUsageAuth, TableFieldUsageRecord} from '../worker/usages'
-import {sql, SQLTrigger, sqlValue} from '../types/sql'
+import {SQLTrigger} from '../types/sql'
+import {tableField} from '../types/config/tableField';
+import {sql, sqlValue} from '../types/config/sqlUtils'
 
 export const fields = {
     id: tableField("id" as const, 'text', 'text', {usage: TableFieldUsageRecord.record_uid, primary: true, notNull: true, noUpdate: true}),

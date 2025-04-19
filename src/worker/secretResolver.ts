@@ -14,7 +14,7 @@ export class SecretResolver {
 
         const name = secret && secret[0] === '$' ? secret.slice(1) : undefined
         const res = name ? env[name] || '' : secret
-        const result: string = typeof encKey === 'string' && name && res ? await aesGcmDecrypt(res, encKey + name, 5) : res
+        const result: string = typeof encKey === 'string' && name && res ? await aesGcmDecrypt(atob(res), encKey + name, 5) : res || ''
         if (required && !result) {
             throw new HTTPException(500, {message: `Invalid configuration, missing secret, ${message}, ${secret}`})
         }

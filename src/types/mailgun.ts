@@ -1,5 +1,3 @@
-import {z} from 'zod'
-
 export type MailgunBindings = {
     MAILGUN_API_KEY: string
     MAILGUN_API_SERVER: string
@@ -10,11 +8,3 @@ export type MailgunBindings = {
     EMAIL_BLOCKLIST?: string // comma separated list of domains
 }
 
-export const mailgunBindingsSchema = z.object({
-    MAILGUN_API_KEY: z.string(),
-    MAILGUN_API_SERVER: z.string(),
-    MAILGUN_API_URL: z.string().optional(),
-    MAILGUN_WEBHOOK_SIGNING_KEY: z.string().optional(),
-    DISCORD_MAILGUN_NOTIFY_WEBHOOK: z.string().optional(),
-    EMAIL_BLOCKLIST: z.string().optional(),
-})

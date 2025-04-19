@@ -1,6 +1,7 @@
-import {TableData, tableDataSchema} from '../../types/table'
-import {tableExtensionSchemas} from '../../types/tableExtensions'
+import {TableData} from '../../types/table'
 import {createTableQuery} from './tableQueries'
+import {tableDataSchema} from '../../types/zod/tableDataSchema';
+import {tableExtensionSchemas} from '../../types/zod/tableExtensionsSchema'
 
 export function createTable(data: TableData, others: TableData[], _rnd?: string) {
     data = tableDataSchema.parse(data)

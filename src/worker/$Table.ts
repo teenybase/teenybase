@@ -27,9 +27,6 @@ import {TableData} from '../types/table'
 import {columnify, ident, JsepContext, uncolumnify} from '../sql/parse/jsep'
 import {
     SQLQuery,
-    sqlValSchemaFile2,
-    sqlValSchemaFile3,
-    sqlValSchemaRecord,
     TableDeleteParams,
     TableEditParams,
     TableInsertParams,
@@ -38,12 +35,14 @@ import {
     TableViewParams
 } from '../types/sql'
 import {$Env} from './env'
-import {TableFieldDataType0, tableFieldTypeToZod} from '../types/dataTypes'
+import {TableFieldDataType0} from '../types/dataTypes'
 import {LinearRouter} from 'hono/router/linear-router'
 import {HttpRoute, RawRouterHandlerFunction} from '../types/route'
 import {normalizeFileName} from './util/string'
 import {fts5TableName} from '../sql/schema/tableQueries'
 import {D1PreparedQuery} from './util/sql'
+import { sqlValSchemaFile2, sqlValSchemaFile3, sqlValSchemaRecord } from '../types/zod/sqlSchemas';
+import {tableFieldTypeToZod} from '../types/zod/dataTypesSchemas'
 
 export class $Table<T extends $Env = any>{
     extensions: TableExtension[] = []

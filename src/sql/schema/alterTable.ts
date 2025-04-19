@@ -1,4 +1,4 @@
-import {AlterTable, TableData, tableDataSchema} from "../../types/table";
+import {AlterTable, TableData} from "../../types/table";
 import {randomString} from "../../security/random";
 import {
     createFieldQuery, createFts5Query,
@@ -7,6 +7,7 @@ import {
     migrateTableQuery,
     sqliteSupportedColumnAdd
 } from "./tableQueries";
+import {tableDataSchema} from '../../types/zod/tableDataSchema';
 
 export function alterTable([table, lastTable, changes]: AlterTable, others: TableData[]) {
     table = tableDataSchema.parse(table)

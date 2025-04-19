@@ -1,8 +1,9 @@
-import {DatabaseSettings, validateSettingsChange} from "../../types/config";
+import {DatabaseSettings} from "../../types/config";
 import {TableData} from "../../types/table";
 import {dropTable} from "./dropTable";
 import {alterTable} from "./alterTable";
 import {createTable} from "./createTable";
+import { validateSettingsChange } from '../../types/config/validateSettingsChange';
 
 export function generateMigrations(nextConfig: DatabaseSettings, lastConfig: Partial<DatabaseSettings> | undefined, index = 0) {
     const {config, changes} = validateSettingsChange(nextConfig, lastConfig)

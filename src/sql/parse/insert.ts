@@ -1,7 +1,8 @@
-import {InsertParams, insertSchema, SQLLiteral, SQLQuery} from '../../types/sql'
+import {InsertParams, SQLLiteral, SQLQuery} from '../../types/sql'
 import {JsepContext, parseColumnList} from './jsep'
 import {recordToSqlExpressions, recordToSqlValues} from './parse'
 import {InsertQuery} from '../build/insert'
+import {insertSchema} from '../../types/zod/sqlSchemas';
 
 export function parseInsertQuery(q: InsertParams, jc: JsepContext){
     const insertData = insertSchema.parse(q)

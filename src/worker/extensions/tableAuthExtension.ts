@@ -1,6 +1,6 @@
 import {z} from 'zod'
 import {TableExtension} from '../tableExtension'
-import {tableAuthDataSchema, TableAuthExtensionData} from '../../types/tableExtensions'
+import {TableAuthExtensionData} from '../../types/tableExtensions'
 import {HTTPException} from 'hono/http-exception'
 import {$Table} from '../$Table'
 import {ident, JsepContext} from '../../sql/parse/jsep'
@@ -12,10 +12,12 @@ import {appendWhere, SelectQuery} from '../../sql/build/select'
 import {recordToSqlValues} from '../../sql/parse/parse'
 import {JWTPayload} from '../../types/jwt'
 import {generateUid, randomString} from '../../security/random'
-import {InsertParams, SQLLiteral, SQLQuery, sqlValSchema} from '../../types/sql'
+import {InsertParams, SQLLiteral, SQLQuery} from '../../types/sql'
 import {passwordProcessors} from '../util/passwordProcessors'
 import {Context} from 'hono'
 import {normalizeEmail} from '../util/normalizeEmail'
+import {sqlValSchema} from '../../types/zod/sqlSchemas'
+import {tableAuthDataSchema} from '../../types/zod/tableExtensionsSchema'
 
 type UserFields = {
     emailVerified?: boolean
@@ -362,7 +364,7 @@ export class TableAuthExtension extends TableExtension<TableAuthExtensionData> {
         const password = await this._parsePasswordFieldsInsert(record)
         if(!password) throw new HTTPException(400, {message: 'Invalid password'})
 
-        const res2 = await this.updateUser(res.id, {password: password})
+        const res2 = await this.updateUser(res.id, record)
         if(!res2 || res2.id !== res.id) throw new HTTPException(500, {message: 'Failed to update password'})
 
         return this.c.json({success: true})

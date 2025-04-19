@@ -4,7 +4,7 @@ import {HTTPException} from 'hono/http-exception'
 import {decode} from '@tsndr/cloudflare-worker-jwt'
 import {D1Error, ProcessError} from './util/error'
 import {AuthContext} from '../types/env'
-import {DatabaseSettings, databaseSettingsSchema} from '../types/config'
+import {DatabaseSettings} from '../types/config'
 import {JWTTokenHelper} from '../security/JWTTokenHelper'
 import {EmailSendClient} from './email/send-email'
 import {InternalKV} from './internalKV'
@@ -46,6 +46,7 @@ import {
 } from './util/sql'
 import {OptionalOmit} from './util/types'
 import {SecretResolver} from './secretResolver'
+import {databaseSettingsSchema} from '../types/zod/databaseSettingsSchema'
 
 export type $DatabaseEventMap = {
     // run_sql: D1RunEvent
@@ -100,16 +101,18 @@ export class $Database<T extends $Env = $Env> extends EventTarget<$DatabaseEvent
         if (this.c.get('auth')) this.auth = this.c.get('auth')!
         else c.set('auth', this.auth);
 
-        const mgApiKey = this.settings.email?.mailgun?.MAILGUN_API_KEY
-        const mgSigningKey = this.settings.email?.mailgun?.MAILGUN_API_KEY
         this.email = this.settings.email ? new EmailSendClient(this, {
             from: this.settings.email.from || undefined,
             variables: this.settings.email.variables,
             tags: this.settings.email.tags || [],
         }, this.settings.email.mailgun ? {
             ...this.settings.email.mailgun,
-            MAILGUN_API_KEY: mgApiKey ? this.secretResolver.resolver(mgApiKey, false) : '',
-            MAILGUN_WEBHOOK_SIGNING_KEY: mgSigningKey ? this.secretResolver.resolver(mgSigningKey, false) : '',
+            MAILGUN_API_KEY: this.secretResolver.resolver(this.settings.email?.mailgun?.MAILGUN_API_KEY, false),
+            MAILGUN_WEBHOOK_SIGNING_KEY: this.secretResolver.resolver(this.settings.email?.mailgun?.MAILGUN_WEBHOOK_SIGNING_KEY, false),
+        } : undefined, this.settings.email.resend ? {
+            ...this.settings.email.resend,
+            RESEND_API_KEY: this.secretResolver.resolver(this.settings.email?.resend?.RESEND_API_KEY, false),
+            RESEND_WEBHOOK_SECRET: this.secretResolver.resolver(this.settings.email?.resend?.RESEND_WEBHOOK_SECRET, false),
         } : undefined) : null
         if(this.email) this.extensions.push(this.email)
 
@@ -117,7 +120,7 @@ export class $Database<T extends $Env = $Env> extends EventTarget<$DatabaseEvent
 
         const jwtSecret = this.secretResolver.resolver(this.settings.jwtSecret, true, 'JWT_SECRET for the database')
         // if (!jwtSecret()?.length) throw new HTTPException(500, {message: 'Invalid configuration - jwt secret is required'})
-        this.adminJwtSecret = this.c.env.ADMIN_JWT_SECRET ? this.secretResolver.resolver(this.c.env.ADMIN_JWT_SECRET, false) : async ()=>''
+        this.adminJwtSecret = this.c.env.ADMIN_JWT_SECRET ? this.secretResolver.resolver('$ADMIN_JWT_SECRET', false) : async ()=>''
         this.jwt = new JWTTokenHelper(jwtSecret, this.settings.jwtIssuer, this.settings.jwtAlgorithm)
     }
 
@@ -179,7 +182,8 @@ export class $Database<T extends $Env = $Env> extends EventTarget<$DatabaseEvent
         let jwtSecret = this.adminJwtSecret
 
         // todo hack, remove
-        if (this.c.env.ADMIN_SERVICE_TOKEN && tok === this.c.env.ADMIN_SERVICE_TOKEN) {
+        const adminToken = await this.secretResolver.resolve('$ADMIN_SERVICE_TOKEN')
+        if (adminToken && tok === adminToken) {
             tok = await this.generateAdminToken("superadmin", tok)
         }
         // console.log('init', tok)
@@ -239,7 +243,7 @@ export class $Database<T extends $Env = $Env> extends EventTarget<$DatabaseEvent
     }
 
     async generateAdminToken(role: string, tok?: string) {
-        if((tok !== this.c.env.ADMIN_SERVICE_TOKEN) && !this.auth.superadmin) throw new HTTPException(401, {message: 'Unauthorized'})
+        if((tok !== await this.secretResolver.resolve('$ADMIN_SERVICE_TOKEN')) && !this.auth.superadmin) throw new HTTPException(401, {message: 'Unauthorized'})
         const adminJwtSecret = await this.adminJwtSecret()
         if (!adminJwtSecret) throw new HTTPException(500, {message: 'Invalid configuration - ADMIN_JWT_SECRET not set'})
         const tokenDuration = 3 * 60 * 60 // 3 hours
@@ -317,9 +321,10 @@ export class $Database<T extends $Env = $Env> extends EventTarget<$DatabaseEvent
         return async(params, path)=>{
             if(typeof route.handler === 'function') {
                 const data = await this.getRequestBody()
-                const res = await route.handler(data, params, path)
-                if (res) return this.c.json(res)
-                throw new ProcessError('Not found', 404)
+                const res = await route.handler(data??{}, params, path)
+                if (!res) throw new ProcessError('Not found', 404)
+                if(typeof res === 'string') return this.c.render(res) // todo set jsx renderer or something by default?
+                return this.c.json(res)
             }else {
                 return route.handler.raw(params, path)
             }

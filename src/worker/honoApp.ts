@@ -9,6 +9,7 @@ export function teenyHono<T extends $Env=$Env>(
     createDb: (c: Context<T>)=>Promise<$Database<T>>,
     app?: Hono<T>,
     options: {logger: boolean, cors: boolean} = {logger: true, cors: true},
+    onRequest?: (c: Context<T>)=>Promise<Response|undefined>,
     beforeRoute?: (c: Context<T>)=>Promise<Response|undefined>
 ){
     app = app ?? new Hono<T>()
@@ -31,6 +32,10 @@ export function teenyHono<T extends $Env=$Env>(
     // $db init
     app.use('*', async (c, next) => {
         c.set('$db', await createDb(c))
+        if(onRequest) {
+            const res = await onRequest(c)
+            if(res) return res
+        }
         return next()
     })
     app.use('/api/*', async (c, next) => {

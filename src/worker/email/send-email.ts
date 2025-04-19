@@ -9,6 +9,7 @@ import {MailgunBindings} from '../../types/mailgun'
 import {$DBExtension} from '../$DBExtension'
 import {$Database} from '../$Database'
 import {$Env} from '../env'
+import {ResendHelper, ResendProps} from './resend'
 
 export interface SendEmailProps {
     from: string,
@@ -48,20 +49,23 @@ export interface ActionTextProps {
     action_button_color?: string
 }
 
-function buildEmailTemplate(templates: string[]) {
+export function buildEmailTemplate(templates: string[]) {
     return templates.reduce((acc, t) => acc.replace('{{EMAIL_CONTENT}}', t), '{{EMAIL_CONTENT}}')
 }
 
 export class EmailSendClient<T extends $Env = $Env> extends $DBExtension<T> {
     private mg: MailgunHelper | null
+    private rd: ResendHelper | null
 
     constructor(db: $Database<T>, private props: Partial<SendEmailProps> & {
         variables: BaseTemplateProps
-    }, mg?: MailgunProps) {
+    }, mg?: MailgunProps, rd?: ResendProps) {
         super(db)
         this.mg = mg ? new MailgunHelper(mg) : null
+        this.rd = rd ? new ResendHelper(rd) : null
         // todo also make a webhook that logs everything to an r2 bucket with encryption
         this.mg && this.routes.push(...this.mg.getRoutes(this.db.c))
+        this.rd && this.routes.push(...this.rd.getRoutes(this.db.c))
     }
 
     templates = {
@@ -108,14 +112,25 @@ export class EmailSendClient<T extends $Env = $Env> extends $DBExtension<T> {
         if (!props.to) throw new Error('to is required')
         if (!props.subject) throw new Error('subject is required')
         if (!props.from) throw new Error('from is required')
-        if (!this.mg) throw new HTTPException(500, {message: 'Mailgun not configured'})
-        return this.mg.sendEmail({
-            from: props.from,
-            html: props.html,
-            subject: props.subject,
-            tags: props.tags || [],
-            to: props.to,
-        })
+
+        if(this.mg){
+            return this.mg.sendEmail({
+                from: props.from,
+                html: props.html,
+                subject: props.subject,
+                tags: props.tags || [],
+                to: props.to,
+            })
+        }else if(this.rd) {
+            return this.rd.sendEmail({
+                from: props.from,
+                html: props.html,
+                subject: props.subject,
+                tags: props.tags.map(t=>({name: t, value: 'true'})) || [],
+                to: props.to,
+            })
+        }else
+            throw new HTTPException(500, {message: 'Email provider not configured'})
     }
 
 }

@@ -5,6 +5,7 @@ import {HttpRoute, HttpRouteZod, RouteFunction} from '../../types/route'
 import {Context} from 'hono'
 import {z} from 'zod'
 import {pathJoin} from '../../utils/helpers'
+import {checkBlocklist} from './block-list'
 
 export type MGSendEmailProps = {
     from: string, to: string,
@@ -30,9 +31,7 @@ export class MailgunHelper{
     }
 
     async sendEmail({from, to, subject, html, tags}: MGSendEmailProps){
-        const toOrigin = to.split('@')[1].split('?')[0]
-        if(emailBlockList.match(new RegExp('(\,|^)' + toOrigin + '(\,|$)', 'i'))) throw new HTTPException(400, {message: 'Invalid email domain'})
-        if(this.bindings.EMAIL_BLOCKLIST?.match(new RegExp('(\,|^)' + toOrigin + '(\,|$)', 'i'))) throw new HTTPException(400, {message: 'Invalid email domain'})
+        checkBlocklist(to, this.bindings.EMAIL_BLOCKLIST)
 
         const form = new FormData();
         form.append('from', from)

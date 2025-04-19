@@ -8,14 +8,15 @@ import type {
 import type {ZodType} from 'zod'
 
 export type RawRouterHandlerFunction = (params: Record<string, string>, path: string)=>Promise<Response|undefined>
-export type RouterHandlerFunction = ((body: any, params: Record<string, string>, path: string)=>Promise<Record<string, any>|undefined>)
+export type RouterHandlerFunction = ((body: Record<string, any>, params: Record<string, string>, path: string)=>Promise<Record<string, any>|string|undefined>)
 export type RouteFunction = {raw: RawRouterHandlerFunction} | RouterHandlerFunction
+export type RouteMethod = 'get' | 'post' | 'put' | 'delete' | 'patch' | 'head' | 'options' /*| 'trace'*/;
 
 // todo better name
 export type HttpRoute = {
     handler: RouteFunction,
     path: string,
-    method: RouteConfig['method']
+    method: RouteMethod
     zod: ()=>HttpRouteZod
 }
 

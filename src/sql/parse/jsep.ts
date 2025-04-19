@@ -1,12 +1,14 @@
 import jsep from 'jsep'
 import {AuthContext} from '../../types/env'
-import {SQLLiteral, SQLQuery, sqlValSchema, tableColumnNameSchema} from '../../types/sql'
+import {SQLLiteral, SQLQuery} from '../../types/sql'
 import {literalToQuery} from '../build/query'
 import {FieldForeignKey, TableFieldData} from '../../types/field'
-import {isTableFieldUnique, TableData} from '../../types/table'
+import {TableData} from '../../types/table'
 import {SelectQuerySelect, SelectQuerySelect1, SelectSubQuery} from '../build/select'
 import {fts5TableName} from '../schema/tableQueries'
 import {HonoRequest} from 'hono'
+import {isTableFieldUnique} from '../../types/config/isTableFieldUnique';
+import {sqlValSchema, tableColumnNameSchema} from '../../types/zod/sqlSchemas'
 
 let jsepSetup = false
 

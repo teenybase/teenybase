@@ -2,14 +2,15 @@ import {HTTPException} from 'hono/http-exception'
 import {$Table} from '../$Table'
 import {ProcessError} from '../util/error'
 import {TableExtension} from '../tableExtension'
-import {tableRulesDataSchema, TableRulesExtensionData} from '../../types/tableExtensions'
+import {TableRulesExtensionData} from '../../types/tableExtensions'
 import {JsepContext} from '../../sql/parse/jsep'
 import {appendWhere, getSubSelectQueries, SelectQuery, SelectWhere} from '../../sql/build/select'
 import {InsertQuery} from '../../sql/build/insert'
 import {UPDATE_NEW_COL_ID, UpdateQuery} from '../../sql/build/update'
 import {DeleteQuery} from '../../sql/build/delete'
-import {sqlExprSchema} from '../../types/sql'
 import {queryToSqlQuery} from '../../sql/parse/parse'
+import {sqlExprSchema} from '../../types/zod/sqlSchemas';
+import {tableRulesDataSchema} from '../../types/zod/tableExtensionsSchema'
 
 export class TableRulesExtension extends TableExtension<TableRulesExtensionData>{
     static readonly name = 'rules'

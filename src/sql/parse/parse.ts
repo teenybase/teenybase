@@ -1,6 +1,7 @@
 import {z} from 'zod'
 import {JsepContext, jsepParse, treeToSql} from './jsep'
-import {SQLLiteral, SQLQuery, sqlValSchema} from '../../types/sql'
+import {SQLLiteral, SQLQuery} from '../../types/sql'
+import {sqlValSchema} from '../../types/zod/sqlSchemas';
 
 export function queryToSqlQuery(query: string, c: JsepContext): SQLQuery|SQLLiteral {
     // remove quotes from starting and end - todo is it required?

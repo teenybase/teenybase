@@ -1,7 +1,8 @@
 import {JsepContext, parseColumnList} from './jsep'
 import {queryToSqlQuery, recordToSqlExpressions, recordToSqlValues} from './parse'
 import {UPDATE_NEW_COL_ID, UpdateQuery} from '../build/update'
-import {UpdateParams, updateSchema} from '../../types/sql'
+import {UpdateParams} from '../../types/sql'
+import {updateSchema} from '../../types/zod/sqlSchemas';
 
 export function parseUpdateQuery(q: UpdateParams, jc: JsepContext) {
     const updateData = updateSchema.parse(q)

@@ -1,7 +1,8 @@
 import {JsepContext, parseColumnList, parseColumnListOrder,} from './jsep'
 import {queryToSqlQuery} from './parse'
 import {SelectQuery} from '../build/select'
-import {SelectParams, selectSchema} from '../../types/sql'
+import {SelectParams} from '../../types/sql'
+import {selectSchema} from '../../types/zod/sqlSchemas';
 
 export function parseSelectQuery(q: SelectParams, jc: JsepContext){
     const selectData = selectSchema.parse(q)

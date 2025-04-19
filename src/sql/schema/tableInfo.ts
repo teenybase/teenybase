@@ -1,16 +1,14 @@
 import {HTTPException} from 'hono/http-exception'
 import {FieldForeignKey, TableFieldData} from '../../types/field'
 import {
-    sqlDataTypeAliases,
-    sqlDataTypeToDataTypeDefaults,
-    supportedTypesForSql,
     TableFieldDataType,
     TableFieldSqlDataType
 } from '../../types/dataTypes'
-import {sqlRaw} from '../../types/sql'
 import {$Database} from '../../worker'
 import {TableRulesExtensionData} from '../../types/tableExtensions'
 import {TableData} from '../../types/table'
+import {sqlRaw} from '../../types/config/sqlUtils';
+import {sqlDataTypeAliases, sqlDataTypeToDataTypeDefaults, supportedTypesForSql} from '../../types/zod/dataTypesSchemas'
 
 export interface TableInfo{
     name: string,

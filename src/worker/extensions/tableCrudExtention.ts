@@ -6,12 +6,13 @@ import {
 import {JsepContext} from '../../sql/parse/jsep'
 import {HTTPException} from 'hono/http-exception'
 import {
-    tableDeleteSchema, tableEditSchema,
-    tableInsertSchema,
-    tableSelectSchema,
-    tableUpdateSchema,
-    tableViewSchema
-} from '../../types/sql'
+	tableDeleteSchema,
+	tableEditSchema,
+	tableInsertSchema,
+	tableSelectSchema,
+	tableUpdateSchema,
+	tableViewSchema
+} from '../../types/zod/sqlSchemas';
 
 interface TableCrudExtensionData {
     name: 'crud'

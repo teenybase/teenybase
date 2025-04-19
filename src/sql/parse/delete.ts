@@ -1,7 +1,8 @@
 import {JsepContext, parseColumnList} from './jsep'
 import {DeleteQuery} from '../build/delete'
 import {queryToSqlQuery} from './parse'
-import {DeleteParams, deleteSchema} from '../../types/sql'
+import {DeleteParams} from '../../types/sql'
+import {deleteSchema} from '../../types/zod/sqlSchemas'
 
 export function parseDeleteQuery(q: DeleteParams, jc: JsepContext){
     const deleteData = deleteSchema.parse(q)

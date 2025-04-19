@@ -1,0 +1,9 @@
+
+export type ResendBindings = {
+    RESEND_API_KEY: string;
+    RESEND_WEBHOOK_SECRET?: string;
+    RESEND_WEBHOOK_ID?: string; // (optional). custom so it cannot be guessed and spammed
+    RESEND_API_URL?: string;
+    DISCORD_RESEND_NOTIFY_WEBHOOK?: string;
+    EMAIL_BLOCKLIST?: string; // comma-separated list of domains
+};
