@@ -41,7 +41,7 @@ import {HttpRoute, RawRouterHandlerFunction} from '../types/route'
 import {normalizeFileName} from './util/string'
 import {fts5TableName} from '../sql/schema/tableQueries'
 import {D1PreparedQuery} from './util/sql'
-import { sqlValSchemaFile2, sqlValSchemaFile3, sqlValSchemaRecord } from '../types/zod/sqlSchemas';
+import {sqlValSchemaFile2, sqlValSchemaFile3, sqlValSchemaRecord} from '../types/zod/sqlSchemas';
 import {tableFieldTypeToZod} from '../types/zod/dataTypesSchemas'
 
 export class $Table<T extends $Env = any>{
@@ -180,9 +180,10 @@ export class $Table<T extends $Env = any>{
 
         await this.onDeleteParse(query)
 
-        const filesToDelete = await this.filesToDelete(query)
+        // const filesToDelete = await this.filesToDelete(query)
+        const fileFields = this.fileFields
 
-        const res = this.$db.rawDelete(this, query, filesToDelete, then)
+        const res = this.$db.rawDelete(this, query, fileFields, then)
 
         return res
     }
@@ -209,7 +210,7 @@ export class $Table<T extends $Env = any>{
             }
         }
 
-        let query
+        let query: InsertQuery
         try {
             query = parseInsertQuery(data2, this.jc)
         }catch (e){
@@ -218,7 +219,10 @@ export class $Table<T extends $Env = any>{
 
         await this.onInsertParse(query)
 
-        const res = this.$db.rawInsert(this, query, filesToUpload, filesToRef, then)
+        const values0 = Array.isArray(data2.values) ? data2.values[0] : data2.values
+        const fileFields = values0 && this.fileFields?.filter(f => values0[f] !== undefined)
+
+        const res = this.$db.rawInsert(this, query, filesToUpload, filesToRef, fileFields, then)
 
         return res
     }
@@ -249,10 +253,10 @@ export class $Table<T extends $Env = any>{
 
         await this.onUpdateParse(updateQuery)
 
-        const fileFields = this.fileFields?.filter(f => updateQuery.set[f])
-        const filesToDelete = fileFields ? await this.filesToDelete(updateQuery, fileFields) : undefined
+        const fileFields = this.fileFields?.filter(f => updateQuery.set[f] !== undefined)
+        // const filesToDelete = fileFields ? await this.filesToDelete(updateQuery, fileFields) : undefined
 
-        const res = this.$db.rawUpdate(this, updateQuery, filesToUpload, filesToRef, filesToDelete, then)
+        const res = this.$db.rawUpdate(this, updateQuery, filesToUpload, filesToRef, [], fileFields, then)
         return res
     }
 
@@ -592,30 +596,32 @@ export class $Table<T extends $Env = any>{
 
     // R2 Helpers
 
-    private async filesToDelete(desQuery: UpdateQuery|DeleteQuery, fileFields?: string[]) {
-        if(!fileFields) fileFields = this.fileFields || []
-        if (!fileFields.length) return undefined
-        if(desQuery.table !== this.jc.tableName) throw new ProcessError('Invalid table for filesToDelete')
-        const selects = fileFields.map(f => ident(f, this.jc))
-        // const res = await this.run<any>(selectQuery, 'Failed to run select query')
-        const res = await this.$db.rawSelect(this, {
-            from: desQuery.table,
-            where: desQuery.where, // this will have the rule as well.
-            selects,
-            // limit: desQuery.limit,
-            params: desQuery.params,
-        })?.run() || []
-        return res.flatMap(r => Object.values(r)).filter(v => !!v) as string[]
-    }
+    // private async filesToDelete(desQuery: UpdateQuery|DeleteQuery, fileFields?: string[]) {
+    //     if(!fileFields) fileFields = this.fileFields || []
+    //     if (!fileFields.length) return undefined
+    //     if(desQuery.table !== this.jc.tableName) throw new ProcessError('Invalid table for filesToDelete')
+    //     const selects = fileFields.map(f => ident(f, this.jc))
+    //     // const res = await this.run<any>(selectQuery, 'Failed to run select query')
+    //     const res = await this.$db.rawSelect(this, {
+    //         from: desQuery.table,
+    //         where: desQuery.where, // this will have the rule as well.
+    //         selects,
+    //         // limit: desQuery.limit,
+    //         params: desQuery.params,
+    //     })?.run() || []
+    //     return res.flatMap(r => Object.values(r)).filter(v => !!v) as string[]
+    // }
 
-    private filesToUpload(values: z.infer<typeof sqlValSchemaFile3>, filesToUpload?: Record<string, File>, filesToRef?: string[]) {
+    // returning is not used, todo remove?
+    private filesToUpload(values: z.infer<typeof sqlValSchemaFile3>, filesToUpload?: Record<string, File>, filesToRef?: string[], returning?: string[]) {
         filesToUpload = filesToUpload ?? {} as Record<string, File>
         filesToRef = filesToRef ?? [] as string[]
-        if(!values || !this.fileFields) return {filesToUpload, filesToRef, values: sqlValSchemaRecord.parse(values)}
+        returning = returning ?? []
+        if(!values || !this.fileFields) return {filesToUpload, filesToRef, values: sqlValSchemaRecord.parse(values), returning}
         const transformed: z.infer<typeof sqlValSchemaRecord> = {}
+
         for (let [key, val] of Object.entries(values)) {
             const isFileField = this.fileFields.includes(key)
-
 
             // ignore file field. This is done because file fields in html form set value to empty string when no file is set. we dont want to send the file every time we are updating some record, so empty string is set in autoform
             //  so empty string when passed in update for file fields means NO CHANGE
@@ -631,11 +637,11 @@ export class $Table<T extends $Env = any>{
             }
             if (!isFileField || val === null || val === undefined) continue
 
-            // when deleting file, null should be passed. todo should we allow empty string as well? right now we are ignoring if empty string above
-            // if(val === '') {
-            //     transformed[key] = null
-            //     continue
-            // }
+            // when deleting file, null should be passed.
+            if(val === '@null') { // todo global constant
+                transformed[key] = null
+                continue
+            }
 
             if (typeof val === 'string') {
                 // todo
@@ -664,11 +670,13 @@ export class $Table<T extends $Env = any>{
                 const name = normalizeFileName(val.name)
                 filesToUpload[name] = val
                 transformed[key] = name
+                if(!returning.includes(key))
+                    returning.push(key) // we will return the file name to be sure it was updated in db
                 continue
             }
             throw new ProcessError('File or string expected in file field ' + key)
         }
-        return {filesToUpload, filesToRef, values: sqlValSchemaRecord.parse(transformed)}
+        return {filesToUpload, filesToRef, values: sqlValSchemaRecord.parse(transformed), returning}
     }
 
     fileRoute(key: string, recordId: string){

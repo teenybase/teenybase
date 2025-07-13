@@ -10,13 +10,30 @@ beforeAll(async () => {
     console.log('Before All - Setup Drive 2')
 })
 
-const fetch = (input: RequestInfo, init?: RequestInit)=>SELF.fetch('https://example.com/api/v1/table/'+input, {...init, ...{
-        headers: {
-            ...init?.headers,
-            '$DB_TEST_DATABASE_SETTINGS': JSON.stringify(settings),
-            'Content-Type': init?.method === 'POST' ? 'application/json' : 'text/plain',
-        }
-    }})
+const fetch = (input: RequestInfo, init?: RequestInit)=>{
+    const headers = {
+        '$DB_TEST_DATABASE_SETTINGS': JSON.stringify(settings),
+    } as Record<string, string>
+    const cType = init?.method === 'POST' && typeof init?.body === 'string' ? 'application/json' : init?.body instanceof FormData ? undefined : 'text/plain'
+    if(cType && !headers['Content-Type']) headers['Content-Type'] = cType
+    return SELF.fetch('https://example.com/api/v1/table/'+input, {...init, ...{
+            headers: {
+                ...init?.headers,
+                ...headers,
+            }
+        }})
+}
+const fetch2 = (input: RequestInfo, init?: RequestInit)=>{
+    const headers = {
+        '$DB_TEST_DATABASE_SETTINGS': JSON.stringify(settings),
+    } as Record<string, string>
+    return SELF.fetch('https://example.com/'+input, {...init, ...{
+            headers: {
+                ...init?.headers,
+                ...headers,
+            }
+        }})
+}
 
 // mostly same as drive1 with some changes and some at the bottom
 // todo make some tests for file upload and download
@@ -290,6 +307,276 @@ test('view file', async () => {
         deleted_by: null,
         deleted_at: null
     })
+})
+
+test('insert nothing', async () => {
+    const token = await createUser({username: 'admin'})
+    const res = await fetch(`files/insert`, {
+        method: 'POST',
+        body: JSON.stringify({
+            values: [],
+            returning: ['id']
+        }),
+        headers: {'Authorization': 'Bearer ' + token.token},
+    })
+    expect(res.status).toEqual(200)
+    expect(await res.text()).toEqual('[]')
+})
+
+// todo this fails because referencing path in rules but not passing here, need to fix or improve the error report or something
+// test('insert empty', async () => {
+//     const token = await createUser({username: 'admin'})
+//     const res = await fetch(`files/insert`, {
+//         method: 'POST',
+//         body: JSON.stringify({
+//             values: {},
+//             returning: ['id']
+//         }),
+//         headers: {'Authorization': 'Bearer ' + token.token},
+//     })
+//     expect(res.status).toEqual(200)
+//     expect(await res.text()).toEqual('[]') // should have one default record
+// })
+
+async function insertDummyFile() {
+    const token = await createUser({username: 'admin'})
+    const table = 'files'
+
+    const data = new FormData();
+    data.append("values.created_by", token.record.id);
+    data.append("values.file", new File(['test content'], 'test.txt', {type: 'text/plain; charset=utf-8'}));
+    data.append("values.path", 'test');
+    data.append("values.name", 'Test file');
+    data.append("values.tags", 'asd');
+    data.append("returning", ['path', 'name', 'id', 'file'].join(','));
+
+    console.log(data)
+
+    const res = await fetch(`${table}/insert`, {
+        method: 'POST',
+        body: data,
+        headers: {'Authorization': 'Bearer ' + token.token},
+    })
+    return {token, table, res}
+}
+
+test('insert file', async () => {
+    const {token, table, res} = await insertDummyFile()
+    const json = await res.json() as any
+    expect(json.length).toEqual(1)
+    const rid = json[0].id
+    expect(rid.length).toEqual('NPH_VLntSPKZnsM-tlUXRw'.length)
+    delete json[0].id
+    const f = json[0].file
+    expect(f).toMatch(/test_[a-z0-9]{10}\.txt/)
+    delete json[0].file
+    expect(json).toEqual([{
+        "path":"test","name":"Test file",
+    }])
+    const headers = res.headers
+    expect(headers.get('x-uploaded-files')).toEqual(`{${JSON.stringify(`${table}/`+f)}:"test.txt"}`)
+    expect(headers.get('x-deleted-files')).toBeNull()
+
+    // download file
+    const res2 = await fetch2(`api/v1/files/${table}/${rid}/${f}`, {
+        method: 'GET',
+        headers: {'Authorization': 'Bearer ' + token.token},
+    })
+    console.log(res2.status)
+    expect(res2.status).toEqual(200)
+    expect(await res2.text()).toEqual('test content')
+    expect(res2.headers.get('Content-Type')).toEqual('text/plain; charset=utf-8')
+})
+
+test('insert multiple files', async () => {
+    const token = await createUser({username: 'admin'})
+    const table = 'files'
+
+    const data = new FormData();
+
+    const payload = {values: [] as any}
+    for (let i = 0; i < 10; i++) {
+        data.append(`@filePayload`, new File([`test=${i+1}`], 'test.txt', {type: 'text/plain; charset=utf-8'}));
+        payload.values.push({
+            created_by: token.record.id,
+            file: `@filePayload.${i}`,
+            path: `test${i}`,
+            name: `Test file ${i+1}`,
+            tags: 'asd',
+        })
+    }
+    data.append("returning", ['path', 'name', 'id', 'file'].join(','));
+    data.append("@jsonPayload", JSON.stringify(payload));
+
+    // console.log(data)
+
+    const res = await fetch(`${table}/insert`, {
+        method: 'POST',
+        body: data,
+        headers: {'Authorization': 'Bearer ' + token.token},
+    })
+    const json = await res.json() as any
+    expect(json.length).toEqual(10)
+
+    const headers = res.headers
+    const uploadedHeader = JSON.parse(headers.get('x-uploaded-files') ?? '{}')
+    expect(headers.get('x-deleted-files')).toBeNull()
+
+    await Promise.all(json.map(async (js: any, i: number)=>{
+        const rid = js.id
+        expect(rid.length).toEqual('NPH_VLntSPKZnsM-tlUXRw'.length)
+        delete js.id
+        const f = js.file
+        expect(f).toMatch(/test_[a-z0-9]{10}\.txt/)
+        delete js.file
+        expect(js).toEqual({
+            "path":`test${i}`,"name":`Test file ${i+1}`,
+        })
+
+        expect(uploadedHeader[`${table}/`+f]).toEqual("test.txt")
+
+        // download file
+        const res2 = await fetch2(`api/v1/files/${table}/${rid}/${f}`, {
+            method: 'GET',
+            headers: {'Authorization': 'Bearer ' + token.token},
+        })
+        console.log(res2.status)
+        expect(res2.status).toEqual(200)
+        const text = await res2.text()
+        console.log(rid, text)
+        expect(text).toEqual(`test=${i+1}`)
+        expect(res2.headers.get('Content-Type')).toEqual('text/plain; charset=utf-8')
+    }))
+
+})
+
+test('insert and update, remove file', async () => {
+    const {token, table, res} = await insertDummyFile()
+    const json = await res.json() as any
+
+    // update
+    const data = new FormData();
+    data.append("where", `id='${json[0].id}'`);
+    data.append("setValues.file", new File(['updated content'], 'test.txt', {type: 'text/plain; charset=utf-8'}));
+    data.append("returning", ['path', 'name', 'id', 'file'].join(','));
+    console.log(data)
+    const res2 = await fetch(`${table}/update`, {
+        method: 'POST',
+        body: data,
+        headers: {'Authorization': 'Bearer ' + token.token},
+    })
+    expect(res2.status).toEqual(200)
+    const json2 = await res2.json() as any
+    expect(json2.length).toEqual(1)
+    const rid = json2[0].id
+    expect(rid.length).toEqual('NPH_VLntSPKZnsM-tlUXRw'.length)
+    const f = json2[0].file
+    expect(f).toMatch(/test_[a-z0-9]{10}\.txt/)
+    delete json2[0].id
+    delete json2[0].file
+    expect(json2).toEqual([{
+        "path":"test","name":"Test file",
+    }])
+    let headers = res2.headers
+    expect(headers.get('x-uploaded-files')).toEqual(`{${JSON.stringify(`${table}/`+f)}:"test.txt"}`)
+    expect(headers.get('x-deleted-files')).toEqual(`[${JSON.stringify(`${table}/${json[0].file}`)}]`)
+
+    // download file
+    const res3 = await fetch2(`api/v1/files/${table}/${rid}/${f}`, {
+        method: 'GET',
+        headers: {'Authorization': 'Bearer ' + token.token},
+    })
+    expect(res3.status).toEqual(200)
+    expect(await res3.text()).toEqual('updated content')
+    expect(res3.headers.get('Content-Type')).toEqual('text/plain; charset=utf-8')
+
+    // delete file by setting file to null/@null (empty string will not work)
+    const data2 = new FormData();
+    // data2.append("values.id", json[0].id);
+    data2.append("where", `id='${json[0].id}'`);
+    data2.append("setValues.file", '@null');
+    data2.append("returning", ['path', 'name', 'id', 'file'].join(','));
+    const res4 = await fetch(`${table}/update`, {
+        method: 'POST',
+        body: data2,
+        headers: {'Authorization': 'Bearer ' + token.token},
+    })
+    expect(res4.status).toEqual(200)
+    const json4 = await res4.json() as any
+    expect(json4.length).toEqual(1)
+    const rid2 = json4[0].id
+    expect(rid2.length).toEqual('NPH_VLntSPKZnsM-tlUXRw'.length)
+    expect(json4[0].file).toBeNull()
+    headers = res4.headers
+    expect(headers.get('x-uploaded-files')).toBeNull()
+    expect(headers.get('x-deleted-files')).toEqual(`[${JSON.stringify(`${table}/${f}`)}]`)
+
+})
+
+test('insert and delete file', async () => {
+    const {token, table, res} = await insertDummyFile()
+    const json = await res.json() as any
+
+    // delete file row
+    const data = new FormData();
+    data.append("where", `id='${json[0].id}'`);
+    data.append("returning", ['path', 'name', 'id', 'file'].join(','));
+    console.log(data)
+    const res2 = await fetch(`${table}/delete`, {
+        method: 'POST',
+        body: data,
+        headers: {'Authorization': 'Bearer ' + token.token},
+    })
+    expect(res2.status).toEqual(200)
+    const json2 = await res2.json() as any
+    expect(json2.length).toEqual(1)
+    const rid = json2[0].id
+    expect(rid.length).toEqual('NPH_VLntSPKZnsM-tlUXRw'.length)
+    const f = json2[0].file
+    expect(f).toMatch(/test_[a-z0-9]{10}\.txt/)
+    expect(f).toEqual(json[0].file)
+    delete json2[0].id
+    delete json2[0].file
+    expect(json2).toEqual([{
+        "path":"test","name":"Test file",
+    }])
+    let headers = res2.headers
+    expect(headers.get('x-uploaded-files')).toBeNull()
+    expect(headers.get('x-deleted-files')).toEqual(`[${JSON.stringify(`${table}/${f}`)}]`)
+
+    // download file
+    const res3 = await fetch2(`api/v1/files/${table}/${rid}/${f}`, {
+        method: 'GET',
+        headers: {'Authorization': 'Bearer ' + token.token},
+    })
+    expect(res3.status).toEqual(404)
+    expect(await res3.json()).toEqual({"code":404,"message":"File not found","data":{},"queries":[`STORAGE: getFileObject: ${table}/${f}`]})
+
+})
+
+test('insert file fail', async () => {
+    const token = await createUser({username: 'a'})
+
+    const data = new FormData();
+    data.append("values.created_by", token.record.id);
+    data.append("values.file",new File(['test content'], 'test.txt', {type: 'text/plain'}));
+    data.append("values.path", 'test');
+    data.append("values.name", 'Test file');
+    data.append("values.tags", 'asd');
+    data.append("returning", ['path', 'name', 'id', 'file'].join(','));
+
+    console.log(data)
+
+    const res = await fetch(`files/insert`, {
+        method: 'POST',
+        body: data,
+        headers: {'Authorization': 'Bearer ' + token.token},
+    })
+    const json = await res.json() as any
+    expect(json).toEqual([])
+    const headers = res.headers
+    expect(headers.get('x-uploaded-files')).toBeNull()
+    expect(headers.get('x-deleted-files')).toBeNull()
 })
 
 

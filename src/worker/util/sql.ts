@@ -17,7 +17,8 @@ export interface SQLRunContext<TR = any, TRet = TR[]|any, QT extends QueryType =
 
     then?: (r: TR[]) => TRet | Promise<TRet>
 }
-export interface SQLRunTransactionContext<TR = any, TRet = TR[][]|any, QT extends QueryType = QueryType> extends Omit<SQLRunContext<TR, TRet, QT>, 'query' | 'crudQuery' | 'onSuccess' | 'then'>{
+export interface SQLRunTransactionContext<TR = any, TRet = TR[][]|any, QT extends QueryType = QueryType> extends Omit<SQLRunContext<TR, TRet, QT>, 'query' | 'crudQuery' | 'onSuccess' | 'then' | 'type'>{
+    type: QT[]
     crudQuery: QueryTypes[QT][]
     query: SQLQuery[]
     /**

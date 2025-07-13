@@ -20,7 +20,7 @@ export type UpdateQuery = {
 export const UPDATE_NEW_COL_ID = columnify('new')
 
 // https://www.sqlite.org/lang_update.html
-export function buildUpdateQuery(query: UpdateQuery, simplify = true, allowAllWhere = true): SQLQuery {
+export function buildUpdateQuery(query: UpdateQuery, simplify = true, allowAllWhere = true/*, oldFields?: {q: string, as: string}[]*/): SQLQuery {
     const p = { ...query.params }
     let q = `UPDATE ${query.table} `
 
@@ -54,12 +54,22 @@ export function buildUpdateQuery(query: UpdateQuery, simplify = true, allowAllWh
 
     }
 
+    const returning = query.returning || []
+
+    // if(oldFields?.length) {
+    //     const rnd = Math.random().toString(36).substring(2, 7)
+    //     const key = '_ov_' + rnd
+    //     const cte = `WITH ${key} AS (SELECT rowid, ${joinReturning(oldFields.map((f, i)=>({q:f.q, as: columnify(`c_${rnd}_${i}`)})), p)} FROM ${query.table} WHERE ${where}) `
+    //     q = cte + q
+    //     q += ' WHERE rowid IN (SELECT rowid FROM ' + key + ')'
+    //     returning.push(...oldFields.map((f, i) => ({ q: key + '.' + columnify(`c_${rnd}_${i}`), as: f.as})))
+    // }else
     if (where) {
         q += ' WHERE ' + where
     }
 
-    if (query.returning?.length) {
-        q += ' RETURNING ' + joinReturning(query.returning, p)
+    if (returning.length) {
+        q += ' RETURNING ' + joinReturning(returning, p)
     }
 
     q += ';\n'
@@ -91,3 +101,8 @@ export function buildUpdateQuery(query: UpdateQuery, simplify = true, allowAllWh
 // replace [new].[column1] with value1 using string replace
 
 // another option is to make a temp trigger or another statement that checks first
+
+//WITH _ov_1bskx AS (
+// SELECT rowid, [files].[file] AS [c_1bskx_0] FROM [files] WHERE
+// )
+// UPDATE [files] SET [file] = {:ffchyf}, [updated] = (CURRENT_TIMESTAMP) WHERE rowid IN (SELECT rowid FROM _ov_1bskx) RETURNING [files].[path], [files].[name], [files].[id], [files].[file], [files].[file] AS _1f_277mc8vcd21, _ov_1bskx.[c_1bskx_0] AS _0f_oy7hbxmj7ca;

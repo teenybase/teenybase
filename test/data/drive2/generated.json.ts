@@ -10,7 +10,7 @@ export const migrations = [
   },
   {
     "name": "0001_create_table_files.sql",
-    "sql": "CREATE TABLE files (\n\tid TEXT PRIMARY KEY NOT NULL, \n\tcreated TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP, \n\tupdated TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP, \n\tcreated_by TEXT REFERENCES users(id) ON DELETE CASCADE, \n\tpath TEXT NOT NULL, \n\tname TEXT NOT NULL, \n\tthumb TEXT DEFAULT NULL, \n\tfile TEXT NOT NULL, \n\tnotes TEXT NOT NULL DEFAULT \"\", \n\tconfig JSON DEFAULT \"{}\" CHECK(json_valid(config)), \n\tmeta JSON DEFAULT \"{}\" CHECK(json_valid(meta)), \n\ttags TEXT, \n\tdeleted_by TEXT REFERENCES users(id) ON DELETE SET NULL, \n\tdeleted_at TIMESTAMP\n);\nCREATE INDEX idx_files_name ON files (name);\nCREATE INDEX idx_files_path ON files (path);\nCREATE INDEX idx_files_tags ON files (tags);\nCREATE INDEX idx_files_created_by ON files (created_by);\nCREATE INDEX idx_files_deleted_by ON files (deleted_by);\nCREATE TRIGGER tgr_files_raise_on_created_update BEFORE UPDATE OF created ON files BEGIN SELECT RAISE(FAIL, 'Cannot update created column') WHERE OLD.created != NEW.created; END;\nCREATE TRIGGER tgr_files_update_updated_on_update AFTER UPDATE ON files BEGIN UPDATE users SET updated = CURRENT_TIMESTAMP WHERE id = NEW.id AND OLD.updated = NEW.updated; END;\nCREATE TRIGGER tgr_files_set_deleted_at_on_delete_by BEFORE UPDATE OF deleted_by ON files BEGIN UPDATE files SET deleted_at = CURRENT_TIMESTAMP WHERE id = NEW.id AND OLD.deleted_by IS NULL AND NEW.deleted_by IS NOT NULL; END;",
+    "sql": "CREATE TABLE files (\n\tid TEXT PRIMARY KEY NOT NULL, \n\tcreated TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP, \n\tupdated TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP, \n\tcreated_by TEXT REFERENCES users(id) ON DELETE CASCADE, \n\tpath TEXT NOT NULL, \n\tname TEXT NOT NULL, \n\tthumb TEXT DEFAULT NULL, \n\tfile TEXT, \n\tnotes TEXT NOT NULL DEFAULT \"\", \n\tconfig JSON DEFAULT \"{}\" CHECK(json_valid(config)), \n\tmeta JSON DEFAULT \"{}\" CHECK(json_valid(meta)), \n\ttags TEXT, \n\tdeleted_by TEXT REFERENCES users(id) ON DELETE SET NULL, \n\tdeleted_at TIMESTAMP\n);\nCREATE INDEX idx_files_name ON files (name);\nCREATE INDEX idx_files_path ON files (path);\nCREATE INDEX idx_files_tags ON files (tags);\nCREATE INDEX idx_files_created_by ON files (created_by);\nCREATE INDEX idx_files_deleted_by ON files (deleted_by);\nCREATE TRIGGER tgr_files_raise_on_created_update BEFORE UPDATE OF created ON files BEGIN SELECT RAISE(FAIL, 'Cannot update created column') WHERE OLD.created != NEW.created; END;\nCREATE TRIGGER tgr_files_update_updated_on_update AFTER UPDATE ON files BEGIN UPDATE users SET updated = CURRENT_TIMESTAMP WHERE id = NEW.id AND OLD.updated = NEW.updated; END;\nCREATE TRIGGER tgr_files_set_deleted_at_on_delete_by BEFORE UPDATE OF deleted_by ON files BEGIN UPDATE files SET deleted_at = CURRENT_TIMESTAMP WHERE id = NEW.id AND OLD.deleted_by IS NULL AND NEW.deleted_by IS NOT NULL; END;",
     "sqlRevert": "DROP TABLE IF EXISTS files;",
     "logs": [
       "✔ Table Created - files"
@@ -268,7 +268,7 @@ export const config = {
           "name": "file",
           "sqlType": "text",
           "type": "file",
-          "notNull": true
+          "notNull": false
         },
         {
           "name": "notes",
@@ -375,9 +375,9 @@ export const config = {
           "name": "rules",
           "listRule": "auth.uid != null & (path ~ (auth.meta.base||'%') | auth.role ~ '%admin') & auth.role != 'guest'",
           "viewRule": "auth.uid != null & (path ~ (auth.meta.base||'%') | auth.role ~ '%admin')",
-          "createRule": "auth.uid != null & auth.role != 'guest' & (path ~ (auth.meta.base||'%') | auth.role ~ '%admin') & created_by == auth.uid",
-          "updateRule": null,
-          "deleteRule": null
+          "createRule": "auth.uid != null & (path ~ (auth.meta.base||'%') | auth.role ~ '%admin' | auth.jwt.user ~ '%admin') & created_by == auth.uid",
+          "updateRule": "auth.uid != null & (path ~ (auth.meta.base||'%') | auth.role ~ '%admin' | auth.jwt.user ~ '%admin') & created_by == auth.uid",
+          "deleteRule": "auth.uid != null & (path ~ (auth.meta.base||'%') | auth.role ~ '%admin' | auth.jwt.user ~ '%admin') & created_by == auth.uid"
         }
       ]
     },

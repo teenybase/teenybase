@@ -305,6 +305,18 @@ export class $Database<T extends $Env = $Env> extends EventTarget<$DatabaseEvent
         else res = undefined
 
         // this.routePath = lastPath
+
+        // todo check if response headers are immutable?
+        if(res && res.headers){
+            const fsStats = Object.entries(this._fsStats)
+            const uploaded = fsStats.filter(f=>f[1] !== null).map(f=>[f[0], f[1]])
+            const deleted = fsStats.filter(f=>f[1] === null).map(f=>f[0])
+            // todo magic strings
+            // todo only send headers if set in config/wrangler? (currently only used in tests)
+            if(uploaded.length) res.headers.set('x-uploaded-files', JSON.stringify(Object.fromEntries(uploaded)))
+            if(deleted.length) res.headers.set('x-deleted-files', JSON.stringify(deleted))
+        }
+
         return res
     }
 
@@ -341,12 +353,18 @@ export class $Database<T extends $Env = $Env> extends EventTarget<$DatabaseEvent
 
     rawDelete<T1 = any, TRet = T1[]>(
         table: $Table, query: OptionalOmit<DeleteQuery, 'table'>,
-        filesToDelete?: string[],
+        fileFields?: string[],
         then?: (r:T1[])=>TRet
     ){
         if(this.readOnlyMode) throw new ProcessError('DELETE not allowed in read only mode')
 
         if((query as DeleteQuery).table && (query as DeleteQuery).table !== table.jc.tableName && columnify((query as DeleteQuery).table) !== table.jc.tableName) throw new ProcessError('Invalid table')
+
+        const ret = this._fileFieldsToReturning(table, fileFields, true)
+        if(ret.length) {
+            if (!query.returning) query.returning = []
+            query.returning.push(...ret)
+        }
 
         const deleteQuery = {...query, table: table.jc.tableName}
         const sql = buildDeleteQuery(deleteQuery, table.jc.autoSimplifyExpr)
@@ -366,9 +384,10 @@ export class $Database<T extends $Env = $Env> extends EventTarget<$DatabaseEvent
             },
             onSuccess: async (r) => {
                 // todo make onDelete
-                if(filesToDelete && table.autoDeleteR2Files){
-                    await this._deleteFiles(filesToDelete, table).catch(()=>{})
-                }
+                // if(filesToDelete && table.autoDeleteR2Files){
+                //     await this._deleteFiles(filesToDelete, table).catch(()=>{})
+                // }
+                await this._cleanupFilesToUpload(r.results, undefined, table)
             },
             then,
         })
@@ -377,11 +396,19 @@ export class $Database<T extends $Env = $Env> extends EventTarget<$DatabaseEvent
     rawInsert<T1 = any, TRet=T1[]>(
         table: $Table, query: OptionalOmit<InsertQuery, 'table'>,
         filesToUpload?: Record<string, File>, filesToRef?: string[],
+        fileFields?: string[], // fields that are files, so we can check if they are uploaded
         then?: (r:T1[])=>TRet
     ){
         if(this.readOnlyMode) throw new ProcessError('INSERT not allowed in read only mode')
 
         if((query as InsertQuery).table && (query as InsertQuery).table !== table.jc.tableName && columnify((query as InsertQuery).table) !== table.jc.tableName) throw new ProcessError('Invalid table')
+
+        // get updated file fields back as returning
+        const ret = this._fileFieldsToReturning(table, fileFields, false)
+        if(ret.length) {
+            if (!query.returning) query.returning = []
+            query.returning.push(...ret)
+        }
 
         const sqlQs: [InsertQuery, SQLQuery][] = []
         if(Array.isArray(query.values)){
@@ -414,9 +441,13 @@ export class $Database<T extends $Env = $Env> extends EventTarget<$DatabaseEvent
         const onError = async (e: any) => {
             // todo - make onInsertFail
             // if error, delete uploaded files
-            // TODO: its possible that some rows are not inserted because of where/rule in sql. those files need to be deleted. same in update and delete. we need to add a force returning clause with id? or can we use some other metadata
             if(filesToUpload) await this._deleteFiles(Object.keys(filesToUpload), table)
             return e
+        }
+        const onSuccess = async (r: T1[]) => {
+            // todo - make onInsert
+            // clean up result to find inserted files and remove them from response
+            if(filesToUpload) await this._cleanupFilesToUpload(r, filesToUpload, table)
         }
 
         if(sqlQs.length === 1) {
@@ -427,18 +458,20 @@ export class $Database<T extends $Env = $Env> extends EventTarget<$DatabaseEvent
                 errorMessage: 'Failed to run insert query',
                 onRun,
                 onError,
+                onSuccess: async (r) => onSuccess(r.results),
                 then,
             })
         }else {
             return this.transaction<T1, TRet, 'insert'>({
-                table, type: 'insert',
+                table, type: sqlQs.map(_=>'insert'),
                 crudQuery: sqlQs.map(q=>q[0]),
                 query: sqlQs.map(q=>q[1]),
                 errorMessage: 'Failed to run insert query',
                 onRun,
                 onError,
+                onSuccess: async (r) => onSuccess(r.flat()),
                 // @ts-ignore
-                then: async (r)=> then ? then(r.flat()) : r.flat()
+                then: async (r)=> then ? then(r.flat()) : r.flat(),
             })
         }
 
@@ -447,14 +480,31 @@ export class $Database<T extends $Env = $Env> extends EventTarget<$DatabaseEvent
     rawUpdate<T1 = any, TRet = T1[]>(
         table: $Table, query: OptionalOmit<UpdateQuery, 'table'>,
         filesToUpload?: Record<string, File>, filesToRef?: string[], filesToDelete?: string[],
+        fileFields?: string[], // fields that are files, so we can check if they are uploaded
         then?: (r:T1[])=>TRet
     ){
         if(this.readOnlyMode) throw new ProcessError('UPDATE not allowed in read only mode')
 
         if((query as UpdateQuery).table && (query as UpdateQuery).table !== table.jc.tableName && columnify((query as UpdateQuery).table) !== table.jc.tableName) throw new ProcessError('Invalid table')
 
+        // get updated file fields back as returning
+        const ret = this._fileFieldsToReturning(table, fileFields, false)
+        if(ret.length) {
+            if (!query.returning) query.returning = []
+            query.returning.push(...ret)
+        }
+        const oldReturning = this._fileFieldsToReturning(table, fileFields, true)
+
+        const selectQuery = {
+            where: query.where,
+            from: table.jc.tableName,
+            selects: oldReturning,
+            params: query.params
+        }
+        const sqlSelect = oldReturning.length ? buildSelectQuery(selectQuery, table.jc.autoSimplifyExpr) : null
+
         const updateQuery = {...query, table: table.jc.tableName}
-        const sql = buildUpdateQuery(updateQuery, table.jc.autoSimplifyExpr)
+        const sql = buildUpdateQuery(updateQuery, table.jc.autoSimplifyExpr, true/*, oldReturning*/)
 
         const onRun = async ()=>{
             // todo - make beforeUpdate
@@ -469,23 +519,39 @@ export class $Database<T extends $Env = $Env> extends EventTarget<$DatabaseEvent
             if(filesToUpload) await this._deleteFiles(Object.keys(filesToUpload), table)
             return e
         }
-        const onSuccess = async ()=>{
+        const onSuccess = async (r: T1[], old?: any[])=>{
             // todo - make onUpdate
             // ignore error on fail
-            if(filesToDelete && table.autoDeleteR2Files){
-                await this._deleteFiles(filesToDelete, table).catch(()=>{})
-            }
+            // if(filesToDelete && table.autoDeleteR2Files){
+            //     await this._deleteFiles(filesToDelete, table).catch(()=>{})
+            // }
+           await this._cleanupFilesToUpload(r, filesToUpload, table, old)
         }
 
-        return this.prepare<T1, TRet, 'update'>({
+        return !sqlSelect ? this.prepare<T1, TRet, 'update'>({
             table, type: 'update',
             crudQuery: updateQuery,
             query: sql,
             errorMessage: 'Failed to run update query',
             onRun,
             onError,
-            onSuccess,
+            onSuccess: (r) => onSuccess(r.results),
             then,
+        }) : this.transaction<T1, TRet, 'update'|'select'>({
+            table, type: ['update', 'select'],
+            crudQuery: [selectQuery, updateQuery],
+            query: [sqlSelect, sql],
+            errorMessage: 'Failed to run update query',
+            onRun,
+            onError,
+            onSuccess: async (r) => {
+                // console.log('update success', r)
+                return onSuccess(r[1], r[0])
+            },
+            then: async (r)=> {
+                const res = r[1]
+                return then ? then(res) : res as TRet
+            },
         })
     }
 
@@ -528,7 +594,7 @@ export class $Database<T extends $Env = $Env> extends EventTarget<$DatabaseEvent
         const countQuery = buildSelectQuery(countSelectQuery, table.jc.autoSimplifyExpr)
 
         return this.transaction<T, {items: T[], total: number}, 'select'>({
-            table, type: 'select',
+            table, type: ['select', 'select'],
             crudQuery: [selectQuery, countSelectQuery],
             query: [sql, countQuery],
             errorMessage: 'Failed to run select query',
@@ -638,12 +704,15 @@ export class $Database<T extends $Env = $Env> extends EventTarget<$DatabaseEvent
 
     // endregion sql
 
-    // region r2/s3
+    // region r2/s3 helpers, todo make private?
+
+    private _fsStats: Record<string, string|null> = {} // key is the uploaded file name, value is the source file name if uploaded or null if deleted
 
     async headFileObject(key: string){
         if(this.dryRunMode || this.c.env.RESPOND_WITH_QUERY_LOG)
             this.queryLog.push('STORAGE: headFileObject: ' + key)
         if(this.dryRunMode) throw new Error('headFile not supported in dry run mode')
+        // this._fsStats.push(['head', key])
         return this.bucket.head(key)
     }
 
@@ -658,7 +727,7 @@ export class $Database<T extends $Env = $Env> extends EventTarget<$DatabaseEvent
         return this.bucket.get(key, options)
     }
 
-    async putFileObject(
+    private async putFileObject(
         key: string,
         value: ReadableStream | ArrayBuffer | ArrayBufferView | string | null | Blob,
         options?: R2PutOptions & {
@@ -669,15 +738,32 @@ export class $Database<T extends $Env = $Env> extends EventTarget<$DatabaseEvent
             this.queryLog.push('STORAGE: putFileObject: ' + key) // todo add data about file?
         if(this.dryRunMode) return {dummy: true}
         if(this.readOnlyMode) throw new Error('putFile not allowed in read only mode')
-        return this.bucket.put(key, value, options)
+        return this.bucket.put(key, value, options).then(r=>{
+            const id = typeof value === 'string' ? value.substring(0, 10) :
+                (value as File).name ? (value as File).name :
+                    value instanceof ReadableStream ? 'stream' :
+                        value instanceof ArrayBuffer ? 'arraybuffer' :
+                            'data'
+            this._fsStats[key] = id
+            return r
+        })
     }
 
-    async deleteFileObject(keys: string | string[]){
+    private async deleteFileObject(keys: string | string[]){
         if(this.dryRunMode || this.c.env.RESPOND_WITH_QUERY_LOG)
             this.queryLog.push('STORAGE: deleteFileObject: ' + keys)
         if(this.dryRunMode) return
         if(this.readOnlyMode) throw new Error('deleteFile not allowed in read only mode')
-        return this.bucket.delete(keys)
+        return this.bucket.delete(keys).then(r=>{
+            const keys1 = Array.isArray(keys) ? keys : [keys]
+            for (const key of keys1) {
+                if(typeof this._fsStats[key] === 'string')
+                    delete this._fsStats[key] // file was uploaded then deleted, so remove from stats
+                else
+                    this._fsStats[key] = null
+            }
+            return r
+        })
     }
 
     // endregion r2/s3
@@ -687,6 +773,7 @@ export class $Database<T extends $Env = $Env> extends EventTarget<$DatabaseEvent
 
     private prepare<T, TRet = T[], TC extends QueryType = QueryType>(c: SQLRunContext<T, TRet, TC>) {
         const q = c.query
+        // console.log(logSQLQuery(q))
         if (this.dryRunMode || this.c.env.RESPOND_WITH_QUERY_LOG) {
             this.queryLog.push(logSQLQuery(q))
         }
@@ -697,6 +784,7 @@ export class $Database<T extends $Env = $Env> extends EventTarget<$DatabaseEvent
     }
     private transaction<T, TRet = T[][], TC extends QueryType = QueryType>(c: SQLRunTransactionContext<T, TRet, TC>) {
         const q = c.query
+        // console.log(q.map(q1 => logSQLQuery(q1)).join(';\n'))
         if (this.dryRunMode || this.c.env.RESPOND_WITH_QUERY_LOG) {
             this.queryLog.push(q.map(q1 => logSQLQuery(q1)).join(';\n'))
         }
@@ -752,6 +840,7 @@ export class $Database<T extends $Env = $Env> extends EventTarget<$DatabaseEvent
                 ...c,
                 query: c.query[i],
                 crudQuery: c.crudQuery[i],
+                type: c.type[i],
                 onError: undefined,
                 onSuccess: undefined,
                 onRun: undefined,
@@ -855,7 +944,7 @@ export class $Database<T extends $Env = $Env> extends EventTarget<$DatabaseEvent
             for (const onRun of onRuns) { // todo promise.all in batch?
                 await onRun()
             }
-            res = await this.database.batch<T>(statements)
+            res = statements.length ? await this.database.batch<T>(statements) : []
         }catch (e) {
             for (const onError of onErrors) {
                 try {
@@ -967,7 +1056,8 @@ export class $Database<T extends $Env = $Env> extends EventTarget<$DatabaseEvent
         console.log('Uploading files', keys, files)
         const promises = keys.map(async (key)=>{
             const file = files[key]
-            const res = await this.putFileObject(table.fileKey(key), file, {
+            const fileKey = table.fileKey(key)
+            const res = await this.putFileObject(fileKey, file, {
                 httpMetadata: {
                     contentType: file.type || 'application/octet-stream',
                     cacheControl: 'public, max-age=31536000', // 1 year
@@ -982,13 +1072,14 @@ export class $Database<T extends $Env = $Env> extends EventTarget<$DatabaseEvent
         const res = await Promise.allSettled(promises)
         const hasError = res.some(r=>r.status === 'rejected')
         const successful: R2Object[] = res.filter(r=>r.status === 'fulfilled').map((r: any)=>r.value)
+        // any error, delete all files to stop/rollback the complete action
         if(hasError) {
             const errors = res.filter(r=>r.status === 'rejected').map((r: any)=>r.reason)
             console.error(errors)
             console.log('Deleting uploaded files', successful)
             await this.deleteFileObject(successful.map(r=>r.key)).catch(e=>{
                 console.error('Unable to delete some files after upload error', e)
-                // todo mark for delete somehow in logs
+                // todo mark for delete somehow in logs?
             })
             throw new ProcessError('Failed to upload files' )
         }
@@ -1003,6 +1094,64 @@ export class $Database<T extends $Env = $Env> extends EventTarget<$DatabaseEvent
             // todo mark for delete somehow in logs, since this error below will be ignored
             throw new Error('Failed to delete files')
         })
+    }
+
+    // todo remove old?
+    private _fileFieldsToReturning(table: $Table, fileFields: string[] | undefined, old = false) {
+        let r: {q: string, as: string}[] = []
+        if (fileFields) for (const key of fileFields) {
+            const id = (old ? '_0f_' : '_1f_') + Math.random().toString(36).substring(2, 15) // todo magic string, used also in $Database
+            r.push({q: ident(key, table.jc), as: id})
+        }
+        return r
+    }
+
+    private async _cleanupFilesToUpload<T1>(r: T1[], filesToUpload: Record<string, File>|undefined, table: $Table, oldSelect?: any[]) {
+        // delete files that are not referenced/inserted
+        // get inserted files by all returning keys starting with _0file_
+        const filesSuccess = [] as string[]
+        const filesOld = [] as string[]
+        for (const row of r as any[]) {
+            const keys = Object.keys(row)
+            for (const key of keys) {
+                if (key.startsWith('_1f_')) {
+                    // file was uploaded and inserted
+                    const v = row[key]
+                    if(v) filesSuccess.push(v)
+                    delete row[key] // remove from row
+                }
+            }
+            for (const key of keys) {
+                if (key.startsWith('_0f_')) {
+                    // previous value of the file
+                    const v = row[key]
+                    if(v && !filesSuccess.includes(v)) filesOld.push(v)
+                    delete row[key] // remove from row
+                }
+            }
+        }
+        for (const row of oldSelect || []) {
+            const keys = Object.keys(row)
+            for (const key of keys) {
+                if (key.startsWith('_0f_')) {
+                    // previous value of the file
+                    const v = row[key]
+                    if(v && !filesSuccess.includes(v)) filesOld.push(v)
+                    delete row[key] // remove from row
+                }
+            }
+        }
+        const failedFiles = !filesToUpload ? [] : Object.keys(filesToUpload).filter(f => !filesSuccess.includes(f))
+        const filesToDelete = [...failedFiles]
+        if(table.autoDeleteR2Files) filesToDelete.push(...filesOld)
+        if(failedFiles.length) console.error(`Failed to insert files: ${failedFiles.join(', ')}`)
+        if (filesToDelete.length) {
+            // delete files that were not inserted
+            await this._deleteFiles(filesToDelete, table).catch(() => {
+                if(failedFiles.length) console.error(`Failed to delete files that were not inserted: ${failedFiles.join(', ')}`)
+                if(filesOld.length) console.error(`Failed to delete files old files in db: ${filesOld.join(', ')}`)
+            })
+        }
     }
 
     // endregion private r2/s3
