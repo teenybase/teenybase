@@ -89,7 +89,7 @@ export class $Database<T extends $Env = $Env> extends EventTarget<$DatabaseEvent
         this.storage = storage
         this.kv = new InternalKV(this, this.settings._kvTableName)
         this.extensions.push(new MigrationHelper(this, undefined, this.kv))
-        this.secretResolver = new SecretResolver(()=>c.env, 'TEENY_SECRET_ENCRYPTION_KEY')
+        this.secretResolver = new SecretResolver(()=>c.env, SecretResolver.DEFAULT_KEY_ENV)
 
         // this can be set in the admin frontend to make sure we are working with the correct deployment of the worker
         const sv = c.req.header('DDB_SETTINGS_VERSION') // todo set in frontend
@@ -121,7 +121,10 @@ export class $Database<T extends $Env = $Env> extends EventTarget<$DatabaseEvent
         const jwtSecret = this.secretResolver.resolver(this.settings.jwtSecret, true, 'JWT_SECRET for the database')
         // if (!jwtSecret()?.length) throw new HTTPException(500, {message: 'Invalid configuration - jwt secret is required'})
         this.adminJwtSecret = this.c.env.ADMIN_JWT_SECRET ? this.secretResolver.resolver('$ADMIN_JWT_SECRET', false) : async ()=>''
-        this.jwt = new JWTTokenHelper(jwtSecret, this.settings.jwtIssuer, this.settings.jwtAlgorithm)
+        this.jwt = new JWTTokenHelper(jwtSecret, this.settings.jwtIssuer, this.settings.jwtAlgorithm, [
+            // todo
+            'https://accounts.google.com',
+        ])
     }
 
     // setup db etc

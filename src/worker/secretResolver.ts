@@ -20,4 +20,6 @@ export class SecretResolver {
         }
         return result
     }
+
+    static DEFAULT_KEY_ENV = 'TEENY_SECRET_ENCRYPTION_KEY'
 }

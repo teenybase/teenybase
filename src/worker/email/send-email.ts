@@ -105,8 +105,8 @@ export class EmailSendClient<T extends $Env = $Env> extends $DBExtension<T> {
         if (!props.html) throw new Error('html is required')
         if (!props.subject) throw new Error('html is required')
         if (props.variables) {
-            props.html = replaceTemplateVariables(props.html, props.variables, 2)
-            props.subject = replaceTemplateVariables(props.subject, props.variables, 1)
+            props.html = replaceTemplateVariables(props.html, props.variables, 3)
+            props.subject = replaceTemplateVariables(props.subject, props.variables, 2)
             delete props.variables
         }
         if (!props.to) throw new Error('to is required')

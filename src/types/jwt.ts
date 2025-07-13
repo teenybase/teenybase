@@ -14,6 +14,7 @@ export type JWTPayload2 = JWTPayload & {
     iat: number
     exp: number
     admin?: boolean
+    azp?: string // authorized party (like google client id)
 }
 
 export type JWTPayloadOp = Required<Pick<JWTPayload2, 'verified'|'sub'|'iss'>> & Partial<JWTPayload2>
