@@ -90,7 +90,7 @@ class CliContext{
         return persistPath
     }
 
-    buildLocal(outDir?: string, log = true, doThrow = true, clean = false): boolean{
+    buildLocal(outDir?: string, log = true, doThrow = true, clean = false, flags: string = ''): boolean{
         const _outDir = outDir ?
             // explicit path is always resolved from cwd
             path.resolve(outDir) :
@@ -98,7 +98,7 @@ class CliContext{
         const lastWLogEnv = process.env.WRANGLER_LOG
         process.env.WRANGLER_LOG = log ? 'info' : 'error'
         try {
-            const command = `npx wrangler deploy --dry-run --outdir=${JSON.stringify(_outDir)}`
+            const command = `npx wrangler deploy --dry-run ${flags} --outdir=${JSON.stringify(_outDir)}`
             execSync(command, {cwd: this.root, stdio: ['inherit', 'pipe', 'pipe']})
             return true
         }catch (e: any) {
@@ -415,20 +415,6 @@ async function generateMigrationsDir(c: CliContext, clean = false, write = true)
         ...nextConfig_
     } : undefined
 
-    // when there are no changes, nextConfig is null
-    if(!nextConfig){
-        c.logger.info('No changes detected in database config')
-        if(clean){
-            if(!write) throw new Error('Cannot run with clean with no write')
-            // delete any next-config.json file from previous runs
-            if (_nextConfig){
-                fs.unlinkSync(path.join(c.migrationsPath, 'next-config.json'))
-            }
-            // there could be a mismatch between the migrations we have on disk and what's supposed to be, but that's fine since it will be checked when we actually need to apply anything
-        }
-        return
-    }
-
     if (clean) {
         if(!write) throw new Error('Cannot run with clean with no write')
         // delete all sql files
@@ -463,6 +449,20 @@ async function generateMigrationsDir(c: CliContext, clean = false, write = true)
         // currentConfig = undefined
     }else {
         //
+    }
+
+    // when there are no changes, nextConfig is null
+    if(!nextConfig){
+        c.logger.info('No changes detected in database config')
+        // if(clean){
+        //     if(!write) throw new Error('Cannot run with clean with no write')
+        //     // delete any next-config.json file from previous runs
+        //     if (_nextConfig){
+        //         fs.unlinkSync(path.join(c.migrationsPath, 'next-config.json'))
+        //     }
+        //     // there could be a mismatch between the migrations we have on disk and what's supposed to be, but that's fine since it will be checked when we actually need to apply anything
+        // }
+        return
     }
 
     if(write) {
@@ -1136,7 +1136,7 @@ cli
                     // no new changes
                 }
                 const outDir = options.outDir || path.join(c.root, 'dist')
-                const res = c.buildLocal(outDir, true, true, false)
+                const res = c.buildLocal(outDir, true, true, false, '--minify')
                 if(res) c.logger.info(`Finished Build. Written to "${readableRelative(outDir)}"`)
                 await c.stopLocal()
                 // c.logger.info(res)
