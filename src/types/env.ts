@@ -2,6 +2,7 @@ import {JWTPayload2} from './jwt'
 
 export interface AuthContext{
     uid: string | null,
+    sid: string | null, // session id
     cid?: string | null, // table/collection id
     email: string | null,
     jwt: Partial<JWTPayload2>

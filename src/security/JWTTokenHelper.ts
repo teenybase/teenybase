@@ -30,19 +30,24 @@ export class JWTTokenHelper{
         if (!this.allowedIssuers.includes(payload.iss)) throw new HTTPException(401, {message: 'Invalid app, ' + payload.iss})
         if(issuers && !issuers.includes(payload.iss)) throw new HTTPException(401, {message: 'Invalid issuer'})
 
-        if(payload.iss.includes('accounts.google.com')){
+        if(payload.iss === 'https://accounts.google.com'){
+            // todo add client id check in the config. also how long is the google token valid?
+            // if(payload.azp !== globalConfig.AUTH_GOOGLE_OAUTH_CLIENT_ID) throw new HTTPException(400, {message: 'Invalid google token, unauthorized app'})
+
             // google - https://www.googleapis.com/oauth2/v3/tokeninfo?access_token=<access token>
             // or the proper way - https://developers.google.com/identity/gsi/web/guides/verify-google-id-token#using-a-google-api-client-library
             // ideally we should issue our own token from google's token and verify that easily.
 
-            // doing first way. todo do it properly when we figure out public cert caching in cf workers, till then this is better
+            // doing first way. todo do it properly in DO or when we figure out public cert caching in cf workers, till then this is better
             const res = await fetch(`https://oauth2.googleapis.com/tokeninfo?id_token=${auth}`)
             const json = await res.json().catch(_=>({})) as any
             // console.log(json)
-            const email = json.email
-            if(!res.ok || json.error || !email || !json.email_verified) throw new HTTPException(401, {message: 'Invalid google token, unable to find email'})
-            if((payload as any).email !== email) throw new HTTPException(401, {message: 'Unknown error, Invalid email from google verification'})
-            return {issData: payload, verified: true, sub: email, iss: 'google'} as JWTPayloadOp
+            // todo use zod for validation
+            if(!res.ok || !json || json.error || !json.email || !json.email_verified) throw new HTTPException(401, {message: 'Invalid google token, unable to find email'})
+            if((payload as any).email !== json.email) throw new HTTPException(401, {message: 'Unknown error, Invalid email from google verification'})
+
+            // todo mark this token as "used" so it cannot be used again to login and create a new session.
+            return {issData: payload, verified: true, sub: json.email, iss: 'google'} as JWTPayloadOp
         }
 
         if (payload.iss !== this.issuer) throw new HTTPException(400, {message: 'Invalid issuer'})
@@ -53,6 +58,7 @@ export class JWTTokenHelper{
         })
         // todo if the token is expired, dont throw error, instead ignore it for resend etc?
         if (!valid) throw new HTTPException(401, {message: 'Unauthorized - invalid token'})
+
         const email = payload.sub
 
         // let otp = undefined

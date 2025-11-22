@@ -156,7 +156,7 @@ export function honoToJsep(req: HonoRequest, auth?: AuthContext): JsepGlobals{
             // auth
             // admin - separate just to be safe
         },
-        auth: auth ?? {uid: null, verified: false, admin: false, jwt: {}, email: null, role: null, meta: {}, superadmin: false}
+        auth: auth ?? {uid: null, sid: null, verified: false, admin: false, jwt: {}, email: null, role: null, meta: {}, superadmin: false}
     }
 }
 

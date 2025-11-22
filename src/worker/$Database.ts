@@ -57,7 +57,7 @@ export class $Database<T extends $Env = $Env> extends EventTarget<$DatabaseEvent
     readonly settings: DatabaseSettings
     auth: AuthContext = {
         jwt: {}, verified: false, admin: false,
-        uid: null, role: null, email: null,
+        uid: null, sid: null, role: null, email: null,
         meta: {}, cid: null, superadmin: false,
     }
     readonly queryLog: string[] = []
@@ -220,6 +220,7 @@ export class $Database<T extends $Env = $Env> extends EventTarget<$DatabaseEvent
         this.auth = {
             uid: payload.id ?? null,
             cid: payload.cid, // table id
+            sid: payload.sid ?? null, // session id
             email: payload.verified ? payload.sub : '',
             jwt: payload,
             role: aud ?? null,
@@ -412,7 +413,10 @@ export class $Database<T extends $Env = $Env> extends EventTarget<$DatabaseEvent
             if (!query.returning) query.returning = []
             query.returning.push(...ret)
         }
-
+        // todo if there is replace clause, we need to find the old file fields that are being replaced and return them
+        if(fileFields?.length && query.or?.trim().toUpperCase().includes('REPLACE')){
+            throw new ProcessError('Cannot use file fields with INSERT OR REPLACE at the moment', 400)
+        }
         const sqlQs: [InsertQuery, SQLQuery][] = []
         if(Array.isArray(query.values)){
             // D1 has SQLITE_MAX_COMPOUND_SELECT of 5

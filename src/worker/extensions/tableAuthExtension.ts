@@ -10,7 +10,7 @@ import {UpdateQuery} from '../../sql/build/update'
 import {DeleteQuery} from '../../sql/build/delete'
 import {appendWhere, SelectQuery} from '../../sql/build/select'
 import {recordToSqlValues} from '../../sql/parse/parse'
-import {JWTPayload} from '../../types/jwt'
+import {JWTPayload, JWTPayload2} from '../../types/jwt'
 import {generateUid, randomString} from '../../security/random'
 import {InsertParams, SQLLiteral, SQLQuery} from '../../types/sql'
 import {passwordProcessors} from '../util/passwordProcessors'
@@ -18,6 +18,7 @@ import {Context} from 'hono'
 import {normalizeEmail} from '../util/normalizeEmail'
 import {sqlValSchema} from '../../types/zod/sqlSchemas'
 import {tableAuthDataSchema} from '../../types/zod/tableExtensionsSchema'
+import {decode} from '@tsndr/cloudflare-worker-jwt'
 
 type UserFields = {
     emailVerified?: boolean
@@ -49,6 +50,7 @@ const defaultSchema = {
 
 /*.jwt()*/ // todo use jwt
 const jwtTokenSchema = z.string().min(10).describe('JWT token')
+const uidTokenSchema = z.string().length(22).describe('Token')
 // .refine((v) => {
 //     z.literal(3).parse(v.split('.').map(a=>z.string().base64().parse(a)).length)
 // })
@@ -83,10 +85,16 @@ export class TableAuthExtension extends TableExtension<TableAuthExtensionData> {
         if(this.mapping.emailVerified && !this.mapping.email) throw new HTTPException(500, {message: 'Invalid Configuration - email field required for emailVerified'})
         if(this.mapping.passwordSalt && !this.mapping.password) throw new HTTPException(500, {message: 'Invalid Configuration - passwordSalt field required for password'})
 
+        // todo make parameter to enable/disable this endpoint when external auth is used
         this.routes.push({
             method: 'post', path: '/auth/login-token',
-            handler: {raw: this.loginWithToken.bind(this)},
+            handler: this.loginWithToken.bind(this),
             zod: this.routeZod['/auth/login-token'],
+        })
+        this.routes.push({
+            method: 'post', path: '/auth/refresh-token',
+            handler: this.refreshToken.bind(this),
+            zod: this.routeZod['/auth/refresh-token'],
         })
 
         if(this.mapping.password) {
@@ -181,10 +189,11 @@ export class TableAuthExtension extends TableExtension<TableAuthExtensionData> {
 
         const ret: {
             token: string,
+            refresh_token: string,
             record: Record<string, z.infer<typeof sqlValSchema>>,
             verified?: boolean,
         } = {
-            token: await this.createLoginToken(user),
+            ...await this.createSession(user),
             record: this._userToFields(user),
         }
         if(this.mapping.emailVerified) {
@@ -210,23 +219,27 @@ export class TableAuthExtension extends TableExtension<TableAuthExtensionData> {
         return this.c.json({success: true})
     }
 
-    confirmRequiresAuth = true  // todo make setting
+    confirmRequiresAuth = false // todo make setting
     async confirmVerification(){
         const data = await this.table.$db.getRequestBody()
         if (!data) throw new HTTPException(400, {message: 'Usage: POST /auth/confirm-verification {data} in JSON/FormData'})
         // console.log(data.token)
-        const token = jwtTokenSchema.parse(data.token)
+        const token = uidTokenSchema.parse(data.token)
         if(!token) throw new HTTPException(400, {message: 'Token required'})
 
         const auth = this.jc.globals.auth
-        if(this.confirmRequiresAuth && !auth) throw new HTTPException(403, {message: 'Unauthorized'})
-        const uid = this.confirmRequiresAuth ? auth!.uid||undefined : undefined
+        if(this.confirmRequiresAuth && (!auth || !auth.uid || !auth.sid)) throw new HTTPException(403, {message: 'Unauthorized'})
+        const uid = this.confirmRequiresAuth ? auth!.uid! : undefined
 
         const user = await this._confirmVerification(token, uid)
-        const ret = {
-            token: await this.createLoginToken(user),
+        const ret: {
+            token?: string,
+            refresh_token?: string,
+            record: Record<string, z.infer<typeof sqlValSchema>>,
+        } = {
+            ...(!auth?.sid && await this.createSession(user)),
             record: this._userToFields(user),
-        } as any
+        }
         return this.c.json(ret)
     }
 
@@ -254,7 +267,7 @@ export class TableAuthExtension extends TableExtension<TableAuthExtensionData> {
         if(!this.mapping.email || !this.mapping.password) throw new HTTPException(500, {message: 'Invalid Configuration'})
         const data = await this.table.$db.getRequestBody()
         if (!data) throw new HTTPException(400, {message: 'Usage: POST /auth/confirm-password-reset {data} in JSON/FormData'})
-        const token = jwtTokenSchema.parse(data.token)
+        const token = uidTokenSchema.parse(data.token)
         if(!token) throw new HTTPException(400, {message: 'Token required'})
         delete data.token
 
@@ -264,9 +277,13 @@ export class TableAuthExtension extends TableExtension<TableAuthExtensionData> {
 
         const user = await this._confirmPasswordReset(token, record)
         const ret = {
-            token: await this.createLoginToken(user),
+            ...await this.createSession(user),
             record: this._userToFields(user),
-        } as any
+        } as {
+            token: string,
+            refresh_token: string,
+            record: Record<string, z.infer<typeof sqlValSchema>>,
+        }
         return this.c.json(ret)
     }
 
@@ -300,8 +317,13 @@ export class TableAuthExtension extends TableExtension<TableAuthExtensionData> {
         // todo
         // if(this.mapping.emailVerified && !user.emailVerified) throw new HTTPException(400, {message: 'Email not verified'})
 
-        const ret: {token: string, record: any, verified?: false} = {
-            token: await this.createLoginToken(user),
+        const ret: {
+            token: string,
+            record: Record<string, z.infer<typeof sqlValSchema>>,
+            refresh_token: string,
+            verified?: false
+        } = {
+            ...await this.createSession(user),
             record: this._userToFields(user),
         }
         if(this.mapping.emailVerified && !user.emailVerified) ret.verified = false
@@ -310,12 +332,13 @@ export class TableAuthExtension extends TableExtension<TableAuthExtensionData> {
     }
 
     /**
-     * validates token from google, github etc or refreshes the token
+     * validates token from google, github etc or self and creates a new session
      */
     async loginWithToken(){
         const tok = this.c.req.header('Authorization')?.replace(/^Bearer /, '')
         if (!tok) throw new HTTPException(400, {message: 'Authorization header required'})
         const payload = await this.table.$db.jwt.decodeAuth(tok, await this.jwtSecret(), false).catch(() => null)
+        // payload will be null when sign not valid or expired etc
         if (!payload) throw new HTTPException(401, {message: 'Unauthorized'})
 
         let res = await this.findUser(payload.sub)
@@ -324,7 +347,11 @@ export class TableAuthExtension extends TableExtension<TableAuthExtensionData> {
             // todo why this false and 0 check? because it can be 'true'?
             if(payload.verified === false || (payload as any).verified === 0) throw new HTTPException(400, {message: 'Not verified'})
             // todo make a setting in this.data to control whether a new user should be created on new token or should it be explicit
-            if(!res) res = await this._createUserToken(payload.sub, true, payload)
+            if(!res) res = await this._createUserToken(payload.sub, true, payload?.issData)
+        }else {
+            // do nothing
+            // todo throw error or refresh session?
+            throw new HTTPException(400, {message: 'Use refresh-token endpoint instead'})
         }
 
         if(!res) throw new HTTPException(401, {message: 'Unauthorized'})
@@ -332,14 +359,48 @@ export class TableAuthExtension extends TableExtension<TableAuthExtensionData> {
         // if(this.mapping.emailVerified && !res.emailVerified) throw new HTTPException(400, {message: 'Email not verified'})
         if(res.email !== payload.sub) throw new HTTPException(400, {message: 'Invalid email'})
 
-        const refreshCount = payload.rc||0
-        const token = refreshCount < this.data.maxTokenRefresh ?
-            await this.createLoginToken(res, refreshCount + 1) : tok
-
-        const ret = {token} as {token: string, verified?: false}
+        const ret: {
+            token: string,
+            refresh_token: string,
+            record: Record<string, z.infer<typeof sqlValSchema>>,
+            verified?: boolean,
+        } = {
+            ...await this.createSession(res),
+            record: this._userToFields(res),
+        }
         if(this.mapping.emailVerified && !res.emailVerified) ret.verified = false
-        // todo return record like loginWithPassword?
-        return this.c.json(ret)
+
+        return ret
+    }
+
+    async refreshToken(data: {refresh_token: string}) {
+        const tok = this.c.req.header('Authorization')?.replace(/^Bearer /, '')
+        if (!tok) throw new HTTPException(400, {message: 'Authorization header required'})
+        const payload = decode(tok).payload as JWTPayload2
+        if(payload.iss !== this.table.$db.jwt.issuer || !payload.sub || !payload.sid) throw new HTTPException(401, {message: 'Invalid token'})
+        const refreshToken = uidTokenSchema.parse(data.refresh_token)
+        const sessionId = z.string().min(10).parse(payload.sid) // todo zod
+
+        let res = await this.findUser(payload.sub)
+        if(!res) throw new HTTPException(401, {message: 'Unauthorized'})
+
+        // if(this.mapping.emailVerified && !res.emailVerified) throw new HTTPException(400, {message: 'Email not verified'})
+        if(res.email !== payload.sub) throw new HTTPException(400, {message: 'Invalid email'})
+
+        const token = await this.refreshSession(res, sessionId, refreshToken)
+
+        const ret: {
+            token: string,
+            refresh_token: string,
+            record: Record<string, z.infer<typeof sqlValSchema>>,
+            verified?: boolean,
+        } = {
+            ...token,
+            record: this._userToFields(res),
+        }
+        if(this.mapping.emailVerified && !res.emailVerified) ret.verified = false
+
+        return ret
     }
 
     async changePassword(){
@@ -381,19 +442,77 @@ export class TableAuthExtension extends TableExtension<TableAuthExtensionData> {
     // refresh token
 
 
-    private async createLoginToken(res: UserFieldsAdmin, rc = 0) {
+    private async _refreshSession(res: UserFieldsAdmin, session: LoginSession) {
         const data = {
             cid: this.table.data.name,
             user: res.username, // todo: should this be added?
             sub: res.email,
             id: res.id,
             meta: res.metadata,
+            sid: session.id, // session id
             // admin: false,
         } as JWTPayload
-        if(rc) data.rc = rc
         if(res.audience && res.audience.length) data.aud = res.audience
         if(res.emailVerified !== undefined) data.verified = res.emailVerified
-        return await this.table.$db.jwt.createJwtToken(data, await this.jwtSecret(), this.data.jwtTokenDuration)
+
+        const refreshToken = generateUid()
+        session.tok = refreshToken
+        session.rc++
+        const sessionKey = this._kvSessionKey(res, session.id)
+        // todo parameter
+        const refreshTokenDuration = /*this.data.refreshTokenDuration || */60 * 60 * 24 * 7 // default to 7 days
+
+        // todo limit number of sessions - check how many sessions in table for the user, if more than allowed, deleted the first one
+        // overwrite existing session
+        await this.table.$db.kv.setMultiple({
+            [sessionKey]: JSON.stringify(session),
+        }, refreshTokenDuration)
+
+        const token = await this.table.$db.jwt.createJwtToken(data, await this.jwtSecret(), this.data.jwtTokenDuration)
+        return {
+            token,
+            refresh_token: refreshToken,
+        }
+    }
+
+    private getTimestamp(){
+        return Math.floor(Date.now() / 1000) // seconds since epoch
+    }
+
+    private async createSession(user: UserFieldsAdmin) {
+        // save session and refresh token in the database
+        const now = this.getTimestamp()
+        const session: LoginSession = {
+            id: generateUid(),
+            tok: '', // refresh token
+            cid: this.table.name,
+            uid: user.id,
+            sub: user.email,
+            rc: 0, // refresh count
+            cat: now, // created at
+            rat: now, // refreshed at
+            // todo ip etc
+        }
+        // todo parameter
+        const sessionDuration = /*this.data.sessionDuration || */60 * 60 * 24 * 30 // default to 30 days
+        if(sessionDuration) session.exp = now + sessionDuration
+        return await this._refreshSession(user, session)
+    }
+    private async refreshSession(user: UserFieldsAdmin, id: string, token: string) {
+        // save session and refresh token in the database
+        const sessionKey = this._kvSessionKey(user, id)
+        const session = await this.table.$db.kv.get<LoginSession>(sessionKey)
+
+        const now = this.getTimestamp()
+        const isValid = !!session
+            && session.tok === token
+            && session.uid === user.id
+            && (!this.data.maxTokenRefresh || session.rc < this.data.maxTokenRefresh)
+            && (session.exp === undefined || session.exp > now)
+
+        if(!isValid || !session) throw new HTTPException(401, {message: 'Invalid session'})
+
+        return await this._refreshSession(user, session)
     }
 
     /**
@@ -463,14 +582,20 @@ export class TableAuthExtension extends TableExtension<TableAuthExtensionData> {
             ...values2,
             [this.mapping.uid]: {l: generateUid()},
         }
+
+        // todo check if email, username, name is not null, unique etc and handle that
         if(this.mapping.email && email)
             values[this.mapping.email] = {l: email}
         if(this.mapping.emailVerified)
             values[this.mapping.emailVerified] = {l: verified}
         if(this.mapping.username)
-            values[this.mapping.username] = {l: externalData.username || email?.split('@')[0].toLowerCase().replace(/[^a-z0-9_]/g, '')||''}
-        if(this.mapping.name && externalData.name)
-            values[this.mapping.name] = {l: externalData.name}
+            values[this.mapping.username] = {l: externalData.username || email?.split('@')[0].toLowerCase().replace(/[^a-z0-9_]/g, '') || ''}
+        if(this.mapping.name)
+            values[this.mapping.name] = {l: externalData.name || 'User'}
+
+        // if(this.mapping.avatar) // todo avatar url
+
+        // todo put whole externalData in raw_user_meta_data like supabase
 
         if(this.data.passwordType && this.mapping.password && !values[this.mapping.password]){
             let pass = generateUid()
@@ -533,8 +658,10 @@ export class TableAuthExtension extends TableExtension<TableAuthExtensionData> {
     }
 
     private _kvVerificationSentKey = (user: UserFields)=> '@email_verification_sent_at_' + this.table.name + user.id
+    private _kvTokenKey = (token: string)=> '@token_' + token // + this.table.name + user.id
+    private _kvSessionKey = (user: UserFields, id: string)=> '@session_' + this.table.name + user.id + '_' + id // + this.table.name + user.id
     private _kvPasswordResetSentKey = (user: UserFields)=> '@password_reset_sent_at_' + this.table.name + user.id
-    private _kvPasswordResetTokenKey = (user: UserFields)=> '@password_reset_token_' + this.table.name + user.id
+    // private _kvPasswordResetTokenKey = (user: UserFields)=> '@password_reset_token_' + this.table.name + user.id
 
     private _getEmailVars(){
         return {
@@ -553,18 +680,21 @@ export class TableAuthExtension extends TableExtension<TableAuthExtensionData> {
         const verificationKey = this._kvVerificationSentKey(user)
         const emailVerifyEmailDuration = this.data.emailVerifyEmailDuration || 2 * 60 // 2 min
 
+        // this check is to prevent sending verification email too often
+        // every email will generate and send a new token but previous ones will still keep working
         const res = await this.table.$db.kv.get<number>(verificationKey, '(unixepoch(CURRENT_TIMESTAMP) - unixepoch(value))')
         if(res !== null && res < emailVerifyEmailDuration-1){
             // throw new Error('Verification email already sent') // todo better error for frontend
             throw new HTTPException(400, {message: 'Verification email already sent'})
         }
 
-        const token = await this.table.$db.jwt.createJwtToken<{typ: string, cid: string}>({
-            id: user.id,
-            sub: user.email,
-            typ: 'verify_email',
-            cid: this.table.name,
-        }, await this.jwtSecret(), this.data.emailVerifyTokenDuration || 1 * 60 * 60)
+        // const token = await this.table.$db.jwt.createJwtToken<{typ: string, cid: string}>({
+        //     id: user.id,
+        //     sub: user.email,
+        //     typ: 'verify_email',
+        //     cid: this.table.name,
+        // }, await this.jwtSecret(), this.data.emailVerifyTokenDuration || 1 * 60 * 60)
+        const token = generateUid()
 
         const email = this.table.$db.email
         if(!email) throw new HTTPException(500, {message: 'Email not configured'})
@@ -588,18 +718,22 @@ export class TableAuthExtension extends TableExtension<TableAuthExtensionData> {
             }
         })
 
-        await this.table.$db.kv.setSql(verificationKey, 'CURRENT_TIMESTAMP')
+        const verificationTokenKey = this._kvTokenKey(token)
+        const emailVerifyTokenDuration = this.data.emailVerifyTokenDuration || 1 * 60 * 60 // 1 hour
+
+        // await this.table.$db.kv.setSql(verificationKey, 'CURRENT_TIMESTAMP')
+        await this.table.$db.kv.setMultiple({
+            [verificationKey]: {sql: 'CURRENT_TIMESTAMP'},
+            [verificationTokenKey + token]: JSON.stringify({id: user.id, sub: user.email, typ: 'verify_email', cid: this.table.name,}),
+        }, emailVerifyTokenDuration)
         // no need to save token as the user is verified when the token is used, or the token expires.
     }
 
     private async _confirmVerification(token: string, uid?: string){
         if(!this.mapping.emailVerified) throw new HTTPException(500, {message: 'Invalid Configuration - emailVerified field required'})
 
-        const {id, sub, typ, cid} = await this.table.$db.jwt.decodeAuth(token, await this.jwtSecret(), false)
-        if(!id || !sub) throw new HTTPException(400, {message: 'Invalid token'})
+        const {id, sub} = await this._useToken(token, 'verify_email')
         if(uid && uid !== id) throw new Error('User mismatch')
-        if(cid !== this.table.name) throw new HTTPException(400, {message: 'Invalid table'})
-        if(typ !== 'verify_email') throw new HTTPException(400, {message: 'Invalid token type'})
 
         const user = await this.findUser(sub, true)
         if(!user || user.id !== id) throw new HTTPException(400, {message: 'Invalid user'})
@@ -617,20 +751,21 @@ export class TableAuthExtension extends TableExtension<TableAuthExtensionData> {
         if(!user.email) throw new HTTPException(500, {message: 'No user'})
 
         const resetKey = this._kvPasswordResetSentKey(user)
-        const resetTokenKey = this._kvPasswordResetTokenKey(user)
         const passwordResetEmailDuration = this.data.passwordResetEmailDuration || 2 * 60 // 2 min
 
+        // every email will generate and send a new token but previous ones will still keep working
         const res = await this.table.$db.kv.get<number>(resetKey, '(unixepoch(CURRENT_TIMESTAMP) - unixepoch(value))')
         if(res !== null && res < passwordResetEmailDuration-1){
             throw new Error('Password reset email already sent') // todo better error for frontend
         }
 
-        const token = await this.table.$db.jwt.createJwtToken<{typ: string, cid: string}>({
-            id: user.id,
-            sub: user.email,
-            typ: 'reset_password',
-            cid: this.table.name,
-        }, await this.jwtSecret(), this.data.passwordResetTokenDuration || 60 * 60)
+        // const token = await this.table.$db.jwt.createJwtToken<{typ: string, cid: string}>({
+        //     id: user.id,
+        //     sub: user.email,
+        //     typ: 'reset_password',
+        //     cid: this.table.name,
+        // }, await this.jwtSecret(), this.data.passwordResetTokenDuration || 60 * 60)
+        const token = generateUid()
 
         const email = this.table.$db.email
         if(!email) throw new HTTPException(500, {message: 'Email not configured'})
@@ -652,27 +787,28 @@ export class TableAuthExtension extends TableExtension<TableAuthExtensionData> {
             }
         })
 
+        const resetTokenKey = this._kvTokenKey(token)
+        const passwordResetTokenDuration = this.data.passwordResetTokenDuration || 60 * 60 // 1 hour
+
         await this.table.$db.kv.setMultiple({
             [resetKey]: {sql: 'CURRENT_TIMESTAMP'},
-            [resetTokenKey]: token,
-        })
+            [resetTokenKey + token]: JSON.stringify({id: user.id, sub: user.email, typ: 'reset_password', cid: this.table.name}),
+        }, passwordResetTokenDuration)
     }
 
     // record should have password, passwordSalt
     async _confirmPasswordReset(token: string, record: Record<string, SQLLiteral>){
         if(!this.mapping.password) throw new HTTPException(500, {message: 'Invalid Configuration - password field required'})
 
-        const {id, sub, typ, cid} = await this.table.$db.jwt.decodeAuth(token, await this.jwtSecret(), false)
-        if(!id || !sub) throw new HTTPException(400, {message: 'Invalid token'})
-        if(cid !== this.table.name) throw new HTTPException(400, {message: 'Invalid table'})
-        if(typ !== 'reset_password') throw new HTTPException(400, {message: 'Invalid token type'})
+        // todo use token after password reset is successful otherwise its annoying
+        const {id, sub} = await this._useToken(token, 'reset_password')
 
         const user = await this.getUser(id)
         if(!user || user.id !== id) throw new HTTPException(400, {message: 'Invalid user'})
 
-        const resetTokenKey = this._kvPasswordResetTokenKey(user)
-        const tokenSaved = await this.table.$db.kv.get(resetTokenKey)
-        if(token !== tokenSaved) throw new HTTPException(400, {message: 'Invalid token (mismatch)'})
+        // const resetTokenKey = this._kvPasswordResetTokenKey(user)
+        // const tokenSaved = await this.table.$db.kv.get(resetTokenKey)
+        // if(token !== tokenSaved) throw new HTTPException(400, {message: 'Invalid token (mismatch)'})
 
         if(sub !== user.email)  // todo is there any case for this? (pocketbase also has this check for unverified emails)
             throw new HTTPException(400, {message: 'Invalid email'})
@@ -689,9 +825,20 @@ export class TableAuthExtension extends TableExtension<TableAuthExtensionData> {
         const user2 = await this.updateUser(user.id, data)
         if(!user2) throw new HTTPException(500, {message: 'Failed to verify email'})
 
-        await this.table.$db.kv.remove(resetTokenKey)
+        // await this.table.$db.kv.remove(resetTokenKey)
 
         return user2
+    }
+
+    private async _useToken(token: string, typ1: string) {
+        const res = await this.table.$db.kv.pop<string>(this._kvTokenKey(token))
+        if (!res) throw new HTTPException(400, {message: 'Invalid token'})
+        const {id, sub, typ, cid} = JSON.parse(res) as { id: string, sub: string, typ: string, cid: string }
+        // const {id, sub, typ, cid} = await this.table.$db.jwt.decodeAuth(token, await this.jwtSecret(), false)
+        if (!id || !sub) throw new HTTPException(400, {message: 'Invalid token'})
+        if (cid !== this.table.name) throw new HTTPException(400, {message: 'Invalid table'})
+        if (typ !== typ1) throw new HTTPException(400, {message: 'Invalid token type'})
+        return {id, sub}
     }
 
     private async hashPassword(password: string, salt: string){
@@ -814,21 +961,28 @@ export class TableAuthExtension extends TableExtension<TableAuthExtensionData> {
                     content: {'application/json': {
                             schema: z.object({
                                 token: jwtTokenSchema,
+                                refresh_token: uidTokenSchema,
                                 verified: z.boolean().optional().describe('Email verified. (only returned if false)')
                             }),
                         }},
                 },
             }
         }),
-        '/auth/': ()=>({
-            description: 'Login with token',
-            request: {headers: z.object({Authorization: z.string().min(10)})},
+        '/auth/refresh-token': ()=>({
+            description: 'Refresh login token',
+            request: {headers: z.object({Authorization: z.string().min(10)}), body: {
+                    required: true,
+                    content: {'application/json': {schema: {
+                        refresh_token: uidTokenSchema.describe('Refresh token provided with the token on login/refresh'),
+                    }}},
+                }},
             responses: {
                 '200': {
                     description: 'Success',
                     content: {'application/json': {
                             schema: z.object({
                                 token: jwtTokenSchema,
+                                refresh_token: uidTokenSchema,
                                 verified: z.boolean().optional().describe('Email verified. (only returned if false)')
                             }),
                         }},
@@ -848,6 +1002,7 @@ export class TableAuthExtension extends TableExtension<TableAuthExtensionData> {
                     content: {'application/json': {
                             schema: z.object({
                                 token: jwtTokenSchema,
+                                refresh_token: uidTokenSchema,
                                 verified: z.boolean().optional().describe('Email verified.'),
                                 record: this.table.zodSchema, // todo we can pick the fields here based on user fields mapping
                             }),
@@ -871,6 +1026,7 @@ export class TableAuthExtension extends TableExtension<TableAuthExtensionData> {
                     content: {'application/json': {
                             schema: z.object({
                                 token: jwtTokenSchema,
+                                refresh_token: uidTokenSchema,
                                 record: this.table.zodSchema, // todo we can pick the fields here based on user fields mapping
                             }),
                         }},
@@ -923,7 +1079,7 @@ export class TableAuthExtension extends TableExtension<TableAuthExtensionData> {
                 body: {
                     required: true,
                     content: {'application/json': {schema: z.object({
-                                token: jwtTokenSchema,
+                                token: uidTokenSchema,
                             }).and(z.record(z.string(), z.unknown()))}}, // todo password fields
                     description: 'token and new password and new password confirm',
                 }
@@ -933,6 +1089,7 @@ export class TableAuthExtension extends TableExtension<TableAuthExtensionData> {
                     description: 'Success',
                     schema: z.object({
                         token: jwtTokenSchema,
+                        refresh_token: uidTokenSchema,
                         record: this.table.zodSchema, // todo we can pick the fields here based on user fields mapping
                     }),
                 },
@@ -951,12 +1108,12 @@ export class TableAuthExtension extends TableExtension<TableAuthExtensionData> {
             }
         }),
         '/auth/confirm-verification': ()=>({
-            description: 'Confirm email verification with token.',
+            description: 'Confirm email verification with token. Returns token and refresh token if not authenticated',
             request: {
                 body: {
                     required: true,
                     content: {'application/json': {schema: z.object({
-                                token: jwtTokenSchema,
+                                token: uidTokenSchema,
                             })}},
                     description: 'jwt token received in the email',
                 }
@@ -965,7 +1122,8 @@ export class TableAuthExtension extends TableExtension<TableAuthExtensionData> {
                 '200': {
                     description: 'Success',
                     schema: z.object({
-                        token: jwtTokenSchema,
+                        token: jwtTokenSchema.optional(),
+                        refresh_token: uidTokenSchema.optional(),
                         record: this.table.zodSchema, // todo we can pick the fields here based on user fields mapping
                     }),
                 },
@@ -973,4 +1131,17 @@ export class TableAuthExtension extends TableExtension<TableAuthExtensionData> {
         }),
     }
 
+}
+
+export type LoginSession = {
+    id: string
+    tok: string // refresh token
+    cid: string // collection/table id
+    uid: string // user id
+    sub?: string // user email
+    cat: number // created at
+    rat: number // refreshed at
+    exp?: number // expires at
+    rc: number // refresh count
+    // todo: ip, user agent, etc
 }

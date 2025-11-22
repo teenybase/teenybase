@@ -6,8 +6,9 @@ export type JWTPayload = JwtPayload & {
     user: string
     verified: boolean
     cid: string // table/collection name
-    rc?: number // refresh count
+    // rc?: number // refresh count
     meta?: Record<string, any> // custom metadata
+    sid: string // session id, used for refresh
 }
 export type JWTPayload2 = JWTPayload & {
     iss: string

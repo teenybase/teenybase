@@ -7,14 +7,15 @@ import type {
 } from '@asteasolutions/zod-to-openapi/dist/openapi-registry'
 import type {ZodType} from 'zod'
 
-export type RawRouterHandlerFunction = (params: Record<string, string>, path: string)=>Promise<Response|undefined>
-export type RouterHandlerFunction = ((body: Record<string, any>, params: Record<string, string>, path: string)=>Promise<Record<string, any>|string|undefined>)
-export type RouteFunction = {raw: RawRouterHandlerFunction} | RouterHandlerFunction
+export type RawRouterHandlerFunction<TParams = Record<string, string>> = (params: TParams, path: string)=>Promise<Response|undefined>
+export type RouterHandlerFunction<TBody = Record<string, any>, TParams = Record<string, string>> = ((body: TBody, params: TParams, path: string)=>Promise<Record<string, any>|string|undefined>)
+export type RouteFunction<TBody = Record<string, any>, TParams = Record<string, string>> = {raw: RawRouterHandlerFunction<TParams>} | RouterHandlerFunction<TBody, TParams>
 export type RouteMethod = 'get' | 'post' | 'put' | 'delete' | 'patch' | 'head' | 'options' /*| 'trace'*/;
 
 // todo better name
-export type HttpRoute = {
-    handler: RouteFunction,
+// todo pass TBody and TParams to zod
+export type HttpRoute<TBody = Record<string, any>, TParams = Record<string, string>> = {
+    handler: RouteFunction<TBody, TParams>,
     path: string,
     method: RouteMethod
     zod: ()=>HttpRouteZod

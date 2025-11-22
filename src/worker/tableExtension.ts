@@ -22,6 +22,6 @@ export class TableExtension<TData extends TableExtensionData = TableExtensionDat
     async onSelectParse?(query: SelectQuery): Promise<void>
     async onViewParse?(query: SelectQuery, id: string): Promise<void>
 
-    routes: HttpRoute[] = []
+    routes: HttpRoute<any>[] = []
 
 }
