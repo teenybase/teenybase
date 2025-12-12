@@ -129,7 +129,7 @@ export class $Database<T extends $Env = $Env> extends EventTarget<$DatabaseEvent
 
     // setup db etc
     async setup() {
-        if(!this.auth.superadmin) throw new HTTPException(this.auth.uid ? 403 : 401, {message: 'Unauthorized'})
+        if(!this.auth.superadmin) throw new HTTPException(this.auth.uid ? 403 : 401, {message: 'Unauthorized, only superadmin can setup database'})
         const version = 0
         if(version >= 0) {
             //
@@ -836,7 +836,12 @@ export class $Database<T extends $Env = $Env> extends EventTarget<$DatabaseEvent
                 }
             },
 
-            run: async ()=> this._exec(prep)
+            run: async ()=> {
+                if((this.c.env as any).IS_VITEST){
+                    console.log('Executing SQL:', d1Expr)
+                }
+                return this._exec(prep)
+            }
         }
         return prep
     }
@@ -857,7 +862,12 @@ export class $Database<T extends $Env = $Env> extends EventTarget<$DatabaseEvent
         const prep = {
             prepared,
             c,
-            run: async ()=> this._execBatch(prep)
+            run: async ()=> {
+                if((this.c.env as any).IS_VITEST){
+                    console.log('Executing SQL Transaction:', d1Exprs)
+                }
+                return this._execBatch(prep)
+            }
         } as D1PreparedTransaction<T, TRet, TC>
         return prep
         // const onError = (er: any)=>{

@@ -12,20 +12,20 @@ export class InternalKV<T extends $Env = $Env> {
             CREATE TABLE IF NOT EXISTS "${this.tableName}" (
                 key TEXT PRIMARY KEY,
                 value TEXT NOT NULL,
-                expiry INTEGER NULL,
+                expiry INTEGER NULL
             )`.split('\n').map(l => l.trim()).join(' ')
             await this.db.rawSQL({q: sql, v: []}).run()
         }
     }
 
-    async get<T = string>(key: string, field?: string) {
+    async get<T extends string|number = string>(key: string, field?: string) {
         const rnd = '_' + Math.random().toString(36).substring(7)
         const q = `SELECT (${field || 'value'}) as ${rnd} FROM ${this.tableName} WHERE key = ? AND (expiry IS NULL OR expiry > unixepoch(CURRENT_TIMESTAMP))`
         const res = await this.db.rawSQL<any>({q, v: [key]}).run()
         return res?.[0] ? res[0][rnd] as T : null
     }
 
-    async pop<T = string>(key: string, field?: string) {
+    async pop<T extends string|number = string>(key: string, field?: string) {
         const rnd = '_' + Math.random().toString(36).substring(7)
         const q = `DELETE FROM ${this.tableName} WHERE key = ? AND (expiry IS NULL OR expiry > unixepoch(CURRENT_TIMESTAMP)) RETURNING (${field || 'value'}) as ${rnd}`
         const res = await this.db.rawSQL<any>({q, v: [key]}).run()

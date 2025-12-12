@@ -15,6 +15,8 @@ export default defineWorkersConfig({
                         IS_VITEST: true,
                         RESPOND_WITH_QUERY_LOG: true,
                         RESPOND_WITH_ERRORS: true,
+                        ADMIN_SERVICE_TOKEN: "test_admin_service_token",
+                        ADMIN_JWT_SECRET: "test_admin_jwt_secret",
                     },
                     d1Databases: ["PRIMARY_DB"],
                     r2Buckets: ["PRIMARY_R2"],

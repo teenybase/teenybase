@@ -332,7 +332,7 @@ export class TableAuthExtension extends TableExtension<TableAuthExtensionData> {
     }
 
     /**
-     * validates token from google, github etc or self and creates a new session
+     * validates token from google, github etc or self(disabled for now) and creates a new session
      */
     async loginWithToken(){
         const tok = this.c.req.header('Authorization')?.replace(/^Bearer /, '')
@@ -341,7 +341,7 @@ export class TableAuthExtension extends TableExtension<TableAuthExtensionData> {
         // payload will be null when sign not valid or expired etc
         if (!payload) throw new HTTPException(401, {message: 'Unauthorized'})
 
-        let res = await this.findUser(payload.sub)
+        let res = await this.findUser(payload.sub, true)
 
         if(payload.iss !== this.table.$db.jwt.issuer){
             // todo why this false and 0 check? because it can be 'true'?
@@ -376,16 +376,19 @@ export class TableAuthExtension extends TableExtension<TableAuthExtensionData> {
     async refreshToken(data: {refresh_token: string}) {
         const tok = this.c.req.header('Authorization')?.replace(/^Bearer /, '')
         if (!tok) throw new HTTPException(400, {message: 'Authorization header required'})
-        const payload = decode(tok).payload as JWTPayload2
-        if(payload.iss !== this.table.$db.jwt.issuer || !payload.sub || !payload.sid) throw new HTTPException(401, {message: 'Invalid token'})
-        const refreshToken = uidTokenSchema.parse(data.refresh_token)
-        const sessionId = z.string().min(10).parse(payload.sid) // todo zod
+        // todo not really required but can we verify the signature without verifying exp
+        const payloadUntrusted = decode(tok).payload as JWTPayload2
+        if(payloadUntrusted.iss !== this.table.$db.jwt.issuer || !payloadUntrusted.sub || !payloadUntrusted.sid) throw new HTTPException(401, {message: 'Invalid token'})
+        const {sub, sid} = payloadUntrusted
 
-        let res = await this.findUser(payload.sub)
+        const refreshToken = uidTokenSchema.parse(data.refresh_token)
+        const sessionId = z.string().min(10).parse(sid) // todo zod
+
+        let res = await this.findUser(sub, true)
         if(!res) throw new HTTPException(401, {message: 'Unauthorized'})
 
         // if(this.mapping.emailVerified && !res.emailVerified) throw new HTTPException(400, {message: 'Email not verified'})
-        if(res.email !== payload.sub) throw new HTTPException(400, {message: 'Invalid email'})
+        if(res.email !== sub) throw new HTTPException(400, {message: 'Invalid email'})
 
         const token = await this.refreshSession(res, sessionId, refreshToken)
 
@@ -469,6 +472,7 @@ export class TableAuthExtension extends TableExtension<TableAuthExtensionData> {
         }, refreshTokenDuration)
 
         const token = await this.table.$db.jwt.createJwtToken(data, await this.jwtSecret(), this.data.jwtTokenDuration)
+
         return {
             token,
             refresh_token: refreshToken,
@@ -501,9 +505,20 @@ export class TableAuthExtension extends TableExtension<TableAuthExtensionData> {
     private async refreshSession(user: UserFieldsAdmin, id: string, token: string) {
         // save session and refresh token in the database
         const sessionKey = this._kvSessionKey(user, id)
-        const session = await this.table.$db.kv.get<LoginSession>(sessionKey)
+        const sessionStr = await this.table.$db.kv.get<string>(sessionKey)
 
         const now = this.getTimestamp()
+
+        // Parse the JSON string to get the session object
+        let session: LoginSession | null = null
+        if (sessionStr) {
+            try {
+                session = JSON.parse(sessionStr)
+            } catch (e) {
+                console.error(e)
+            }
+        }
+
         const isValid = !!session
             && session.tok === token
             && session.uid === user.id
@@ -832,8 +847,14 @@ export class TableAuthExtension extends TableExtension<TableAuthExtensionData> {
 
     private async _useToken(token: string, typ1: string) {
         const res = await this.table.$db.kv.pop<string>(this._kvTokenKey(token))
-        if (!res) throw new HTTPException(400, {message: 'Invalid token'})
-        const {id, sub, typ, cid} = JSON.parse(res) as { id: string, sub: string, typ: string, cid: string }
+        let parsed: { id: string, sub: string, typ: string, cid: string } | null = null
+        try {
+            parsed = res ? JSON.parse(res) : null
+        }catch (e) {
+            console.error(e)
+        }
+        if (!parsed) throw new HTTPException(400, {message: 'Invalid token'})
+        const {id, sub, typ, cid} = parsed
         // const {id, sub, typ, cid} = await this.table.$db.jwt.decodeAuth(token, await this.jwtSecret(), false)
         if (!id || !sub) throw new HTTPException(400, {message: 'Invalid token'})
         if (cid !== this.table.name) throw new HTTPException(400, {message: 'Invalid table'})
@@ -877,8 +898,10 @@ export class TableAuthExtension extends TableExtension<TableAuthExtensionData> {
         let current = record[this.mapping.password! + this.data.passwordCurrentSuffix!]?.l
         if (!current || typeof current !== 'string') throw new HTTPException(400, {message: `${this.mapping.password! + this.data.passwordCurrentSuffix!} is required`})
         current = defaultSchema.password.parse(current, {path: [this.mapping.password! + this.data.passwordCurrentSuffix!]})
+        delete record[this.mapping.password! + this.data.passwordCurrentSuffix!]
         return await this.hashPassword(current, salt)
     }
+
     private async _parsePasswordFieldUpdate(record: Record<string, SQLLiteral>, query: UpdateQuery, salt?: string) {
         if (!this.data.passwordType) return
         if (!this.mapping.password) throw new HTTPException(500, {message: 'Invalid Configuration'})

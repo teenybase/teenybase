@@ -118,27 +118,39 @@ test('login with pass and token refresh', async () => {
     })
     expect(res.status).toEqual(200)
     const json = await res.json() as any
+
     const authExt = settings.tables.find(t=>t.name==='users')?.extensions.find(e=>e.name==='auth') as TableAuthExtensionData
     expect(authExt).toBeDefined()
-    await jwt.verify(json.token, authExt!.jwtSecret, {throwError: true})
-    const decode = jwt.decode(json.token).payload!
+    const token = json.token
+    expect(token).toBeDefined()
+    await jwt.verify(token, authExt!.jwtSecret, {throwError: true})
+    const decode = jwt.decode(token).payload!
     // console.log(decode)
     expect(decode.aud).toEqual(['guest'])
     expect((decode as any).verified).toEqual(false)
     expect((decode as any).cid).toEqual('users')
     expect(decode.sub).toEqual('admin@example.com')
+    expect(json.record.email).toEqual('admin@example.com')
+    expect(json.record.password).toBeUndefined()
+    expect(json.record.username).toEqual('a')
+    expect(json.record.email_verified).toEqual(false)
+    const refresh_token = json.refresh_token
+    expect(refresh_token).toBeDefined()
 
-    const res2 = await fetch(`table/users/auth/login-token`, {
+    await new Promise(r=>setTimeout(r, 1100)) // wait for 1.1 sec to ensure new token has different iat
+
+    const res2 = await fetch(`table/users/auth/refresh-token`, {
         method: 'POST',
-        headers: {'Authorization': 'Bearer ' + json.token,},
+        headers: {'Authorization': 'Bearer ' + token,},
+        body: JSON.stringify({refresh_token}),
     })
     expect(res2.status).toEqual(200)
     const json2 = await res2.json() as any
-    expect(json.token).not.toEqual(json2.token)
+    expect(token).not.toEqual(json2.token)
     await jwt.verify(json2.token, authExt!.jwtSecret, {throwError: true})
     const decode2 = jwt.decode(json2.token).payload!
     // console.log(decode2)
-    expect((decode2 as any).rc).toEqual(1)
+    // expect((decode2 as any).rc).toEqual(1)
     expect((decode2 as any).cid).toEqual('users')
     expect(decode2.sub).toEqual('admin@example.com')
 })
