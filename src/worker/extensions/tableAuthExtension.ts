@@ -19,6 +19,8 @@ import {normalizeEmail} from '../util/normalizeEmail'
 import {sqlValSchema} from '../../types/zod/sqlSchemas'
 import {tableAuthDataSchema} from '../../types/zod/tableExtensionsSchema'
 import {decode} from '@tsndr/cloudflare-worker-jwt'
+import {defaultSchema, jwtTokenSchema, uidTokenSchema} from './tableAuthExtension.schema'
+import {setupTableAuthExtensionRoutes} from './tableAuthExtension.routes'
 
 type UserFields = {
     emailVerified?: boolean
@@ -37,23 +39,6 @@ type UserFieldsAdmin = UserFields & {
 }
 
 const SALT_LENGTH = 20
-
-const defaultSchema = {
-    // todo username should be case insensitive?
-    username: z.string().min(1).max(32).regex(/^[a-zA-Z][a-zA-Z0-9_]*$/), // username should not include `@`
-    password: z.string().min(8, {message: 'Password must be at least 8 characters long'}).max(255, {message: 'Password must be less than 255 characters long'}),
-    email: z.string().min(1).max(255).email(),
-    identity: z.string().min(1).max(255).email().or(z.string().min(1).max(32).regex(/^[a-zA-Z][a-zA-Z0-9_]*$/)), // email or username
-    name: z.string().min(1).max(255).optional(),
-    emailVerified: z.coerce.boolean().optional(),
-}
-
-/*.jwt()*/ // todo use jwt
-const jwtTokenSchema = z.string().min(10).describe('JWT token')
-const uidTokenSchema = z.string().length(22).describe('Token')
-// .refine((v) => {
-//     z.literal(3).parse(v.split('.').map(a=>z.string().base64().parse(a)).length)
-// })
 
 export class TableAuthExtension extends TableExtension<TableAuthExtensionData> {
     static readonly name = 'auth'
@@ -85,58 +70,7 @@ export class TableAuthExtension extends TableExtension<TableAuthExtensionData> {
         if(this.mapping.emailVerified && !this.mapping.email) throw new HTTPException(500, {message: 'Invalid Configuration - email field required for emailVerified'})
         if(this.mapping.passwordSalt && !this.mapping.password) throw new HTTPException(500, {message: 'Invalid Configuration - passwordSalt field required for password'})
 
-        // todo make parameter to enable/disable this endpoint when external auth is used
-        this.routes.push({
-            method: 'post', path: '/auth/login-token',
-            handler: this.loginWithToken.bind(this),
-            zod: this.routeZod['/auth/login-token'],
-        })
-        this.routes.push({
-            method: 'post', path: '/auth/refresh-token',
-            handler: this.refreshToken.bind(this),
-            zod: this.routeZod['/auth/refresh-token'],
-        })
-
-        if(this.mapping.password) {
-            this.routes.push({
-                method: 'post', path: '/auth/sign-up',
-                handler: this.signUp.bind(this),
-                zod: this.routeZod['/auth/sign-up'],
-            })
-            this.routes.push({
-                method: 'post', path: '/auth/login-password',
-                handler: this.loginWithPassword.bind(this),
-                zod: this.routeZod['/auth/login-password'],
-            })
-            this.routes.push({
-                method: 'post', path: '/auth/change-password',
-                handler: {raw: this.changePassword.bind(this)},
-                zod: this.routeZod['/auth/change-password'],
-            })
-            this.routes.push({
-                method: 'post', path: '/auth/request-password-reset',
-                handler: {raw: this.requestPasswordReset.bind(this)},
-                zod: this.routeZod['/auth/request-password-reset'],
-            })
-            this.routes.push({
-                method: 'post', path: '/auth/confirm-password-reset',
-                handler: {raw: this.confirmPasswordReset.bind(this)},
-                zod: this.routeZod['/auth/confirm-password-reset'],
-            })
-        }
-        if(this.mapping.emailVerified) {
-            this.routes.push({
-                method: 'post', path: '/auth/request-verification',
-                handler: {raw: this.requestVerification.bind(this)},
-                zod: this.routeZod['/auth/request-verification'],
-            })
-            this.routes.push({
-                method: 'post', path: '/auth/confirm-verification',
-                handler: {raw: this.confirmVerification.bind(this)},
-                zod: this.routeZod['/auth/confirm-verification'],
-            })
-        }
-
+        setupTableAuthExtensionRoutes.call(this)
     }
 
     async onInsertParse(query: InsertQuery) {
@@ -431,10 +365,25 @@ export class TableAuthExtension extends TableExtension<TableAuthExtensionData> {
         const res2 = await this.updateUser(res.id, record)
         if(!res2 || res2.id !== res.id) throw new HTTPException(500, {message: 'Failed to update password'})
 
+        // Invalidate all sessions after password change for security
+        // const token = await this._invalidateAllUserSessions(res.id) // return token
+
         return this.c.json({success: true})
     }
 
-// todo
+    async logout(){
+        const auth = this.jc.globals.auth
+        if(!auth?.uid || !auth?.sid) throw new HTTPException(401, {message: 'Unauthorized'})
+
+        // const user = await this.getUser(auth.uid)
+        // if(!user) throw new HTTPException(400, {message: 'User not found'})
+
+        const sessionKey = this._kvSessionKey(/*user*/{id: auth.uid}, auth.sid)
+        await this.table.$db.kv.remove(sessionKey)
+
+        return this.c.json({success: true})
+    }
+    // todo
     // login with token
     // reset/forgot password
     // username change
@@ -443,7 +392,6 @@ export class TableAuthExtension extends TableExtension<TableAuthExtensionData> {
     // no point of this for this frontend, just use normal token. auth0 also says no point - https://auth0.com/blog/refresh-tokens-what-are-they-and-when-to-use-them/
     // actually useful to update meta and stuff
     // refresh token
-
 
     private async _refreshSession(res: UserFieldsAdmin, session: LoginSession) {
         const data = {
@@ -458,12 +406,20 @@ export class TableAuthExtension extends TableExtension<TableAuthExtensionData> {
         if(res.audience && res.audience.length) data.aud = res.audience
         if(res.emailVerified !== undefined) data.verified = res.emailVerified
 
+        const now = this.getTimestamp()
         const refreshToken = generateUid()
         session.tok = refreshToken
         session.rc++
-        const sessionKey = this._kvSessionKey(res, session.id)
+        session.rat = now // Update refreshed at timestamp
+
         // todo parameter
         const refreshTokenDuration = /*this.data.refreshTokenDuration || */60 * 60 * 24 * 7 // default to 7 days
+        const sessionDuration = /*this.data.sessionDuration || */60 * 60 * 24 * 30 // default to 30 days
+
+        // Implement sliding expiration - extend session exp on each refresh
+        session.exp = now + sessionDuration
+
+        const sessionKey = this._kvSessionKey(res, session.id)
 
         // todo limit number of sessions - check how many sessions in table for the user, if more than allowed, deleted the first one
         // overwrite existing session
@@ -495,11 +451,9 @@ export class TableAuthExtension extends TableExtension<TableAuthExtensionData> {
             rc: 0, // refresh count
             cat: now, // created at
             rat: now, // refreshed at
+            exp: now, // expires at (updated in refresh)
             // todo ip etc
         }
-        // todo parameter
-        const sessionDuration = /*this.data.sessionDuration || */60 * 60 * 24 * 30 // default to 30 days
-        if(sessionDuration) session.exp = now + sessionDuration
         return await this._refreshSession(user, session)
     }
     private async refreshSession(user: UserFieldsAdmin, id: string, token: string) {
@@ -674,9 +628,12 @@ export class TableAuthExtension extends TableExtension<TableAuthExtensionData> {
 
     private _kvVerificationSentKey = (user: UserFields)=> '@email_verification_sent_at_' + this.table.name + user.id
     private _kvTokenKey = (token: string)=> '@token_' + token // + this.table.name + user.id
-    private _kvSessionKey = (user: UserFields, id: string)=> '@session_' + this.table.name + user.id + '_' + id // + this.table.name + user.id
+    private _kvSessionKey = (user: {id: string}, id: string)=> '@session_' + this.table.name + user.id + '_' + id // + this.table.name + user.id
     private _kvPasswordResetSentKey = (user: UserFields)=> '@password_reset_sent_at_' + this.table.name + user.id
-    // private _kvPasswordResetTokenKey = (user: UserFields)=> '@password_reset_token_' + this.table.name + user.id
+
+    private async _invalidateAllUserSessions(userId: string) {
+        // todo get all keys with prefix and delete them
+    }
 
     private _getEmailVars(){
         return {
@@ -840,6 +797,9 @@ export class TableAuthExtension extends TableExtension<TableAuthExtensionData> {
         const user2 = await this.updateUser(user.id, data)
         if(!user2) throw new HTTPException(500, {message: 'Failed to verify email'})
 
+        // Invalidate all sessions after password reset for security
+        // const token = await this._invalidateAllUserSessions(user.id) // todo return token
+
         // await this.table.$db.kv.remove(resetTokenKey)
 
         return user2
@@ -866,7 +826,6 @@ export class TableAuthExtension extends TableExtension<TableAuthExtensionData> {
         if (!this.data.passwordType) return ''
         return passwordProcessors[this.data.passwordType].hash(password, salt)
     }
-
 
     private _parseUsername(record: Record<string, SQLQuery | SQLLiteral>) {
         if (!this.mapping.username) return
@@ -972,186 +931,6 @@ export class TableAuthExtension extends TableExtension<TableAuthExtensionData> {
         val = await this.hashPassword(val, salt)
         record[field] = {l: val}
         return val
-    }
-
-    protected routeZod = {
-        '/auth/login-token': ()=>({
-            description: 'Login with token',
-            request: {headers: z.object({Authorization: z.string().min(10)})},
-            responses: {
-                '200': {
-                    description: 'Success',
-                    content: {'application/json': {
-                            schema: z.object({
-                                token: jwtTokenSchema,
-                                refresh_token: uidTokenSchema,
-                                verified: z.boolean().optional().describe('Email verified. (only returned if false)')
-                            }),
-                        }},
-                },
-            }
-        }),
-        '/auth/refresh-token': ()=>({
-            description: 'Refresh login token',
-            request: {headers: z.object({Authorization: z.string().min(10)}), body: {
-                    required: true,
-                    content: {'application/json': {schema: {
-                        refresh_token: uidTokenSchema.describe('Refresh token provided with the token on login/refresh'),
-                    }}},
-                }},
-            responses: {
-                '200': {
-                    description: 'Success',
-                    content: {'application/json': {
-                            schema: z.object({
-                                token: jwtTokenSchema,
-                                refresh_token: uidTokenSchema,
-                                verified: z.boolean().optional().describe('Email verified. (only returned if false)')
-                            }),
-                        }},
-                },
-            }
-        }),
-        '/auth/sign-up': ()=>({
-            description: 'Sign up. (similar to insert, but returns the login token along with the record)',
-            request: {body: {
-                    required: true,
-                    content: {'application/json': {schema: this.table.zodSchema}}, // todo we can pick the fields here based on user fields mapping
-                    description: 'Data to insert in the table along with passwordConfirm',
-                }},
-            responses: {
-                '200': {
-                    description: 'Success',
-                    content: {'application/json': {
-                            schema: z.object({
-                                token: jwtTokenSchema,
-                                refresh_token: uidTokenSchema,
-                                verified: z.boolean().optional().describe('Email verified.'),
-                                record: this.table.zodSchema, // todo we can pick the fields here based on user fields mapping
-                            }),
-                        }},
-                },
-            }
-        }),
-        '/auth/login-password': ()=>({
-            description: 'Login with password',
-            request: {body: {
-                    required: true,
-                    content: {'application/json': {schema: z.object({
-                                identity: defaultSchema.identity.describe('Email or username'),
-                                // [this.mapping.password]: defaultSchema.password,
-                            }).or(z.record(z.string(), z.unknown()))}}, // todo we can pick the fields here based on user fields mapping
-                    description: 'identity/email/username and password',
-                }},
-            responses: {
-                '200': {
-                    description: 'Success',
-                    content: {'application/json': {
-                            schema: z.object({
-                                token: jwtTokenSchema,
-                                refresh_token: uidTokenSchema,
-                                record: this.table.zodSchema, // todo we can pick the fields here based on user fields mapping
-                            }),
-                        }},
-                },
-            }
-        }),
-        '/auth/change-password': ()=>({
-            description: 'Change password',
-            request: {body: {
-                    required: true,
-                    content: {'application/json': {schema: z.object({
-                                // [this.mapping.password]: defaultSchema.password,
-                            }).or(z.record(z.string(), z.unknown()))}}, // todo we can pick the fields here based on user fields mapping
-                    description: 'The current password, new password and new password confirm and changes the password',
-                }},
-            responses: {
-                '200': {
-                    description: 'Success',
-                    content: {'application/json': {
-                            schema: z.object({
-                                success: z.literal(true),
-                            }),
-                        }},
-                },
-            }
-        }),
-        '/auth/request-password-reset': ()=>({
-            description: 'Request password reset. Sends an email to the user with a token to reset the password. (doesn\'t require login)',
-            request: {
-                body: {
-                    required: true,
-                    content: {'application/json': {schema: z.object({
-                                // email: defaultSchema.identity.describe('Email field'), // todo
-                            }).or(z.record(z.string(), z.unknown()))}},
-                    description: 'identity/email/username',
-                }
-            },
-            responses: {
-                '200': {
-                    description: 'Success',
-                    content: {'application/json': {
-                            schema: z.object({success: z.literal(true),}),
-                        }},
-                },
-            }
-        }),
-        '/auth/confirm-password-reset': ()=>({
-            description: 'Confirm password reset. Sends an email to the user with a token to reset the password.',
-            request: {
-                body: {
-                    required: true,
-                    content: {'application/json': {schema: z.object({
-                                token: uidTokenSchema,
-                            }).and(z.record(z.string(), z.unknown()))}}, // todo password fields
-                    description: 'token and new password and new password confirm',
-                }
-            },
-            responses: {
-                '200': {
-                    description: 'Success',
-                    schema: z.object({
-                        token: jwtTokenSchema,
-                        refresh_token: uidTokenSchema,
-                        record: this.table.zodSchema, // todo we can pick the fields here based on user fields mapping
-                    }),
-                },
-            }
-        }),
-        '/auth/request-verification': ()=>({
-            description: 'Request email verification. Sends an email to the user with a token to verify. (requires login)',
-            request: {},
-            responses: {
-                '200': {
-                    description: 'Success',
-                    content: {'application/json': {
-                            schema: z.object({success: z.literal(true),}),
-                        }},
-                },
-            }
-        }),
-        '/auth/confirm-verification': ()=>({
-            description: 'Confirm email verification with token. Returns token and refresh token if not authenticated',
-            request: {
-                body: {
-                    required: true,
-                    content: {'application/json': {schema: z.object({
-                                token: uidTokenSchema,
-                            })}},
-                    description: 'jwt token received in the email',
-                }
-            },
-            responses: {
-                '200': {
-                    description: 'Success',
-                    schema: z.object({
-                        token: jwtTokenSchema.optional(),
-                        refresh_token: uidTokenSchema.optional(),
-                        record: this.table.zodSchema, // todo we can pick the fields here based on user fields mapping
-                    }),
-                },
-            }
-        }),
     }
 
 }

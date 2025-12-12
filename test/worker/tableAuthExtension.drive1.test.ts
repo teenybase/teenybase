@@ -313,6 +313,77 @@ test('change password', async () => {
     expect(res.status).toEqual(200)
 })
 
+test('logout - invalidate session', async () => {
+    // Create user and login
+    const json = await createUser({username: 'logouttest', email: 'logout@example.com'})
+    expect(json.verified).toEqual(false)
+    expect(json.token).toBeDefined()
+    expect(json.refresh_token).toBeDefined()
+
+    const token = json.token
+    const refresh_token = json.refresh_token
+
+    // Verify token works before logout
+    const res1 = await fetch(`table/users/select?select=name,username,email`, {
+        method: 'GET',
+        headers: {'Authorization': 'Bearer ' + token},
+    })
+    expect(res1.status).toEqual(200)
+    const users = await res1.json() as any[]
+    expect(users.length).toBeGreaterThan(0)
+
+    // Wait a bit to ensure different iat
+    await new Promise(r=>setTimeout(r, 100))
+
+    // Verify refresh token works before logout
+    const res2 = await fetch(`table/users/auth/refresh-token`, {
+        method: 'POST',
+        headers: {'Authorization': 'Bearer ' + token},
+        body: JSON.stringify({refresh_token}),
+    })
+    expect(res2.status).toEqual(200)
+    const json2 = await res2.json() as any
+    expect(json2.token).toBeDefined()
+    expect(json2.refresh_token).toBeDefined()
+
+    // Logout
+    const res3 = await fetch(`table/users/auth/logout`, {
+        method: 'POST',
+        headers: {'Authorization': 'Bearer ' + token},
+    })
+    expect(res3.status).toEqual(200)
+    const logoutJson = await res3.json() as any
+    expect(logoutJson.success).toEqual(true)
+
+    // Try to refresh token after logout - should fail
+    const res4 = await fetch(`table/users/auth/refresh-token`, {
+        method: 'POST',
+        headers: {'Authorization': 'Bearer ' + token},
+        body: JSON.stringify({refresh_token}),
+    })
+    expect(res4.status).toEqual(401)
+    const json4 = await res4.json() as any
+    expect(json4.message).toEqual('Invalid session')
+
+    // Old token should still work for regular API calls until it expires
+    // (JWT tokens are stateless, logout only invalidates the refresh token/session)
+    const res5 = await fetch(`table/users/select?select=name,username,email`, {
+        method: 'GET',
+        headers: {'Authorization': 'Bearer ' + token},
+    })
+    expect(res5.status).toEqual(200)
+})
+
+test('logout - without auth fails', async () => {
+    // Try to logout without authentication
+    const res = await fetch(`table/users/auth/logout`, {
+        method: 'POST',
+    })
+    expect(res.status).toEqual(401)
+    const json = await res.json() as any
+    expect(json.message).toEqual('Unauthorized')
+})
+
 // todo
 // test('rpc mark verified statement', async () => {
 //     let json = await createUser({})
