@@ -16,6 +16,7 @@ const f = (input: string, table: string, simplify = true, autoNull = true) => {
         }, auth: {
             ...emptyGlobals.auth,
             role: 'user',
+            sid: 'test',
         }
     }, [table], undefined, autoNull, simplify)
     jc._checkColumns = false
