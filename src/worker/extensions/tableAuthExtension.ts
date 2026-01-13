@@ -109,6 +109,7 @@ export class TableAuthExtension extends TableExtension<TableAuthExtensionData> {
     }
 
     async onSelectParse(query: SelectQuery) {
+        // do nothing
     }
 
     async onViewParse(query: SelectQuery) {
@@ -366,7 +367,7 @@ export class TableAuthExtension extends TableExtension<TableAuthExtensionData> {
         if(!res2 || res2.id !== res.id) throw new HTTPException(500, {message: 'Failed to update password'})
 
         // Invalidate all sessions after password change for security
-        // const token = await this._invalidateAllUserSessions(res.id) // return token
+        const _token = await this._invalidateAllUserSessions(res.id) // return token
 
         return this.c.json({success: true})
     }
@@ -456,6 +457,7 @@ export class TableAuthExtension extends TableExtension<TableAuthExtensionData> {
         }
         return await this._refreshSession(user, session)
     }
+
     private async refreshSession(user: UserFieldsAdmin, id: string, token: string) {
         // save session and refresh token in the database
         const sessionKey = this._kvSessionKey(user, id)
@@ -569,7 +571,7 @@ export class TableAuthExtension extends TableExtension<TableAuthExtensionData> {
         if(this.data.passwordType && this.mapping.password && !values[this.mapping.password]){
             let pass = generateUid()
             const salt = this.mapping.passwordSalt ? randomString(SALT_LENGTH) : ''
-            pass = await this.hashPassword(pass, salt)
+            pass = await this._hashPassword(pass, salt)
             values[this.mapping.password] = {l: pass}
             if(this.mapping.passwordSalt) values[this.mapping.passwordSalt] = {l: salt}
         }
@@ -798,7 +800,7 @@ export class TableAuthExtension extends TableExtension<TableAuthExtensionData> {
         if(!user2) throw new HTTPException(500, {message: 'Failed to verify email'})
 
         // Invalidate all sessions after password reset for security
-        // const token = await this._invalidateAllUserSessions(user.id) // todo return token
+        const _token = await this._invalidateAllUserSessions(user.id) // todo return token
 
         // await this.table.$db.kv.remove(resetTokenKey)
 
@@ -822,7 +824,7 @@ export class TableAuthExtension extends TableExtension<TableAuthExtensionData> {
         return {id, sub}
     }
 
-    private async hashPassword(password: string, salt: string){
+    private async _hashPassword(password: string, salt: string){
         if (!this.data.passwordType) return ''
         return passwordProcessors[this.data.passwordType].hash(password, salt)
     }
@@ -858,7 +860,7 @@ export class TableAuthExtension extends TableExtension<TableAuthExtensionData> {
         if (!current || typeof current !== 'string') throw new HTTPException(400, {message: `${this.mapping.password! + this.data.passwordCurrentSuffix!} is required`})
         current = defaultSchema.password.parse(current, {path: [this.mapping.password! + this.data.passwordCurrentSuffix!]})
         delete record[this.mapping.password! + this.data.passwordCurrentSuffix!]
-        return await this.hashPassword(current, salt)
+        return await this._hashPassword(current, salt)
     }
 
     private async _parsePasswordFieldUpdate(record: Record<string, SQLLiteral>, query: UpdateQuery, salt?: string) {
@@ -911,7 +913,7 @@ export class TableAuthExtension extends TableExtension<TableAuthExtensionData> {
             }
 
             const salt = this.mapping.passwordSalt ? randomString(SALT_LENGTH) : ''
-            val = await this.hashPassword(val, salt)
+            val = await this._hashPassword(val, salt)
 
             record[field] = {l: val}
             if (this.mapping.passwordSalt) record[this.mapping.passwordSalt] = {l: salt}
@@ -928,7 +930,7 @@ export class TableAuthExtension extends TableExtension<TableAuthExtensionData> {
         let val = (record[field])?.l
         if (typeof val !== 'string') throw new HTTPException(400, {message: `${field} must be a value, expressions not support in password`})
         val = defaultSchema.password.parse(val, {path: [field]})
-        val = await this.hashPassword(val, salt)
+        val = await this._hashPassword(val, salt)
         record[field] = {l: val}
         return val
     }
