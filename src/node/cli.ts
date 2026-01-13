@@ -303,7 +303,7 @@ async function fetchWorker(c: CliContext, fPath: string, reqOptions?: RequestIni
         let message = rest
         try{
             const json = JSON.parse(rest)
-            message = ((json.message || '') + ((json.error || json.data?.error) + '')) || json
+            message = ((json.message ? json.message + ' ' : '') + ((json.error || json.data?.error) + '')) || json
             if(logging) c.logger.error(`Failed to fetch ${fPath}. Status: ${res.status}, Response: ${message}\n${JSON.stringify(json, null, 2)}`)
         }catch (_e){}
         throw new Error(`Failed to fetch ${fPath}. Status: ${res.status}, Response: ${typeof message==='string' ? message.slice(0, 1024) : message}`)

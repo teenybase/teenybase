@@ -22,7 +22,7 @@ import {
     R2Object,
     R2ObjectBody,
     R2PutOptions,
-    ReadableStream
+    type ReadableStream
 } from '@cloudflare/workers-types/2023-07-01/index'
 import {MigrationHelper} from './migrationHelper'
 import {LinearRouter} from 'hono/router/linear-router'
@@ -746,10 +746,11 @@ export class $Database<T extends $Env = $Env> extends EventTarget<$DatabaseEvent
         if(this.dryRunMode) return {dummy: true}
         if(this.readOnlyMode) throw new Error('putFile not allowed in read only mode')
         return this.bucket.put(key, value, options).then(r=>{
-            const id = typeof value === 'string' ? value.substring(0, 10) :
+            const id = !value ? 'empty' :
+                typeof value === 'string' ? value.substring(0, 10) :
                 (value as File).name ? (value as File).name :
-                    value instanceof ReadableStream ? 'stream' :
                         value instanceof ArrayBuffer ? 'arraybuffer' :
+                            (typeof value === 'object' && 'getReader' in value && 'locked' in value) ? 'stream' :
                             'data'
             this._fsStats[key] = id
             return r

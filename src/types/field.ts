@@ -4,8 +4,8 @@ import {TableFieldUsage} from '../worker/usages'
 
 export interface TableFieldData<
     NAME = string,
-    TYPE extends TableFieldDataType0 = TableFieldDataType0,
-    SQLTYPE extends TableFieldSqlDataType = TableFieldSqlDataType,
+    TYPE extends TableFieldDataType0|string = TableFieldDataType0|string,
+    SQLTYPE extends TableFieldSqlDataType|string = TableFieldSqlDataType|string,
     USAGE extends TableFieldUsage|string = TableFieldUsage|string
 > {
     name: NAME
