@@ -278,12 +278,15 @@ async function fetchWorker(c: CliContext, fPath: string, reqOptions?: RequestIni
         headers: {
             'Authorization': `Bearer ${adminToken}`,
             ...reqOptions?.headers,
-        } as any
+        } as any,
+        signal: reqOptions?.signal ?? AbortSignal.timeout(5000) // 5 second timeout
     }
     let _fetch = fetch
     if (c.isLocal) {
         // check if apiRoute is accessible
-        const devServerRunning = apiRoute && !c.localWorker ? await fetch(apiRoute, {method: 'HEAD'}).then(r=>true).catch(e => e?.cause?.code !== 'ECONNREFUSED') : false
+        const devServerRunning = apiRoute && !c.localWorker ? await fetch(apiRoute, {method: 'HEAD', signal: AbortSignal.timeout(1000) }).then(r=>true).catch(e => {
+            return e?.cause?.code !== 'ECONNREFUSED' && e.name !== 'TimeoutError' // todo better check
+        }) : false
         if(devServerRunning && apiRoute) fPath = path.join(apiRoute, fPath)
         else _fetch = c.localFetch.bind(c)
     } else {
