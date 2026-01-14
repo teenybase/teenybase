@@ -41,6 +41,8 @@ interface GlobalCLIOptions {
     debug?: boolean | string
     f?: string
     filter?: string
+    y?: boolean
+    yes?: boolean
     // m?: string
     // mode?: string
     // force?: boolean
@@ -539,7 +541,7 @@ function deploySecrets(c: CliContext, secrets: any){
     }
 }
 
-async function migrateAndDeploy(c: CliContext, clean: boolean, doMigrate: boolean, forceDeploy: boolean) {
+async function migrateAndDeploy(c: CliContext, clean: boolean, doMigrate: boolean, forceDeploy: boolean, skipConfirmation: boolean = false) {
     const {newMigrations, nextConfig} = await generateMigrationsDir(c, clean).catch(async e => {
         throw e
     }) || {}
@@ -613,26 +615,36 @@ async function migrateAndDeploy(c: CliContext, clean: boolean, doMigrate: boolea
                         // worker is deployed but setup is not run and migrations not applied.
                         // throw new Error(`Unknown error - Worker is already deployed but no settings and migrations found at ${envSec.apiRoute}`)
                         const message = `Worker is already deployed but no settings and migrations found at ${envSec.apiRoute}`
-                        const res = await prompts({
-                            type: 'confirm',
-                            name: 'value',
-                            message: message + '\nDo you want to continue and re-deploy the worker and apply migrations from scratch?',
-                            initial: false,
-                        });
-                        if (!res.value) {
-                            throw new Error(`Unknown error - Worker is already deployed but no settings and migrations found at ${envSec.apiRoute}`)
+                        if (!skipConfirmation) {
+                            const res = await prompts({
+                                type: 'confirm',
+                                name: 'value',
+                                message: message + '\nDo you want to continue and re-deploy the worker and apply migrations from scratch?',
+                                initial: false,
+                            });
+                            if (!res.value) {
+                                throw new Error(`Unknown error - Worker is already deployed but no settings and migrations found at ${envSec.apiRoute}`)
+                            }
+                        } else {
+                            c.logger.info(message)
+                            c.logger.info('Continuing with re-deployment (--yes flag provided)')
                         }
                     }else {
                         // first time deploy
                         const message = `About to deploy the worker for the first time and upload all the secrets in ${prodVars} with the name ${workerName} in cloudflare account ${cfAccountId}, continue?\nMake sure 'wrangler login' has been run before continuing. This will run 'wrangler deploy' and 'wrangler secret bulk'. `
-                        const res = await prompts({
-                            type: 'confirm',
-                            name: 'value',
-                            message: message,
-                            initial: true,
-                        });
-                        if (!res.value) {
-                            throw new Error('First time deployment cancelled by user')
+                        if (!skipConfirmation) {
+                            const res = await prompts({
+                                type: 'confirm',
+                                name: 'value',
+                                message: message,
+                                initial: true,
+                            });
+                            if (!res.value) {
+                                throw new Error('First time deployment cancelled by user')
+                            }
+                        }else {
+                            c.logger.info(message)
+                            c.logger.info('Continuing with first time deployment (--yes flag provided)')
                         }
 
                         try {
@@ -701,14 +713,19 @@ async function migrateAndDeploy(c: CliContext, clean: boolean, doMigrate: boolea
 
                 if (newMigrations?.length) {
                     const message = `About to apply ${newMigrations.length} migration(s)\n Your database may not be available to serve requests during the migration, continue?`
-                    const res = await prompts({
-                        type: 'confirm',
-                        name: 'value',
-                        message: message,
-                        initial: false,
-                    });
-                    if (!res.value) {
-                        throw new Error('Migration cancelled by user')
+                    if (!skipConfirmation) {
+                        const res = await prompts({
+                            type: 'confirm',
+                            name: 'value',
+                            message: message,
+                            initial: false,
+                        });
+                        if (!res.value) {
+                            throw new Error('Migration cancelled by user')
+                        }
+                    } else {
+                        c.logger.info(message)
+                        c.logger.info('Continuing with migration (--yes flag provided)')
                     }
                 }
 
@@ -867,6 +884,10 @@ cli
         '--clean',
         `[boolean] delete migrations folder and download latest from deployment before generating (default: true)`,
     )
+    .option(
+        '-y, --yes',
+        `[boolean] skip confirmation prompts (default: false)`,
+    )
     .action(
         async (
             options: /*BuildEnvironmentOptions & BuilderCLIOptions &*/ GlobalCLIOptions & { clean?: boolean, deploy?: boolean, migrate?: boolean },
@@ -878,7 +899,8 @@ cli
             const forceDeploy = Boolean(options.deploy??false)
             const doMigrate = Boolean(options.migrate??true)
             const clean = Boolean(options.clean??true)
-            await migrateAndDeploy(c, clean, doMigrate, forceDeploy).catch(async e=>{
+            const skipConfirm = Boolean(options.y || options.yes)
+            await migrateAndDeploy(c, clean, doMigrate, forceDeploy, skipConfirm).catch(async e=>{
                 c.logger.error(
                     colors.red(`error when applying migrations and deploying:\n${e.stack}`),
                     {error: e},
@@ -905,6 +927,10 @@ cli
         '--clean',
         `[boolean] delete migrations folder and download latest from deployment before generating (default: true)`,
     )
+    .option(
+        '-y, --yes',
+        `[boolean] skip confirmation prompts (default: false)`,
+    )
     .action(
         async (
             options: /*BuildEnvironmentOptions & BuilderCLIOptions &*/ GlobalCLIOptions & { clean?: boolean, deploy?: boolean, migrate?: boolean },
@@ -916,7 +942,8 @@ cli
             const forceDeploy = Boolean(options.deploy??true)
             const doMigrate = Boolean(options.migrate??true)
             const clean = Boolean(options.clean??true)
-            await migrateAndDeploy(c, clean, doMigrate, forceDeploy).catch(async e=>{
+            const skipConfirm = Boolean(options.y || options.yes)
+            await migrateAndDeploy(c, clean, doMigrate, forceDeploy, skipConfirm).catch(async e=>{
                 c.logger.error(
                     colors.red(`error when applying migrations and deploying:\n${e.stack}`),
                     {error: e},
