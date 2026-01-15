@@ -23,7 +23,7 @@ const apiRouteKey = 'API_ROUTE'
 const devVars = '.dev.vars'
 const prodVars = '.prod.vars'
 
-// // global options
+// global options
 interface GlobalCLIOptions {
     '--'?: string[]
     c?: boolean | string
@@ -264,7 +264,26 @@ function readSecretsFile(c: CliContext, throwError = true, apiRoute2?: string) {
     const secrets = dotenv.parse(fs.readFileSync(secretsPath, 'utf8'))
     const adminToken = secrets[adminTokenKey] as string | undefined
     if (!adminToken && throwError) throw new Error(`Admin token(${adminTokenKey}) not found in secrets file at "${readableRelative(secretsPath)}"`)
-    let apiRoute = (secrets[apiRouteKey] ?? apiRoute2) as string | undefined
+    let apiRoute = (secrets[apiRouteKey] ?? apiRoute2)?.trim() as string | undefined
+
+    if(apiRoute){
+        const lowerApiRoute = apiRoute.toLowerCase().trim()
+        if(!lowerApiRoute || lowerApiRoute === 'null' || lowerApiRoute === 'undefined' || lowerApiRoute === 'na' || lowerApiRoute === 'none'){
+            apiRoute = undefined
+        }
+    }
+    if(apiRoute) {
+        let parsedApiRoute
+        try {
+            parsedApiRoute = new URL(apiRoute || 'http://example.com') // dummy url
+        }catch (e){
+            throw new Error(`API route(${apiRouteKey}) in secrets file at "${readableRelative(secretsPath)}" is not a valid URL.`)
+        }
+        if (!['http:', 'https:'].includes(parsedApiRoute.protocol)) {
+            throw new Error(`API route(${apiRouteKey}) in secrets file at "${readableRelative(secretsPath)}" must start with http:// or https://`)
+        }
+    }
+
     if (!apiRoute && !c.isLocal && throwError) throw new Error(`API route(${apiRouteKey}) not found in secrets file at "${readableRelative(secretsPath)}"`)
     if (!c.isLocal && apiRoute?.startsWith('http://localhost')) {
         c.logger.warn(`API route(${apiRouteKey}) in secrets file at "${readableRelative(secretsPath)}" is pointing to localhost. This value will be ignored.\nUse the remote API route or remove the variable if not yet deployed.`)

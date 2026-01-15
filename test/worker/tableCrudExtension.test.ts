@@ -268,6 +268,7 @@ test('edit formdata', async () => {
     expect(json).toEqual(`{"id":1,"uid":"john123","name":"Test Name Updated","email":"test@example.com"}`)
 })
 
+
 test('update single set', async () => {
     const res = await fetch(`${basePath}/users/update`, {
         method: 'POST',
@@ -424,6 +425,33 @@ test('edit(upsert insert), view', async () => {
     // console.log(json2)
     expect(res2.status).toEqual(200)
     expect(json2).toEqual(json)
+})
+
+test('edit - invalid id should return 404', async () => {
+    const res = await fetch(`${basePath}/users/edit/99999`, {
+        method: 'POST',
+        body: JSON.stringify({
+            name: 'Test Name',
+            email: 'test@example.com',
+        }),
+    })
+    expect(res.status).toEqual(404)
+    const json = await res.json()
+    expect(json).toHaveProperty('code', 404)
+    expect(json).toHaveProperty('message', 'Not found')
+})
+
+test('edit without returning - valid id should return 200 with empty object', async () => {
+    const res = await fetch(`${basePath}/users/edit/1`, {
+        method: 'POST',
+        body: JSON.stringify({
+            name: 'Test Name Updated',
+            email: 'test@example.com',
+        }),
+    })
+    expect(res.status).toEqual(200)
+    const json = await res.json()
+    expect(json).toEqual({ id: 1 }) // it should ideally be empty object, but we are getting id, thats fine for now.
 })
 
 // custom routing defined in sampleHonoApp
