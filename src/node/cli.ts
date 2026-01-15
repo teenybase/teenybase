@@ -86,7 +86,10 @@ class CliContext{
         this.root = normalizePath(root ? path.resolve(root) : process.cwd())
         this.migrationsPath = path.join(this.root, wranglerConfig.migrations)
         this.devServerLogLevel = devServerLogLevel
-        this.devServerPort = parseInt(wranglerConfig.config.dev?.port || '8787')
+        this.devServerPort = parseInt(process.env.TEENY_DEV_PORT || wranglerConfig.config.dev?.port || '8787')
+        if(isNaN(this.devServerPort) || this.devServerPort <= 0 || this.devServerPort >= 65536){
+            throw new Error(`Invalid port number specified in TEENY_PORT environment variable: ${process.env.TEENY_PORT}`)
+        }
     }
 
     get localPersistPath(){
@@ -157,6 +160,7 @@ class CliContext{
         this._startingPromise = this.options.local ? unstable_dev(this.wranglerConfig.config.main, {
             moduleRoot: this.root,
             // config: wranglerConfig.config,
+            port: this.devServerPort,
             local: true,
             bundle: true,
             persistTo: this.localPersistPath,
@@ -272,8 +276,8 @@ function readSecretsFile(c: CliContext, throwError = true, apiRoute2?: string) {
             apiRoute = undefined
         }
     }
+    let parsedApiRoute
     if(apiRoute) {
-        let parsedApiRoute
         try {
             parsedApiRoute = new URL(apiRoute || 'http://example.com') // dummy url
         }catch (e){
@@ -290,8 +294,13 @@ function readSecretsFile(c: CliContext, throwError = true, apiRoute2?: string) {
         apiRoute = undefined
         delete secrets[apiRouteKey]
     }
-    if(c.isLocal && !apiRoute){
-        apiRoute = 'http://localhost:' + c.devServerPort
+    if(c.isLocal) {
+        if (!apiRoute) {
+            apiRoute = 'http://localhost:' + c.devServerPort
+        }else if(parsedApiRoute && parsedApiRoute.port && parsedApiRoute.port !== ('' + c.devServerPort) && parsedApiRoute.hostname === 'localhost') {
+            c.logger.warn(`API route(${apiRouteKey}) in secrets file at "${readableRelative(secretsPath)}" has port ${parsedApiRoute.port} which is different from the local dev server port ${c.devServerPort}. Using port ${c.devServerPort} instead.`)
+            apiRoute = `${parsedApiRoute.protocol}//${parsedApiRoute.hostname}:${c.devServerPort}`
+        }
     }
     return {adminToken, apiRoute, secrets}
 }
@@ -1077,7 +1086,7 @@ cli
                     // process.exit(1)
                 }
 
-                const command = `npx wrangler dev --persist-to ${JSON.stringify(c.localPersistPath)}`
+                const command = `npx wrangler dev --persist-to ${JSON.stringify(c.localPersistPath)} --port ${c.devServerPort}`
                 execSync(command, {cwd: c.root, stdio: 'inherit'})
                 await c.stopLocal()
             } catch (e: any) {
