@@ -1178,6 +1178,32 @@ export class $Database<T extends $Env = $Env> extends EventTarget<$DatabaseEvent
 
     // todo write tests for these routes
     private routes: HttpRoute[] = [{
+        path: '/health',
+        method: 'get',
+        handler: async()=>{
+            return {
+                status: 'ok',
+                timestamp: Date.now(),
+                version: this.settings.version,
+            }
+        },
+        zod: ()=>({
+            description: 'Health check endpoint to verify the server is running',
+            request: {},
+            responses: {
+                '200': {
+                    description: 'Server is healthy',
+                    content: {'application/json': {
+                        schema: z.object({
+                            status: z.literal('ok'),
+                            timestamp: z.number(),
+                            version: z.number(),
+                        }),
+                    }},
+                }
+            },
+        }),
+    }, {
         path: '/setup-db',
         method: 'post',
         handler: async()=>{

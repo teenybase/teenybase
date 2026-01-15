@@ -137,11 +137,15 @@ export class TableCrudExtension extends TableExtension<TableCrudExtensionData> {
                 }),
             })
             this.routes.push({
-                handler: async (body: any, p?: any) => await this.table.edit({
-                    setValues: body,
-                    returning: this.table.$db.c.req.query('returning'),
-                    or: tableEditSchema.shape.or.parse(this.table.$db.c.req.query('or')),
-                }, z.string().min(1).max(255).parse(p.id)) ?? undefined,
+                handler: async (body: any, p?: any) => {
+                    const returningParam = this.table.$db.c.req.query('returning');
+                    return await this.table.edit({
+                        setValues: body,
+                        // todo add to schema and docs that it will return uid by default if not specified
+                        returning: returningParam || this.table.mapping.uid || '*',
+                        or: tableEditSchema.shape.or.parse(this.table.$db.c.req.query('or')),
+                    }, z.string().min(1).max(255).parse(p.id));
+                },
                 path: '/edit/:id',
                 method: 'post',
                 zod: () => ({

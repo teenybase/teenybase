@@ -471,3 +471,15 @@ test('procedure run query', async () => {
 //     expect(jsons.length).toEqual(10)
 //     expect(jsons.every((j:any, i)=>j[0][0].counter === i+1)).toEqual(true)
 // })
+
+test('health endpoint', async () => {
+    const res = await fetch('https://localhost/api/v1/health')
+    expect(res.status).toEqual(200)
+    const json = await res.json() as any
+    expect(json).toHaveProperty('status', 'ok')
+    expect(json).toHaveProperty('timestamp')
+    expect(json).toHaveProperty('version')
+    expect(typeof json.timestamp).toBe('number')
+    expect(typeof json.version).toBe('number')
+    expect(json.status).toBe('ok')
+})

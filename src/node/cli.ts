@@ -77,14 +77,16 @@ class CliContext{
     get isLocal(){
         return !this.options.remote
     }
-    public root: string
-    public logger: Logger
-    public devServerLogLevel: Unstable_DevOptions['logLevel']
+    readonly root: string
+    readonly logger: Logger
+    readonly devServerLogLevel: Unstable_DevOptions['logLevel']
+    readonly devServerPort: number
     constructor(root: string|undefined, public options: GlobalCLIOptions, public wranglerConfig: WranglerConfigRet, devServerLogLevel: Unstable_DevOptions['logLevel'] = "none") {
         this.logger = createLogger(options.logLevel)
         this.root = normalizePath(root ? path.resolve(root) : process.cwd())
         this.migrationsPath = path.join(this.root, wranglerConfig.migrations)
         this.devServerLogLevel = devServerLogLevel
+        this.devServerPort = parseInt(wranglerConfig.config.dev?.port || '8787')
     }
 
     get localPersistPath(){
@@ -269,6 +271,9 @@ function readSecretsFile(c: CliContext, throwError = true, apiRoute2?: string) {
         apiRoute = undefined
         delete secrets[apiRouteKey]
     }
+    if(c.isLocal && !apiRoute){
+        apiRoute = 'http://localhost:' + c.devServerPort
+    }
     return {adminToken, apiRoute, secrets}
 }
 
@@ -285,15 +290,18 @@ async function fetchWorker(c: CliContext, fPath: string, reqOptions?: RequestIni
     }
     let _fetch = fetch
     if (c.isLocal) {
-        // check if apiRoute is accessible
-        const devServerRunning = apiRoute && !c.localWorker ? await fetch(apiRoute, {method: 'HEAD', signal: AbortSignal.timeout(1000) }).then(r=>true).catch(e => {
-            return e?.cause?.code !== 'ECONNREFUSED' && e.name !== 'TimeoutError' // todo better check
+        // check if apiRoute is accessible using the health endpoint
+        const devServerRunning = apiRoute && !c.localWorker ? await fetch(path.join(apiRoute, '/api/v1/health'), {
+            method: 'GET',
+            signal: AbortSignal.timeout(1000)
+        }).then(r=>r.ok).catch(e => {
+            return !!e && e.cause?.code !== 'ECONNREFUSED' && e.name !== 'TimeoutError' // todo better check
         }) : false
         if(devServerRunning && apiRoute) fPath = path.join(apiRoute, fPath)
         else _fetch = c.localFetch.bind(c)
     } else {
         if(!apiRoute) throw new Error(`API route(${apiRouteKey}) not found in ${prodVars}`)
-        fPath =  path.join(apiRoute, fPath)
+        fPath = path.join(apiRoute, fPath)
     }
     if(logging){
         c.logger.info(`Fetching ${fOptions.method.toUpperCase()}:${fPath}`)
