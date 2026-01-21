@@ -3,6 +3,7 @@ import {BaseTemplateProps} from "./email";
 import {MailgunBindings} from "./mailgun";
 import {SQLProcedure} from './sql'
 import {ResendBindings} from './resend'
+import {JwtAlgorithm} from '@tsndr/cloudflare-worker-jwt'
 
 export interface EmailSettings {
     from: string // default, in-case not provided in sendEmail
@@ -17,7 +18,8 @@ export interface DatabaseSettings {
     tables: TableData[]
     jwtSecret: string
     jwtIssuer?: string
-    jwtAlgorithm?: string
+    jwtAlgorithm?: JwtAlgorithm | string
+    jwtAllowedIssuers?: AllowedIssuer[]
 
     appName?: string
     appUrl: string
@@ -40,3 +42,10 @@ export interface DatabaseSettings {
 
 export type AlterSettings = {create: TableData[], drop: TableData[], alter: AlterTable[]}
 
+export type IssuerConfig = {
+    secret?: string
+    algorithm?: JwtAlgorithm | string
+    clientId?: string
+}
+
+export type AllowedIssuer = string | ({ issuer: string } & IssuerConfig)

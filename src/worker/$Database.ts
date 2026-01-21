@@ -4,7 +4,7 @@ import {HTTPException} from 'hono/http-exception'
 import {decode} from '@tsndr/cloudflare-worker-jwt'
 import {D1Error, ProcessError} from './util/error'
 import {AuthContext} from '../types/env'
-import {DatabaseSettings} from '../types/config'
+import {AllowedIssuer, DatabaseSettings} from '../types/config'
 import {JWTTokenHelper} from '../security/JWTTokenHelper'
 import {EmailSendClient} from './email/send-email'
 import {InternalKV} from './internalKV'
@@ -118,13 +118,41 @@ export class $Database<T extends $Env = $Env> extends EventTarget<$DatabaseEvent
 
         // this.notify = new NotifyClient({}, this.email)
 
+        const jwtAllowedIssuers: AllowedIssuer[] = []
+        if (this.settings.jwtAllowedIssuers) {
+            for (const issuer of this.settings.jwtAllowedIssuers) {
+                if (typeof issuer === 'string') {
+                    jwtAllowedIssuers.push(issuer)
+                } else {
+                    // Resolve secret from environment if it starts with $
+                    let secret = issuer.secret
+                    if (secret && secret[0] === '$') {
+                        secret = (c.env as any)[secret.slice(1)] || ''
+                    }
+                    // Resolve clientId from environment if it starts with $
+                    let clientId = issuer.clientId
+                    if (clientId && clientId[0] === '$') {
+                        clientId = (c.env as any)[clientId.slice(1)] || ''
+                    }
+                    // For issuers that require secrets, skip if secret is not available
+                    // For Google OAuth, secret is not required but clientId should be provided
+                    if (issuer.secret && !secret) continue
+
+                    jwtAllowedIssuers.push({
+                        issuer: issuer.issuer,
+                        secret: secret,
+                        algorithm: issuer.algorithm,
+                        clientId: clientId
+                    })
+                }
+            }
+        }
+
         const jwtSecret = this.secretResolver.resolver(this.settings.jwtSecret, true, 'JWT_SECRET for the database')
         // if (!jwtSecret()?.length) throw new HTTPException(500, {message: 'Invalid configuration - jwt secret is required'})
         this.adminJwtSecret = this.c.env.ADMIN_JWT_SECRET ? this.secretResolver.resolver('$ADMIN_JWT_SECRET', false) : async ()=>''
-        this.jwt = new JWTTokenHelper(jwtSecret, this.settings.jwtIssuer, this.settings.jwtAlgorithm, [
-            // todo
-            'https://accounts.google.com',
-        ])
+
+        this.jwt = new JWTTokenHelper(jwtSecret, this.settings.jwtIssuer, this.settings.jwtAlgorithm, jwtAllowedIssuers)
     }
 
     // setup db etc

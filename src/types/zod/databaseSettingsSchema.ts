@@ -4,12 +4,14 @@ import {zSQLProcedure} from './sqlSchemas'
 import {baseTemplatePropsSchema} from './emailTemplatePropsSchema'
 import {mailgunBindingsSchema} from './mailgunBindingsSchema'
 import {resendBindingsSchema} from './resendBindingsSchema'
+import {allowedIssuerSchema} from './jwtSchemas'
 
 export const databaseSettingsSchema = z.object({
     tables: z.array(tableDataSchema),
     jwtSecret: z.string(),
     jwtIssuer: z.string().optional(),
     jwtAlgorithm: z.string().optional(),
+    jwtAllowedIssuers: z.array(allowedIssuerSchema).optional(),
     version: z.number().optional(),
     appName: z.string().optional(),
     appUrl: z.string(),
