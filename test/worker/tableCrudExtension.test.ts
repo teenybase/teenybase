@@ -136,6 +136,8 @@ test('insert twice', async () => {
     expect(json.data.error).toEqual('UNIQUE constraint failed: users.uid: SQLITE_CONSTRAINT')
     expect(json.data.uid).toEqual({
         code: 'SQLITE_CONSTRAINT',
+        constraint: "UNIQUE",
+        errorMessage: "UNIQUE constraint failed: users.uid: SQLITE_CONSTRAINT",
         message: 'A record with this value already exists.'
     })
 

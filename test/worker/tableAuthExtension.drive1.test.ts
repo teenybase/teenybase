@@ -70,6 +70,8 @@ test('sign up with password no name', async () => {
             input: `WITH [new] ([username], [email], [password], [role], [id], [email_verified]) AS (SELECT "admin", "admin@example.com", "ef797c8118f02dfb649607dd5d3f8c7623048c9c063d532cc95c5ed7a898a64f", "guest", "O-iV9qZXTMOp1U2VV5XC9Q", 0) INSERT INTO [users] ([username], [email], [password], [role], [id], [email_verified]) SELECT [username], [email], [password], [role], [id], [email_verified] FROM [new] WHERE (([new].[role]) = "guest") RETURNING [users].[id], [users].[username], [users].[email], [users].[email_verified], [users].[role], [users].[meta];`,
             name: {
                 code: 'SQLITE_CONSTRAINT',
+                constraint: "NOT NULL",
+                errorMessage: "NOT NULL constraint failed: users.name: SQLITE_CONSTRAINT",
                 message: 'This field cannot be NULL.'
             }
         }

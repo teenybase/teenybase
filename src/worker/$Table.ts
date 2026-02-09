@@ -573,7 +573,7 @@ export class $Table<T extends $Env = any>{
             'UNIQUE constraint failed': 'A record with this value already exists.',
             'NOT NULL constraint failed': 'This field cannot be NULL.',
             // 'FOREIGN KEY constraint failed': 'Unable to find related record (Foreign Key).',
-            'FOREIGN KEY constraint failed': 'Foreign Key constraint failed.',
+            'FOREIGN KEY constraint failed': 'Foreign Key constraint failed.', // todo add test for this
         } as Record<string, string>
         const parts = msg.split(':').map(p=>p.trim())
         const column = parts.find(p=>{
