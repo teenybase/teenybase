@@ -96,21 +96,30 @@ export async function loadConfigFromFile(
         // return null
     }
 
-    // const isESM =
-    //     typeof process.versions.deno === 'string' || isFilePathESM(resolvedPath)
-    const isESM = true // todo
-
     try {
-        const bundled = await bundleCode(resolvedPath, logLevel)
-        const userConfig = await loadConfigFromBundledFile(
-            bundled,
-            resolvedPath,
-        )
-        debug?.(`bundled config file loaded in ${getTime()}`)
+        let config: any;
 
-        const config: any = await (typeof userConfig === 'function'
-            ? userConfig()
-            : userConfig)
+        // Handle JSON/JSONC files directly without bundling
+        if (resolvedPath.endsWith('.json') || resolvedPath.endsWith('.jsonc')) {
+            config = parseJSONC(readFileSync(resolvedPath), resolvedPath);
+        } else {
+            // Handle JS/TS files by bundling and executing
+
+            // const isESM =
+            //     typeof process.versions.deno === 'string' || isFilePathESM(resolvedPath)
+            const isESM = true // todo
+            const bundled = await bundleCode(resolvedPath, logLevel)
+            const userConfig = await loadConfigFromBundledFile(
+                bundled,
+                resolvedPath,
+            )
+            debug?.(`bundled config file loaded in ${getTime()}`)
+
+            config = await (typeof userConfig === 'function'
+                ? userConfig()
+                : userConfig)
+        }
+
         // todo validate zod
         if (!isObject(config)) {
             throw new Error(`config must export or return an object.`)

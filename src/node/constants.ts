@@ -45,10 +45,12 @@ export const VERSION = version as string
 // ]
 
 export const DEFAULT_CONFIG_FILES = [
+    'teenybase.jsonc',
     'teenybase.json',
     'teenybase.js',
     'teenybase.mjs',
     'teenybase.ts',
+    'teeny.config.jsonc',
     'teeny.config.json',
     'teeny.config.js',
     'teeny.config.mjs',
