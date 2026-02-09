@@ -10,11 +10,11 @@ export interface $CloudflareBindings {
     DATABASE_SETTINGS?: string; // JSON.stringify(DatabaseSettings)
 }
 
-export interface $Env {
-    Bindings: $CloudflareBindings,
+export interface $Env<Bindings = {}, Variables = {}> {
+    Bindings: $CloudflareBindings & Bindings,
     Variables: {
         auth?: AuthContext
         settings: DatabaseSettings
         $db: $Database
-    }
+    } & Variables
 }
