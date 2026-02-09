@@ -17,8 +17,19 @@ export class ProcessError extends HTTPException{
     }
 }
 
+export type D1ColumnError = {
+    code: string,
+    message: string,
+    errorMessage: string,
+    constraint?: string,
+}
+
+export type D1ErrorData = {
+    [key: string]: any | D1ColumnError
+}
+
 export class D1Error extends Error{
-    get data(){
+    get data(): D1ErrorData & {input?: string, error: string, cause?: any} {
         return {
             error: this.errorMessage,
             // cause: (this.cause as any)?.message ? (this.cause as any).message : this.cause,
@@ -26,8 +37,8 @@ export class D1Error extends Error{
             ...this._data,
         }
     }
-    private _data?: Record<string, any>
-    set data(d: Record<string, any>){
+    private _data?: D1ErrorData
+    set data(d: D1ErrorData){
         this._data = d
     }
     constructor(public message: string, public errorMessage: string, public cause: any, public input?: string){

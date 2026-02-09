@@ -9,7 +9,7 @@ export {OpenApiExtension} from './util/openapi'
 
 export {PocketUIExtension} from './util/pocketui'
 
-export {D1Error, HTTPError, ProcessError} from './util/error'
+export {D1Error, HTTPError, ProcessError, D1ColumnError, D1ErrorData} from './util/error'
 export {D1RunEvent, D1RunEventInput, D1RunFailEvent, SQLRunContext, SQLRunTransactionContext, D1PreparedTransaction, D1PreparedQuery} from './util/sql'
 
 export {SecretResolver} from './secretResolver'

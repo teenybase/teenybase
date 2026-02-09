@@ -21,6 +21,7 @@ import {tableAuthDataSchema} from '../../types/zod/tableExtensionsSchema'
 import {decode} from '@tsndr/cloudflare-worker-jwt'
 import {defaultSchema, jwtTokenSchema, uidTokenSchema} from './tableAuthExtension.schema'
 import {setupTableAuthExtensionRoutes} from './tableAuthExtension.routes'
+import {D1Error} from '../util/error'
 
 type UserFields = {
     emailVerified?: boolean
@@ -576,12 +577,61 @@ export class TableAuthExtension extends TableExtension<TableAuthExtensionData> {
             if(this.mapping.passwordSalt) values[this.mapping.passwordSalt] = {l: salt}
         }
 
-        const res = await this.table.$db.rawInsert(this.table, {
-            table: this.jc.tableName,
-            values,
-            returning: this._userFields(),
-        })?.run() ?? []
-        return this._fieldsToUser(res[0])
+        const baseUsername = externalData.username || email?.split('@')[0].toLowerCase().replace(/[^a-z0-9_]/g, '')||''
+        const maxRetries = 5
+        let lastError: any = null
+        let isConstraintError: boolean = false
+
+        for(let attempt = 0; attempt < maxRetries; attempt++) {
+            if(this.mapping.username) {
+                // On first attempt, use base username; on retries, append random suffix
+                const username = attempt === 0 ? baseUsername : `${baseUsername}_${randomString(4).toLowerCase()}`
+                values[this.mapping.username] = {l: username}
+            }
+
+            isConstraintError = false
+            try {
+                const res = await this.table.$db.rawInsert(this.table, {
+                    table: this.jc.tableName,
+                    values: {...values},
+                    returning: this._userFields(),
+                })?.run() ?? []
+                return this._fieldsToUser(res[0])
+            } catch (error: any) {
+                lastError = error
+                if(error instanceof D1Error){
+                    // edata structure for reference:
+                    //  {
+                    //   "error": "UNIQUE constraint failed: users.username: SQLITE_CONSTRAINT",
+                    //   "username": {
+                    //     "code": "SQLITE_CONSTRAINT",
+                    //     "message": "UNIQUE constraint failed"
+                    //   }
+                    //  }
+                    const edata = error.data
+                    // Check if it's a username constraint violation specifically
+
+                    // const errStr = edata?.error || error.message || ''
+                    // const isUniqueConstraint = errStr.toLowerCase().includes('unique constraint failed')
+
+                    const col = this.mapping.username && edata ? edata[this.mapping.username] : undefined
+                    isConstraintError = col && col.code?.toUpperCase() === 'SQLITE_CONSTRAINT' && (
+                        col.errorMessage?.toLowerCase().includes('unique constraint failed') ||
+                        col.constraint?.toUpperCase() === 'UNIQUE'
+                    )
+                    // console.error(`Attempt ${attempt + 1} failed with error:`, errStr)
+                    // console.error(JSON.stringify(edata, null, 2), isConstraintError)
+                }
+            }
+            if(isConstraintError && attempt < maxRetries - 1) {
+                // Retry with a different username
+                continue
+            }
+            // If not a constraint error or max retries reached, throw the error
+            break
+        }
+
+        throw lastError || new HTTPException(500, {message: 'Failed to create user after multiple attempts'})
     }
 
     private _fieldsToUser(res: any, asAdmin?: false): UserFields|null;

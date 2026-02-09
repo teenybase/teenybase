@@ -20,7 +20,7 @@ import {z} from 'zod'
 import {TableFieldUsage} from './usages'
 import {generateUid} from '../security/random'
 import {$Database} from './$Database'
-import {D1Error, ProcessError} from './util/error'
+import {D1Error, D1ColumnError, ProcessError, D1ErrorData} from './util/error'
 import {TableCrudExtension} from './extensions/tableCrudExtention'
 import {TableFieldData} from '../types/field'
 import {TableData} from '../types/table'
@@ -105,7 +105,7 @@ export class $Table<T extends $Env = any>{
             const extClass = (extensions as any)[ext.name]
             // todo dont pass $db.c here, remove dep from TableAuthExtension
             if (extClass) this.extensions.push(new extClass(ext as any, this, jc, $db.c))
-            else throw new ProcessError('Invalid extension ' + ext.name + ' for table ' + data.name, 500)
+            else throw new ProcessError('Invalid extension ' + ext.name + ' for table ' + data.name + ' - ' + JSON.stringify(ext), 500)
         }
 
         if(this.data.idInR2 && (!this.mapping.uid || !this.fields[this.mapping.uid].noUpdate)) throw new ProcessError('Invalid Configuration for idInR2 - uid field must be present and set to noUpdate', 500)
@@ -564,7 +564,8 @@ export class $Table<T extends $Env = any>{
 
     parseD1Error(e: D1Error){
         const msg: string = e?.errorMessage
-        // todo check for other error types.
+        // todo check for other error types (other than constraints also)
+        // todo handle multiple column errors at once
         // NOT NULL constraint failed: files.config: SQLITE_CONSTRAINT
         // FOREIGN KEY constraint failed: SQLITE_CONSTRAINT
         // UNIQUE constraint failed: users.email: SQLITE_CONSTRAINT
@@ -582,12 +583,17 @@ export class $Table<T extends $Env = any>{
         const mess = parts[0]
         if(column){
             const code = parts.pop()
+            const ci = mess.indexOf('constraint failed')
+            const constraint = ci !== -1 ? mess.substring(0, ci-1) : undefined
+            const dat = {
+                code,
+                message: errorMap[mess] ?? mess,
+                errorMessage: msg,
+            } as D1ColumnError
+            if(constraint?.length) dat.constraint = constraint
             e.data = {
-                [column]: {
-                    code,
-                    message: errorMap[mess] ?? mess,
-                }
-            }
+                [column]: dat
+            } as D1ErrorData
         }else if(errorMap[mess]){
             e.message += ' - ' + errorMap[mess]
         }
