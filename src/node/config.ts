@@ -167,7 +167,7 @@ export async function loadWranglerConfigFromFile(
 
     try {
         let loadedConfig = {}
-        if(resolvedPath.endsWith('.json')){
+        if(resolvedPath.endsWith('.json') || resolvedPath.endsWith('.jsonc')){
             loadedConfig = parseJSONC(readFileSync(resolvedPath), resolvedPath);
         }else if(resolvedPath.endsWith('.toml')){
             loadedConfig = parseTOML(readFileSync(resolvedPath), resolvedPath);
@@ -185,4 +185,3 @@ export async function loadWranglerConfigFromFile(
         throw e
     }
 }
-

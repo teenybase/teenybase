@@ -59,6 +59,7 @@ export const DEFAULT_CONFIG_FILES = [
 ]
 
 export const DEFAULT_WRANGLER_CONFIG_FILES = [
+    'wrangler.jsonc',
     'wrangler.json', // todo prefer json?
     'wrangler.toml',
 ]
