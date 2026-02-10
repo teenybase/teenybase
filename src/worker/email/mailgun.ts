@@ -191,7 +191,7 @@ export const zMailgunWebhookData= z.object({
         token: z.string(),
         signature: z.string()
     }),
-    'event-data': z.record(z.string()) // todo could it be anything else?
+    'event-data': z.record(z.string(), z.string()) // todo could it be anything else?
 })
 
 type VerifyParams = MailgunWebhookData['signature'] & {

@@ -1,12 +1,12 @@
 import {z} from 'zod';
 
 export const sqlExprSchema = z.string().max(1000).regex(/^[a-zA-Z0-9_=\s():.*~%'"><!+\-&|@,\/\\${}]*$/, 'Invalid expression')
-export const sqlExprSchemaRecord = z.record(sqlExprSchema)
+export const sqlExprSchemaRecord = z.record(z.string(), sqlExprSchema)
 export const sqlValSchema = z.string().or(z.number()).or(z.boolean()).or(z.null())
 export const sqlValSchemaFile = z.boolean().or(z.string().or(z.number()).or(z.null()).or(z.instanceof(File)))
-export const sqlValSchemaRecord = z.record(sqlValSchema)
+export const sqlValSchemaRecord = z.record(z.string(), sqlValSchema)
 export const sqlValSchema2 = sqlValSchema.or(sqlValSchemaRecord)
-export const sqlValSchemaFile2 = z.record(sqlValSchemaFile)
+export const sqlValSchemaFile2 = z.record(z.string(), sqlValSchemaFile)
 export const sqlValSchemaFile3 = sqlValSchemaFile2.or(z.array(sqlValSchemaFile2))
 export const sqlColListSchema = z.string().regex(/^[a-zA-Z0-9_,\s]*$/).or(z.literal('*'))
 export const sqlColListSchemaOrder = z.string().regex(/^[a-zA-Z0-9_,\s+-]*$/)
@@ -20,7 +20,7 @@ export const tableColumnNameSchema = z.string()
 
 export const zSQLQuery = z.object({
     q: z.string(),
-    p: z.record(sqlValSchema2).optional()
+    p: z.record(z.string(), sqlValSchema2).optional()
 })
 export const zSQLLiteral = z.object({
     l: sqlValSchema2,
@@ -43,8 +43,8 @@ export const selectSchema = z.object({
 })
 export const updateSchema = z.object({
     or: zOnConflict.optional(),
-    set: z.record(sqlExprSchema).optional(),
-    setValues: z.record(sqlValSchema).optional(),
+    set: z.record(z.string(), sqlExprSchema).optional(),
+    setValues: z.record(z.string(), sqlValSchema).optional(),
     where: sqlExprSchema,
     returning: z.array(sqlExprSchema).or(sqlExprSchema).optional()
 })

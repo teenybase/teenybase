@@ -12,7 +12,7 @@ export const tableFieldTypeToZod = {
     datetime: z.string(),
     time: z.string(),
     timestamp: z.string(),
-    json: z.record(z.any()),
+    json: z.record(z.string(), z.any()),
     // file: z.instanceof(File),
     file: z.string(),
     // relation: z.string(),

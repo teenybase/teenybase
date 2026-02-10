@@ -11,7 +11,7 @@ export const tableRulesDataSchema = z.object({
 })
 export const emailTemplateSchema = z.object({
     subject: z.string().optional(),
-    variables: z.record(z.any()).optional(),
+    variables: z.record(z.string(), z.any()).optional(),
     tags: z.string().optional(),
     layoutHtml: z.string().optional(),
 })

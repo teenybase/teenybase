@@ -15,7 +15,7 @@ export const tableDataSchema = z.object({
     indexes: z.array(zSQLIndex).optional(),
     triggers: z.array(zSQLTrigger).optional(),
     autoSetUid: z.coerce.boolean().optional(),
-    extensions: z.array(z.record(z.any()).and(z.object({name: z.string()}))),
+    extensions: z.array(z.record(z.string(), z.any()).and(z.object({name: z.string()}))),
     lastName: tableColumnNameSchema.optional(),
     fullTextSearch: z.object({
         enabled: z.coerce.boolean().optional(),

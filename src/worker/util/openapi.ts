@@ -26,7 +26,7 @@ export class OpenApiExtension<T extends $Env = $Env> extends $DBExtension<T>{
                     '200': {
                         description: 'Success',
                         content: {'application/json': {
-                                schema: z.record(z.unknown()),
+                                schema: z.record(z.string(), z.unknown()),
                             }},
                     }
                 },

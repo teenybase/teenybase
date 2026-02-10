@@ -1320,7 +1320,7 @@ export class $Database<T extends $Env = $Env> extends EventTarget<$DatabaseEvent
                 headers: z.object({authorization: z.string().min(1).max(255).optional()}).describe('Auth token'),
                 body: {
                     description: 'Function parameters',
-                    content: {'application/json': {schema: z.record(z.any()).describe('Function parameters')}},
+                    content: {'application/json': {schema: z.record(z.string(), z.any()).describe('Function parameters')}},
                     required: false,
                 },
             },
@@ -1368,7 +1368,7 @@ export class $Database<T extends $Env = $Env> extends EventTarget<$DatabaseEvent
                     description: 'Success',
                     content: {'application/json': {schema: z.object({
                         logs: z.array(z.string()),
-                        result: z.object({status: z.number(), body: z.string(), headers: z.record(z.string())}).optional(),
+                        result: z.object({status: z.number(), body: z.string(), headers: z.record(z.string(), z.string())}).optional(),
                     })}},
                 },
             },
