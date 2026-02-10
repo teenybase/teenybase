@@ -3,7 +3,7 @@ import {$Database} from '../$Database'
 import {HttpRouteZod} from '../../types/route'
 import {$DBExtension} from '../$DBExtension'
 import {deleteCookie, getSignedCookie, setCookie, setSignedCookie} from 'hono/cookie'
-import {StatusCode} from 'hono/utils/http-status'
+import {ContentfulStatusCode, StatusCode} from 'hono/utils/http-status'
 import {decode} from '@tsndr/cloudflare-worker-jwt'
 import {$Env} from '../env'
 
@@ -196,7 +196,7 @@ export class PocketUIExtension<T extends PocketUiEnv = PocketUiEnv> extends $DBE
     }
 
     // minimal login page, but a proper one is used in pocket-ui
-    private loginPage = (msg?: string, code: StatusCode = 200) => this.db.c.html(`
+    private loginPage = (msg?: string, code: ContentfulStatusCode = 200) => this.db.c.html(`
   <!DOCTYPE html>
     <html lang="en" data-theme="light">
     <head>
