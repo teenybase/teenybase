@@ -97,7 +97,7 @@ test('sign up with password', async () => {
     expect(json.verified).toEqual(false)
     const authExt = settings.tables.find(t=>t.name==='users')?.extensions.find(e=>e.name==='auth') as TableAuthExtensionData
     expect(authExt).toBeDefined()
-    await jwt.verify(json.token, authExt!.jwtSecret, {throwError: true})
+    await jwt.verify(json.token, settings.jwtSecret + authExt.jwtSecret, {throwError: true})
     const decode = jwt.decode(json.token).payload!
     // console.log(decode)
     expect(decode.aud).toEqual(['guest'])
@@ -155,7 +155,7 @@ test('login with pass and token refresh', async () => {
     expect(authExt).toBeDefined()
     const token = json.token
     expect(token).toBeDefined()
-    await jwt.verify(token, authExt!.jwtSecret, {throwError: true})
+    await jwt.verify(token, settings.jwtSecret + authExt.jwtSecret, {throwError: true})
     const decode = jwt.decode(token).payload!
     const sid = (decode as any).sid
     expect(sid).toMatch(/[A-Za-z0-9\-_]{21}/)
@@ -180,7 +180,7 @@ test('login with pass and token refresh', async () => {
     expect(res2.status).toEqual(200)
     const json2 = await res2.json() as any
     expect(token).not.toEqual(json2.token)
-    await jwt.verify(json2.token, authExt!.jwtSecret, {throwError: true})
+    await jwt.verify(json2.token, settings.jwtSecret + authExt.jwtSecret, {throwError: true})
     const decode2 = jwt.decode(json2.token).payload!
     // console.log(decode2)
     // expect((decode2 as any).rc).toEqual(1)
@@ -198,7 +198,7 @@ test('login with pass admin', async () => {
     const json = await res.json() as any
     const authExt = settings.tables.find(t=>t.name==='users')?.extensions.find(e=>e.name==='auth') as TableAuthExtensionData
     expect(authExt).toBeDefined()
-    await jwt.verify(json.token, authExt!.jwtSecret, {throwError: true})
+    await jwt.verify(json.token, settings.jwtSecret + authExt.jwtSecret, {throwError: true})
     const decode = jwt.decode(json.token).payload! as any
     delete decode.iat
     delete decode.exp

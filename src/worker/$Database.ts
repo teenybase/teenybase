@@ -23,7 +23,7 @@ import {
     R2ObjectBody,
     R2PutOptions,
     type ReadableStream
-} from '@cloudflare/workers-types/2023-07-01/index'
+} from '@cloudflare/workers-types'
 import {MigrationHelper} from './migrationHelper'
 import {LinearRouter} from 'hono/router/linear-router'
 import {parseRequestBody} from './util/parseRequestBody'

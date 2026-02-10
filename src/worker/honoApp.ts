@@ -21,7 +21,9 @@ export function teenyHono<T extends $Env=$Env>(
 ){
     app = app ?? new Hono<T>()
 
-    options.onError !== false && app.onError(typeof options.onError === 'function' ? options.onError : honoErrorHandler)
+    options.onError !== false && app.onError(typeof options.onError === 'function' ? options.onError : (err, c) => {
+        return honoErrorHandler(err, c)
+    })
 
     !!options.logger && app.use(logger(typeof options.logger === 'boolean' ? undefined : options.logger))
     !!options.cors && app.use('*', async (c, next) => {

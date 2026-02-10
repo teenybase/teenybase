@@ -1,4 +1,4 @@
-import {z} from 'zod'
+import {z, ZodError} from 'zod'
 import {TableExtension} from '../tableExtension'
 import {TableAuthExtensionData} from '../../types/tableExtensions'
 import {HTTPException} from 'hono/http-exception'
@@ -955,10 +955,11 @@ export class TableAuthExtension extends TableExtension<TableAuthExtensionData> {
                 const confirmVal = (record[field + this.data.passwordConfirmSuffix] as SQLLiteral)?.l
                 // zod match so we get proper errors
                 // https://github.com/colinhacks/zod/discussions/1525
-                zParseWithPath(z.literal(val, {
+                zParseWithPath(z.coerce.boolean().refine(bool => bool == true, {
                     // todo better error message
-                    errorMap: () => ({ message: `${field} and ${field + this.data.passwordConfirmSuffix} do not match` }),
+                    message: `${field} and ${field + this.data.passwordConfirmSuffix} do not match`
                 }), confirmVal, [field + this.data.passwordConfirmSuffix])
+
                 if (val !== confirmVal) throw new HTTPException(400, {message: 'unknown zod error'})
                 delete record[field + this.data.passwordConfirmSuffix]
             }

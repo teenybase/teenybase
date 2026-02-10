@@ -13,6 +13,7 @@ import {URL} from 'url'
 import {generateMigrations} from '../sql/schema/generateMigrations'
 import {jsonStringify} from '../utils/string'
 import {databaseSettingsSchema} from '../types/zod/databaseSettingsSchema'
+import { RequestInfo } from '@cloudflare/workers-types'
 
 export const adminTokenKey = 'ADMIN_SERVICE_TOKEN'
 export const apiRouteKey = 'API_ROUTE'
@@ -65,8 +66,6 @@ export const filterDuplicateOptions = <T extends object>(options: GlobalCLIOptio
 //     return ctx.c
 // }
 const localPersist = '.local-persist'
-
-declare type RequestInfo = string | URL | Request
 
 export class CliContext{
     localWorker: Unstable_DevWorker|undefined
@@ -174,6 +173,7 @@ export class CliContext{
     async localFetch(input?: RequestInfo, init?: RequestInit): Promise<Response>{
         const w = await this.startLocal()
         if(!w) throw new Error('Unable to start local worker')
+        // @ts-expect-error check in next version, type mismatch between undici and cloudflare workers, but should be compatible
         return await w.fetch(input, init as any) as any
     }
     private _stopping = false
@@ -324,6 +324,7 @@ export async function fetchWorker(c: CliContext, fPath: string, reqOptions?: Req
             return !!e && e.cause?.code !== 'ECONNREFUSED' && e.name !== 'TimeoutError' // todo better check
         }) : false
         if(devServerRunning && apiRoute) fPath = path.join(apiRoute, fPath)
+        // @ts-expect-error check in next version, type mismatch between undici and cloudflare workers, but should be compatible
         else _fetch = c.localFetch.bind(c)
     } else {
         if(!apiRoute) throw new Error(`API route(${apiRouteKey}) not found in ${prodVars}`)

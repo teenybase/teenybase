@@ -28,7 +28,7 @@ export const zJsonString = z.string()
 export function zParseWithPath<T>(schema: z.ZodType<T>, val: unknown, path: string[]): T {
     const result = schema.safeParse(val)
     if (!result.success) {
-        throw new z.ZodError(
+        throw new z.ZodRealError(
             result.error.issues.map(issue => ({
                 ...issue,
                 path: [...path, ...issue.path],
