@@ -2,7 +2,7 @@ import {$Table} from '../$Table'
 import {SQLQuery} from '../../types/sql'
 import {D1Query} from '../../sql/build/d1'
 import {QueryType, QueryTypes} from '../../sql/build/query'
-import {D1PreparedStatement} from '@cloudflare/workers-types'
+import {D1PreparedStatement, D1Result, EventInit} from '@cloudflare/workers-types'
 
 export interface SQLRunContext<TR = any, TRet = TR[]|any, QT extends QueryType = QueryType>{
     type: QT
