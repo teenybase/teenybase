@@ -22,6 +22,7 @@ import {decode} from '@tsndr/cloudflare-worker-jwt'
 import {defaultSchema, jwtTokenSchema, uidTokenSchema} from './tableAuthExtension.schema'
 import {setupTableAuthExtensionRoutes} from './tableAuthExtension.routes'
 import {D1Error} from '../util/error'
+import {zParseWithPath} from '../../utils/zod'
 
 type UserFields = {
     emailVerified?: boolean
@@ -84,10 +85,10 @@ export class TableAuthExtension extends TableExtension<TableAuthExtensionData> {
             this._parseUsername(record)
 
             if (this.mapping.email) this._parseEmail(record)
-            if (this.mapping.name) defaultSchema.name.parse((record[this.mapping.name] as SQLLiteral)?.l, {path: [this.mapping.name]})
+            if (this.mapping.name) zParseWithPath(defaultSchema.name, (record[this.mapping.name] as SQLLiteral)?.l, [this.mapping.name])
 
             if (this.mapping.emailVerified) {
-                let val = defaultSchema.emailVerified.parse((record[this.mapping.emailVerified] as SQLLiteral)?.l, {path: [this.mapping.emailVerified]})
+                let val = zParseWithPath(defaultSchema.emailVerified, (record[this.mapping.emailVerified] as SQLLiteral)?.l, [this.mapping.emailVerified])
 
                 if(!this.jc.globals.auth?.admin) {
                     if (val !== undefined) throw new HTTPException(400, {message: `${this.mapping.emailVerified} must not be set`})
@@ -230,7 +231,7 @@ export class TableAuthExtension extends TableExtension<TableAuthExtensionData> {
 
         const record = recordToSqlValues(data)
         const username = (this.mapping.email && record[this.mapping.email]) ? this._parseEmail(record) :
-            record['identity'] ? defaultSchema.identity.parse(record['identity'].l, {path: ["identity"]}) :
+            record['identity'] ? zParseWithPath(defaultSchema.identity, record['identity'].l, ["identity"]) :
             this._parseUsername(record)
 
         const invalid = async()=>{
@@ -883,7 +884,7 @@ export class TableAuthExtension extends TableExtension<TableAuthExtensionData> {
         if (!this.mapping.username) return
         let val = (record[this.mapping.username] as SQLLiteral)?.l
         if (typeof val !== 'string') throw new HTTPException(400, {message: `${this.mapping.username} must be a value, expressions not support in username`})
-        val = defaultSchema.username.parse(val, {path: [this.mapping.username]})
+        val = zParseWithPath(defaultSchema.username, val, [this.mapping.username])
         record[this.mapping.username] = {l: val}
         return val
     }
@@ -891,7 +892,7 @@ export class TableAuthExtension extends TableExtension<TableAuthExtensionData> {
         if (!this.mapping.email) throw new HTTPException(500, {message: 'Invalid Configuration'})
         let val = (record[this.mapping.email] as SQLLiteral)?.l
         if (typeof val !== 'string') throw new HTTPException(400, {message: `${this.mapping.email} must be a value, expressions not support in email`})
-        val = defaultSchema.email.parse(val, {path: [this.mapping.email]})
+        val = zParseWithPath(defaultSchema.email, val, [this.mapping.email])
         if(this.data.normalizeEmail !== false) {
             try{
                 val = normalizeEmail(val);
@@ -908,7 +909,7 @@ export class TableAuthExtension extends TableExtension<TableAuthExtensionData> {
     private async _parseCurrentPasswordField(record: Record<string, SQLLiteral>, salt: string) {
         let current = record[this.mapping.password! + this.data.passwordCurrentSuffix!]?.l
         if (!current || typeof current !== 'string') throw new HTTPException(400, {message: `${this.mapping.password! + this.data.passwordCurrentSuffix!} is required`})
-        current = defaultSchema.password.parse(current, {path: [this.mapping.password! + this.data.passwordCurrentSuffix!]})
+        current = zParseWithPath(defaultSchema.password, current, [this.mapping.password! + this.data.passwordCurrentSuffix!])
         delete record[this.mapping.password! + this.data.passwordCurrentSuffix!]
         return await this._hashPassword(current, salt)
     }
@@ -948,16 +949,16 @@ export class TableAuthExtension extends TableExtension<TableAuthExtensionData> {
             let val = (record[field] as SQLLiteral)?.l
             if (!val) throw new HTTPException(400, {message: `${field} is required`})
             if (typeof val !== 'string') throw new HTTPException(400, {message: `${field} must be a value, expressions not support in password`})
-            val = defaultSchema.password.parse(val, {path: [field]})
+            val = zParseWithPath(defaultSchema.password, val, [field])
 
             if (this.data.passwordConfirmSuffix) {
                 const confirmVal = (record[field + this.data.passwordConfirmSuffix] as SQLLiteral)?.l
                 // zod match so we get proper errors
                 // https://github.com/colinhacks/zod/discussions/1525
-                z.literal(val, {
+                zParseWithPath(z.literal(val, {
                     // todo better error message
                     errorMap: () => ({ message: `${field} and ${field + this.data.passwordConfirmSuffix} do not match` }),
-                }).parse(confirmVal, {path: [field + this.data.passwordConfirmSuffix]})
+                }), confirmVal, [field + this.data.passwordConfirmSuffix])
                 if (val !== confirmVal) throw new HTTPException(400, {message: 'unknown zod error'})
                 delete record[field + this.data.passwordConfirmSuffix]
             }
@@ -979,7 +980,7 @@ export class TableAuthExtension extends TableExtension<TableAuthExtensionData> {
         if (!field) throw new HTTPException(500, {message: 'Invalid Configuration'})
         let val = (record[field])?.l
         if (typeof val !== 'string') throw new HTTPException(400, {message: `${field} must be a value, expressions not support in password`})
-        val = defaultSchema.password.parse(val, {path: [field]})
+        val = zParseWithPath(defaultSchema.password, val, [field])
         val = await this._hashPassword(val, salt)
         record[field] = {l: val}
         return val

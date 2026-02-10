@@ -47,6 +47,7 @@ import {
 import {OptionalOmit} from './util/types'
 import {SecretResolver} from './secretResolver'
 import {databaseSettingsSchema} from '../types/zod/databaseSettingsSchema'
+import {zParseWithPath} from '../utils/zod'
 
 export type $DatabaseEventMap = {
     // run_sql: D1RunEvent
@@ -1309,7 +1310,7 @@ export class $Database<T extends $Env = $Env> extends EventTarget<$DatabaseEvent
         method: 'post',
         handler: async(body, params)=>{
             if(!body || typeof body !== 'object' || Array.isArray(body)) throw new HTTPException(400, {message: 'Invalid request body'})
-            const fn_name = z.string().min(1).max(255).describe('Name of the stored procedure').parse(params.fn_name, {path: ['fn_name']})
+            const fn_name = zParseWithPath(z.string().min(1).max(255).describe('Name of the stored procedure'), params.fn_name, ['fn_name'])
             const res = await (await this._rawProcedure(fn_name, body))?.run()
             return res ?? []
         },

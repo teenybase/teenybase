@@ -20,3 +20,20 @@ export const zJsonString = z.string()
             return z.NEVER
         }
     } )
+
+/**
+ * Helper function to parse with path context
+ * @deprecated - don't use, throw custom errors
+ */
+export function zParseWithPath<T>(schema: z.ZodType<T>, val: unknown, path: string[]): T {
+    const result = schema.safeParse(val)
+    if (!result.success) {
+        throw new z.ZodError(
+            result.error.issues.map(issue => ({
+                ...issue,
+                path: [...path, ...issue.path],
+            }))
+        )
+    }
+    return result.data
+}
