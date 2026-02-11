@@ -15,19 +15,6 @@ import {columnify, createJsepContext, honoToJsep, ident} from '../sql/parse/jsep
 import {logSQLQuery, QueryType} from '../sql/build/query'
 import {D1Query, sqlQueryToD1Query} from '../sql/build/d1'
 import {z} from 'zod'
-import {
-    D1Database,
-    D1PreparedStatement,
-    D1Result,
-    R2Bucket,
-    R2Conditional,
-    R2GetOptions,
-    R2Object,
-    R2ObjectBody,
-    R2PutOptions,
-    type ReadableStream,
-    EventTarget,
-} from '@cloudflare/workers-types'
 import {MigrationHelper} from './migrationHelper'
 import {LinearRouter} from 'hono/router/linear-router'
 import {parseRequestBody} from './util/parseRequestBody'
