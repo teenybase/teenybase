@@ -65,7 +65,8 @@ export class PocketUIExtension<T extends PocketUiEnv = PocketUiEnv> extends $DBE
                 raw: async () => {
                     // await this._initAuth()
                     if (this.db.auth.uid) return this.db.c.redirect('./')
-                    return this.loginPage()
+                    const iframe = this.db.c.req.query('iframe') !== undefined
+                    return this.loginPage(undefined, 200, iframe)
                 }
             },
             zod: () => (<HttpRouteZod>{
@@ -90,10 +91,12 @@ export class PocketUIExtension<T extends PocketUiEnv = PocketUiEnv> extends $DBE
             method: 'post',
             handler: {
                 raw: async () => {
+                    const iframe = this.db.c.req.query('iframe') !== undefined
+
                     // await this._initAuth()
                     if (this.db.auth.uid) return this.db.c.redirect('./')
                     let {username, password} = (await this.db.getRequestBody()) ?? {}
-                    if (!password) return this.loginPage('Password required', 400)
+                    if (!password) return this.loginPage('Password required', 400, iframe)
 
                     if(username === 'viewer' && password === this.db.c.env['POCKET_UI_VIEWER_PASSWORD'])
                         password = this.db.c.env['ADMIN_SERVICE_TOKEN']
@@ -110,7 +113,7 @@ export class PocketUIExtension<T extends PocketUiEnv = PocketUiEnv> extends $DBE
                         if (this.db.c.env.RESPOND_WITH_ERRORS && e?.message) err = 'Unable to login - ' + e.message
                         token = null
                     }
-                    if (!token) return this.loginPage(err, 400)
+                    if (!token) return this.loginPage(err, 400, iframe)
 
                     const data: any = decode(token).payload
                     data.email = data.sub
@@ -192,31 +195,45 @@ export class PocketUIExtension<T extends PocketUiEnv = PocketUiEnv> extends $DBE
                 }
             })
         })
-
     }
 
     // minimal login page, but a proper one is used in pocket-ui
-    private loginPage = (msg?: string, code: ContentfulStatusCode = 200) => this.db.c.html(`
-  <!DOCTYPE html>
-    <html lang="en" data-theme="light">
-    <head>
-      <meta charset="UTF-8">
-      <meta name="viewport" content="width=device-width, initial-scale=1.0">
-      <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/@picocss/pico@2/css/pico.min.css"/>
-      <title>Login</title>
-    </head>
-    <body style="margin: 3rem;">
-    <article style="max-width: 600px; margin: auto; padding: 30px;">
-          <h1>Pocket UI Login</h1>
-          ${msg ? `<p style="color:red">${msg}</p>` : ''}
-      <form action="login" method="post" style="display: flex; flex-direction: column; gap: 10px;">
-          <input type="text" name="username" value="viewer" required>
-          <input type="password" name="password" placeholder="ADMIN_SERVICE_TOKEN" required autofocus>
-          <button class="contrast" type="submit">Login</button>
-      </form>
-      </article>
-    </body>
-    </html>
-  `, code)
+    private loginPage = (msg?: string, code: ContentfulStatusCode = 200, iframe = false) => {
+        const loginEndpoint = 'login' + (iframe ? '?iframe' : '')
+
+        return this.db.c.html(`
+      <!DOCTYPE html>
+        <html lang="en" data-theme="light">
+        <head>
+          <meta charset="UTF-8">
+          <meta name="viewport" content="width=device-width, initial-scale=1.0">
+          <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/@picocss/pico@2/css/pico.min.css"/>
+          <title>Login</title>
+        </head>
+        <body style="margin: 3rem;">
+        <article style="max-width: 600px; margin: auto; padding: 30px;">
+              <h1>Pocket UI Login</h1>
+              ${msg ? `<p style="color:red">${msg}</p>` : ''}
+          <form id="loginForm" action="${loginEndpoint}" method="post" style="display: flex; flex-direction: column; gap: 10px;">
+              <input type="text" id="username" name="username" value="viewer" required>
+              <input type="password" id="password" name="password" placeholder="ADMIN_SERVICE_TOKEN" required autofocus>
+              <button class="contrast" type="submit">Login</button>
+          </form>
+          </article>
+        </body>
+      ${iframe ? `<script>
+    window && window.addEventListener('message', (event) => {
+      // if (event.origin !== window.location.origin) return;
+      const {username, password} = event.data || {};
+      if (username && password) {
+        document.getElementById('username').value = username;
+        document.getElementById('password').value = password;
+        document.getElementById('loginForm').submit();
+      }
+    });
+    </script>` : ''}
+        </html>
+      `, code)
+    }
 
 }
