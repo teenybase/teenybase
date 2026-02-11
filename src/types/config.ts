@@ -14,6 +14,16 @@ export interface EmailSettings {
     resend?: ResendBindings
 }
 
+export interface AuthCookieConfig {
+    name: string
+    httpOnly?: boolean
+    secure?: boolean
+    sameSite?: 'Strict' | 'Lax' | 'None'
+    path?: string
+    maxAge?: number
+    domain?: string
+}
+
 export interface DatabaseSettings {
     tables: TableData[]
     jwtSecret: string
@@ -27,6 +37,8 @@ export interface DatabaseSettings {
     procedures?: SQLProcedure[]
 
     email?: EmailSettings
+
+    authCookie?: AuthCookieConfig
 
     // this should not be changed manually
     version?: number // todo rename to _version

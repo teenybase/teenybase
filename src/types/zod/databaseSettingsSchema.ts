@@ -23,6 +23,15 @@ export const databaseSettingsSchema = z.object({
         mailgun: mailgunBindingsSchema.optional(),
         resend: resendBindingsSchema.optional(),
     }).optional(),
+    authCookie: z.object({
+        name: z.string().min(1),
+        httpOnly: z.boolean().optional(),
+        secure: z.boolean().optional(),
+        sameSite: z.enum(['Strict', 'Lax', 'None']).optional(),
+        path: z.string().optional(),
+        maxAge: z.number().optional(),
+        domain: z.string().optional(),
+    }).optional(),
     _kvTableName: z.string().startsWith('_', {message: 'Internal table name must start with _ (underscore)'}).optional(),
     disableTablesEdit: z.coerce.boolean().optional(),
 }).superRefine((data, ctx) => {

@@ -193,6 +193,34 @@ export function setupTableAuthExtensionRoutes(this: TableAuthExtension){
                 },
             }
         }),
+        '/auth/google-login': ()=>({
+            description: 'Google One Tap / Sign In with Google. Receives credential via form POST, verifies CSRF, logs in and sets auth cookie.',
+            request: {
+                body: {
+                    required: true,
+                    content: {'application/x-www-form-urlencoded': {schema: z.object({
+                                credential: z.string().min(1).describe('Google JWT ID token'),
+                                g_csrf_token: z.string().min(1).describe('CSRF token (must match g_csrf_token cookie)'),
+                                select_by: z.string().optional().describe('How the credential was selected'),
+                            })}},
+                },
+                cookies: z.object({
+                    g_csrf_token: z.string().min(1).describe('CSRF token set by Google'),
+                }),
+            },
+            responses: {
+                '200': {
+                    description: 'Success. Auth token is also set as a cookie if authCookie is configured.',
+                    content: {'application/json': {
+                            schema: z.object({
+                                token: jwtTokenSchema,
+                                refresh_token: uidTokenSchema,
+                                verified: z.boolean().optional().describe('Email verified. (only returned if false)'),
+                            }),
+                        }},
+                },
+            }
+        }),
     }
 
     // todo make parameter to enable/disable this endpoint when external auth is used
@@ -200,6 +228,11 @@ export function setupTableAuthExtensionRoutes(this: TableAuthExtension){
         method: 'post', path: '/auth/login-token',
         handler: this.loginWithToken.bind(this),
         zod: routeZod['/auth/login-token'],
+    })
+    this.routes.push({
+        method: 'post', path: '/auth/google-login',
+        handler: this.loginWithGoogleToken.bind(this),
+        zod: routeZod['/auth/google-login'],
     })
     this.routes.push({
         method: 'post', path: '/auth/refresh-token',

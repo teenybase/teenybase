@@ -23,6 +23,7 @@ import {defaultSchema, jwtTokenSchema, uidTokenSchema} from './tableAuthExtensio
 import {setupTableAuthExtensionRoutes} from './tableAuthExtension.routes'
 import {D1Error} from '../util/error'
 import {zParseWithPath} from '../../utils/zod'
+import {deleteCookie, getCookie, setCookie} from 'hono/cookie'
 
 type UserFields = {
     emailVerified?: boolean
@@ -274,6 +275,45 @@ export class TableAuthExtension extends TableExtension<TableAuthExtensionData> {
     async loginWithToken(){
         const tok = this.c.req.header('Authorization')?.replace(/^Bearer /, '')
         if (!tok) throw new HTTPException(400, {message: 'Authorization header required'})
+        return this._loginWithToken(tok)
+    }
+
+    /**
+     * Google One Tap / Sign In with Google: receives credential via form POST, verifies CSRF, logs in and sets auth cookie
+     */
+    async loginWithGoogleToken(){
+        const contentType = this.c.req.header('Content-Type')
+        if (!contentType?.includes('application/x-www-form-urlencoded'))
+            throw new HTTPException(400, {message: 'Content-Type must be application/x-www-form-urlencoded'})
+
+        const body = await this.c.req.parseBody()
+        const credential = body.credential
+        const bodyCsrf = body.g_csrf_token
+
+        if (!credential || typeof credential !== 'string') throw new HTTPException(400, {message: 'credential is required'})
+        if (!bodyCsrf || typeof bodyCsrf !== 'string') throw new HTTPException(400, {message: 'g_csrf_token is required'})
+
+        const cookieCsrf = getCookie(this.c, 'g_csrf_token')
+        if (!cookieCsrf || cookieCsrf !== bodyCsrf) throw new HTTPException(403, {message: 'CSRF token mismatch'})
+
+        const ret = await this._loginWithToken(credential)
+
+        const cookieConfig = this.table.$db.settings.authCookie
+        if (cookieConfig) {
+            setCookie(this.c, cookieConfig.name, ret.token, {
+                httpOnly: cookieConfig.httpOnly ?? true,
+                secure: cookieConfig.secure ?? true,
+                sameSite: cookieConfig.sameSite ?? 'Lax',
+                path: cookieConfig.path ?? '/',
+                maxAge: cookieConfig.maxAge,
+                domain: cookieConfig.domain,
+            })
+        }
+
+        return ret
+    }
+
+    private async _loginWithToken(tok: string) {
         const payload = await this.table.$db.jwt.decodeAuth(tok, await this.jwtSecret(), false).catch(() => null)
         // payload will be null when sign not valid or expired etc
         if (!payload) throw new HTTPException(401, {message: 'Unauthorized'})
@@ -383,6 +423,14 @@ export class TableAuthExtension extends TableExtension<TableAuthExtensionData> {
 
         const sessionKey = this._kvSessionKey(/*user*/{id: auth.uid}, auth.sid)
         await this.table.$db.kv.remove(sessionKey)
+
+        const cookieConfig = this.table.$db.settings.authCookie
+        if (cookieConfig) {
+            deleteCookie(this.c, cookieConfig.name, {
+                path: cookieConfig.path ?? '/',
+                domain: cookieConfig.domain,
+            })
+        }
 
         return this.c.json({success: true})
     }

@@ -39,6 +39,7 @@ import {OptionalOmit} from './util/types'
 import {SecretResolver} from './secretResolver'
 import {databaseSettingsSchema} from '../types/zod/databaseSettingsSchema'
 import {zParseWithPath} from '../utils/zod'
+import {deleteCookie, getCookie} from 'hono/cookie'
 
 export type $DatabaseEventMap = {
     // run_sql: D1RunEvent
@@ -186,6 +187,10 @@ export class $Database<T extends $Env = $Env> extends EventTarget<$DatabaseEvent
                 const auth = this.c.req.header('Authorization') ?? this.c.req.header('X-Authorization')
                 const isBearer = auth && auth.startsWith('Bearer ')
                 tok = auth ? isBearer ? auth.slice(7) : auth : ''
+            }
+
+            if (!tok && this.settings.authCookie?.name) {
+                tok = getCookie(this.c, this.settings.authCookie.name) || ''
             }
 
             if (!tok) {
@@ -1365,6 +1370,31 @@ export class $Database<T extends $Env = $Env> extends EventTarget<$DatabaseEvent
                 },
             },
         })
+    }, {
+        path: '/auth/logout',
+        method: 'post',
+        handler: {raw: async () => {
+            const cookieConfig = this.settings.authCookie
+            if (cookieConfig) {
+                deleteCookie(this.c, cookieConfig.name, {
+                    path: cookieConfig.path ?? '/',
+                    domain: cookieConfig.domain,
+                })
+            }
+            return this.c.json({success: true})
+        }},
+        zod: () => ({
+            description: 'Clear auth cookie',
+            request: {},
+            responses: {
+                '200': {
+                    description: 'Success',
+                    content: {'application/json': {
+                        schema: z.object({success: z.literal(true)}),
+                    }},
+                },
+            },
+        }),
     }]
     private router: LinearRouter<RawRouterHandlerFunction> | undefined
     protected _routesInit = false
