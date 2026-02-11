@@ -24,6 +24,23 @@ import {setupTableAuthExtensionRoutes} from './tableAuthExtension.routes'
 import {D1Error} from '../util/error'
 import {zParseWithPath} from '../../utils/zod'
 import {deleteCookie, getCookie, setCookie} from 'hono/cookie'
+import {OAuthProviderConfig} from '../../types/config'
+
+const OAUTH_PRESETS: Record<string, Pick<OAuthProviderConfig, 'authorizeUrl' | 'tokenUrl' | 'userinfoUrl' | 'scopes' | 'mapping'>> = {
+    google: {
+        authorizeUrl: 'https://accounts.google.com/o/oauth2/v2/auth',
+        tokenUrl: 'https://oauth2.googleapis.com/token',
+        scopes: ['openid', 'email', 'profile'],
+        mapping: {avatar: 'picture'},
+    },
+    github: {
+        authorizeUrl: 'https://github.com/login/oauth/authorize',
+        tokenUrl: 'https://github.com/login/oauth/access_token',
+        userinfoUrl: 'https://api.github.com/user',
+        scopes: ['user:email', 'read:user'],
+        mapping: {avatar: 'avatar_url', username: 'login'},
+    },
+}
 
 type UserFields = {
     emailVerified?: boolean
@@ -297,19 +314,7 @@ export class TableAuthExtension extends TableExtension<TableAuthExtensionData> {
         if (!cookieCsrf || cookieCsrf !== bodyCsrf) throw new HTTPException(403, {message: 'CSRF token mismatch'})
 
         const ret = await this._loginWithToken(credential)
-
-        const cookieConfig = this.table.$db.settings.authCookie
-        if (cookieConfig) {
-            setCookie(this.c, cookieConfig.name, ret.token, {
-                httpOnly: cookieConfig.httpOnly ?? true,
-                secure: cookieConfig.secure ?? true,
-                sameSite: cookieConfig.sameSite ?? 'Lax',
-                path: cookieConfig.path ?? '/',
-                maxAge: cookieConfig.maxAge,
-                domain: cookieConfig.domain,
-            })
-        }
-
+        this._setAuthCookie(ret.token)
         return ret
     }
 
@@ -318,23 +323,25 @@ export class TableAuthExtension extends TableExtension<TableAuthExtensionData> {
         // payload will be null when sign not valid or expired etc
         if (!payload) throw new HTTPException(401, {message: 'Unauthorized'})
 
-        let res = await this.findUser(payload.sub, true)
-
-        if(payload.iss !== this.table.$db.jwt.issuer){
-            // todo why this false and 0 check? because it can be 'true'?
-            if(payload.verified === false || (payload as any).verified === 0) throw new HTTPException(400, {message: 'Not verified'})
-            // todo make a setting in this.data to control whether a new user should be created on new token or should it be explicit
-            if(!res) res = await this._createUserToken(payload.sub, true, payload?.issData)
-        }else {
+        if(payload.iss === this.table.$db.jwt.issuer){
             // do nothing
             // todo throw error or refresh session?
             throw new HTTPException(400, {message: 'Use refresh-token endpoint instead'})
         }
 
-        if(!res) throw new HTTPException(401, {message: 'Unauthorized'})
+        // todo why this false and 0 check? because it can be 'true'?
+        if(payload.verified === false || (payload as any).verified === 0) throw new HTTPException(400, {message: 'Not verified'})
 
-        // if(this.mapping.emailVerified && !res.emailVerified) throw new HTTPException(400, {message: 'Email not verified'})
-        if(res.email !== payload.sub) throw new HTTPException(400, {message: 'Invalid email'})
+        return this._loginWithExternalUser(payload.sub, payload?.issData)
+    }
+
+    private async _loginWithExternalUser(email: string, issData: any) {
+        let res = await this.findUser(email, true)
+        // todo make a setting in this.data to control whether a new user should be created on new token or should it be explicit
+        if(!res) res = await this._createUserToken(email, true, issData)
+
+        if(!res) throw new HTTPException(401, {message: 'Unauthorized'})
+        if(res.email !== email) throw new HTTPException(400, {message: 'Invalid email'})
 
         const ret: {
             token: string,
@@ -349,6 +356,144 @@ export class TableAuthExtension extends TableExtension<TableAuthExtensionData> {
 
         return ret
     }
+
+    // region OAuth
+
+    private _getOAuthProvider(name: string) {
+        const config = this.table.$db.settings.oauthProviders?.find(p => p.name === name)
+        if (!config) throw new HTTPException(404, {message: `OAuth provider not found: ${name}`})
+        const preset = OAUTH_PRESETS[name]
+        return {
+            ...preset,
+            ...config,
+            scopes: config.scopes ?? preset?.scopes ?? [],
+            mapping: {...preset?.mapping, ...config.mapping},
+            authorizeUrl: config.authorizeUrl ?? preset?.authorizeUrl,
+            tokenUrl: config.tokenUrl ?? preset?.tokenUrl,
+            userinfoUrl: config.userinfoUrl ?? preset?.userinfoUrl,
+        }
+    }
+
+    private _oauthCallbackUrl(providerName: string) {
+        const origin = new URL(this.c.req.url).origin
+        return `${origin}${this.table.$db.apiTableBase}/${this.table.name}/auth/oauth/${providerName}/callback`
+    }
+
+    private _setAuthCookie(token: string) {
+        const cookieConfig = this.table.$db.settings.authCookie
+        if (cookieConfig) {
+            setCookie(this.c, cookieConfig.name, token, {
+                httpOnly: cookieConfig.httpOnly ?? true,
+                secure: cookieConfig.secure ?? true,
+                sameSite: cookieConfig.sameSite ?? 'Lax',
+                path: cookieConfig.path ?? '/',
+                maxAge: cookieConfig.maxAge,
+                domain: cookieConfig.domain,
+            })
+        }
+    }
+
+    async oauthAuthorize(providerName: string) {
+        const provider = this._getOAuthProvider(providerName)
+        if (!provider.authorizeUrl) throw new HTTPException(500, {message: `Missing authorizeUrl for provider: ${providerName}`})
+
+        const clientId = await this.table.$db.secretResolver.resolve(provider.clientId)
+        const csrf = randomString(32)
+
+        // Encode csrf + optional frontend redirect in state
+        const redirect = this.c.req.query('redirect') || ''
+        const state = btoa(JSON.stringify({c: csrf, r: redirect}))
+
+        // Store csrf in cookie for verification on callback
+        setCookie(this.c, 'oauth_state', csrf, {
+            httpOnly: true,
+            secure: true,
+            sameSite: 'Lax',
+            path: '/',
+            maxAge: 600, // 10 min
+        })
+
+        const params = new URLSearchParams({
+            client_id: clientId,
+            redirect_uri: this._oauthCallbackUrl(providerName),
+            response_type: 'code',
+            scope: provider.scopes.join(' '),
+            state,
+        })
+
+        return this.c.redirect(`${provider.authorizeUrl}?${params.toString()}`)
+    }
+
+    async oauthCallback(providerName: string) {
+        const provider = this._getOAuthProvider(providerName)
+        if (!provider.tokenUrl) throw new HTTPException(500, {message: `Missing tokenUrl for provider: ${providerName}`})
+
+        const code = this.c.req.query('code')
+        const stateParam = this.c.req.query('state')
+        const error = this.c.req.query('error')
+        if (error) throw new HTTPException(400, {message: `OAuth error: ${error}`})
+        if (!code || !stateParam) throw new HTTPException(400, {message: 'Missing code or state'})
+
+        // Verify CSRF from state
+        let state: {c: string, r?: string}
+        try { state = JSON.parse(atob(stateParam)) } catch { throw new HTTPException(400, {message: 'Invalid state'}) }
+        const csrfCookie = getCookie(this.c, 'oauth_state')
+        if (!csrfCookie || csrfCookie !== state.c) throw new HTTPException(403, {message: 'CSRF token mismatch'})
+        deleteCookie(this.c, 'oauth_state', {path: '/'})
+
+        // Exchange code for token
+        const clientId = await this.table.$db.secretResolver.resolve(provider.clientId)
+        const clientSecret = await this.table.$db.secretResolver.resolve(provider.clientSecret, true, `OAuth client secret for ${providerName}`)
+
+        const tokenRes = await fetch(provider.tokenUrl, {
+            method: 'POST',
+            headers: {'Content-Type': 'application/x-www-form-urlencoded', 'Accept': 'application/json'},
+            body: new URLSearchParams({
+                code,
+                client_id: clientId,
+                client_secret: clientSecret,
+                redirect_uri: this._oauthCallbackUrl(providerName),
+                grant_type: 'authorization_code',
+            }),
+        })
+        const tokenData = await tokenRes.json<Record<string, any>>()
+        if (!tokenRes.ok || tokenData.error) throw new HTTPException(400, {message: `Token exchange failed: ${tokenData.error || tokenRes.statusText}`})
+
+        // Get user info from id_token or userinfo endpoint
+        let userInfo: Record<string, any> | undefined
+        if (tokenData.id_token) {
+            userInfo = decode(tokenData.id_token).payload as Record<string, any>
+        }
+        if (provider.userinfoUrl) {
+            const userinfoRes = await fetch(provider.userinfoUrl, {
+                headers: {'Authorization': `Bearer ${tokenData.access_token}`, 'Accept': 'application/json'},
+            })
+            if (!userinfoRes.ok) throw new HTTPException(400, {message: 'Failed to fetch user info'})
+            userInfo = await userinfoRes.json<Record<string, any>>()
+        }
+        if (!userInfo) throw new HTTPException(400, {message: 'No user info available'})
+
+        // Extract fields using mapping
+        const mapping = {email: 'email', name: 'name', verified: 'email_verified', ...provider.mapping}
+        const email = userInfo[mapping.email!]
+        if (!email || typeof email !== 'string') throw new HTTPException(400, {message: 'Email not available from provider'})
+        const verified = mapping.verified ? userInfo[mapping.verified] : true
+        if (verified === false || verified === 0) throw new HTTPException(400, {message: 'Email not verified'})
+
+        const issData = {
+            name: mapping.name ? userInfo[mapping.name] : undefined,
+            avatar: mapping.avatar ? userInfo[mapping.avatar] : undefined,
+            username: mapping.username ? userInfo[mapping.username] : undefined,
+        }
+
+        const ret = await this._loginWithExternalUser(email, issData)
+        this._setAuthCookie(ret.token)
+
+        const redirectUrl = state.r || provider.redirectUrl || this.table.$db.settings.appUrl
+        return this.c.redirect(redirectUrl)
+    }
+
+    // endregion OAuth
 
     async refreshToken(data: {refresh_token: string}) {
         const tok = this.c.req.header('Authorization')?.replace(/^Bearer /, '')

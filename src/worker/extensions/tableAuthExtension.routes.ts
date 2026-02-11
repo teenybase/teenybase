@@ -221,6 +221,32 @@ export function setupTableAuthExtensionRoutes(this: TableAuthExtension){
                 },
             }
         }),
+        '/auth/oauth/:provider': ()=>({
+            description: 'Start OAuth authorization flow. Redirects to provider\'s authorize URL.',
+            request: {
+                params: z.object({provider: z.string().min(1).describe('OAuth provider name')}),
+                query: z.object({redirect: z.string().optional().describe('Frontend URL to redirect after auth')}),
+            },
+            responses: {
+                '302': {description: 'Redirect to OAuth provider'},
+            }
+        }),
+        '/auth/oauth/:provider/callback': ()=>({
+            description: 'OAuth callback. Exchanges code for token, creates session, sets auth cookie and redirects.',
+            request: {
+                params: z.object({provider: z.string().min(1).describe('OAuth provider name')}),
+                query: z.object({
+                    code: z.string().min(1).describe('Authorization code from provider'),
+                    state: z.string().min(1).describe('State parameter for CSRF verification'),
+                }),
+                cookies: z.object({
+                    oauth_state: z.string().min(1).describe('CSRF token set during authorize'),
+                }),
+            },
+            responses: {
+                '302': {description: 'Redirect to frontend after successful login'},
+            }
+        }),
     }
 
     // todo make parameter to enable/disable this endpoint when external auth is used
@@ -233,6 +259,16 @@ export function setupTableAuthExtensionRoutes(this: TableAuthExtension){
         method: 'post', path: '/auth/google-login',
         handler: this.loginWithGoogleToken.bind(this),
         zod: routeZod['/auth/google-login'],
+    })
+    this.routes.push({
+        method: 'get', path: '/auth/oauth/:provider',
+        handler: {raw: async (params) => this.oauthAuthorize(params!.provider)},
+        zod: routeZod['/auth/oauth/:provider'],
+    })
+    this.routes.push({
+        method: 'get', path: '/auth/oauth/:provider/callback',
+        handler: {raw: async (params) => this.oauthCallback(params!.provider)},
+        zod: routeZod['/auth/oauth/:provider/callback'],
     })
     this.routes.push({
         method: 'post', path: '/auth/refresh-token',
