@@ -23,7 +23,6 @@ export const zJsonString = z.string()
 
 /**
  * Helper function to parse with path context
- * @deprecated - don't use, throw custom errors
  */
 export function zParseWithPath<T>(schema: z.ZodType<T>, val: unknown, path: string[]): T {
     const result = schema.safeParse(val)
@@ -37,3 +36,18 @@ export function zParseWithPath<T>(schema: z.ZodType<T>, val: unknown, path: stri
     }
     return result.data
 }
+
+
+/**
+ * Format a Zod error with full context path for better error messages
+ */
+export function formatZodError(error: z.ZodError, prefix?: string): string {
+    const messages = error.issues.map(err => {
+        const path = err.path.length > 0 ? err.path.join(' → ') : 'root';
+        return `  - ${path}: ${err.message}`;
+    });
+
+    const prefixText = prefix ? `${prefix}\n` : '';
+    return `${prefixText}Validation errors:\n${messages.join('\n')}`;
+}
+

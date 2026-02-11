@@ -4,9 +4,22 @@ import {dropTable} from "./dropTable";
 import {alterTable} from "./alterTable";
 import {createTable} from "./createTable";
 import { validateSettingsChange } from '../../types/config/validateSettingsChange';
+import {z} from 'zod'
+import {formatZodError} from '../../utils/zod'
 
 export function generateMigrations(nextConfig: DatabaseSettings, lastConfig: Partial<DatabaseSettings> | undefined, index = 0) {
-    const {config, changes} = validateSettingsChange(nextConfig, lastConfig)
+    let res
+
+    try {
+        res = validateSettingsChange(nextConfig, lastConfig)
+    }catch (e) {
+        if(e instanceof z.ZodError) {
+            throw new Error(formatZodError(e, 'Error validating database settings change:'))
+        }
+        throw e
+    }
+
+    const {config, changes} = res
     if (!changes) return {migrations: [], config: config}
     const name = (op: string, table: TableData) => `${String(index++).padStart(4, '0')}_${op}_table_${table.name}.sql`
     const others = (table: TableData) => config.tables.filter((t) => t.name !== table.name)

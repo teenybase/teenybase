@@ -8,9 +8,10 @@ import {
     sqliteSupportedColumnAdd
 } from "./tableQueries";
 import {tableDataSchema} from '../../types/zod/tableDataSchema';
+import { zParseWithPath } from '../../utils/zod';
 
 export function alterTable([table, lastTable, changes]: AlterTable, others: TableData[]) {
-    table = tableDataSchema.parse(table)
+    table = zParseWithPath(tableDataSchema, table, ['table', table.name])
     let statements = [] as [string, string | undefined][]
     const tableName = table.name // todo columnify?
     let clearTriggers = false

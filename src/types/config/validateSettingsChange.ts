@@ -2,10 +2,11 @@ import {databaseSettingsSchema} from '../zod/databaseSettingsSchema';
 import {jsonStringify} from '../../utils/string';
 import {AlterSettings, DatabaseSettings} from '../config';
 import {validateTableChange} from './validateTableChange'
+import {zParseWithPath} from '../../utils/zod'
 
 export function validateSettingsChange(nextConfig: DatabaseSettings, lastConfig: Partial<DatabaseSettings> | undefined) {
     // validations
-    nextConfig = databaseSettingsSchema.parse(nextConfig)
+    nextConfig = zParseWithPath(databaseSettingsSchema, nextConfig, ['settings'])
     if (nextConfig.version !== undefined) throw new Error(`Database settings version should not be set manually`)
     // if(nextConfig.version !== undefined && nextConfig.version !== lastConfig?.version) throw new Error(`Database version mismatch - ${nextConfig.version} !== ${lastConfig?.version}`)
 

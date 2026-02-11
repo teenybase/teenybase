@@ -5,6 +5,7 @@ import {indexName} from '../../sql/schema/tableQueries';
 import {AlterTable, TableData} from '../table';
 import {validateFieldChange} from './validateFieldChange'
 import {tableExtensionSchemas} from '../zod/tableExtensionsSchema'
+import {zParseWithPath} from '../../utils/zod'
 
 export function validateTableChange(nextTable: TableData | undefined, lastTable: TableData | undefined, nextSettings?: DatabaseSettings) {
     if (!nextTable) {
@@ -222,7 +223,14 @@ export function validateTableChange(nextTable: TableData | undefined, lastTable:
     const extensions = nextTable.extensions
     for (const extension of extensions) {
         const parser = tableExtensionSchemas[extension.name as keyof typeof tableExtensionSchemas]
-        const parsed = parser.parse(extension)
+        if (!parser) {
+            throw new Error(`Table ${nextTable.name} - Unknown extension: ${extension.name}`)
+        }
+        zParseWithPath<any>(
+            parser,
+            extension,
+            ['table', nextTable.name, 'extension', extension.name]
+        )
         // todo parse rules and check if they are valid
     }
 
