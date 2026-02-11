@@ -44,3 +44,23 @@ describe('generateMigrations', () => {
     test('drive1', async ()=>await testFn('drive1'))
     test('drive2', async ()=>await testFn('drive2'))
 })
+
+describe('generateMigrations errors test', () => {
+    // the script should be run from root dir(with package.json)
+    test('empty settings', async ()=>{
+        try{
+            generateMigrations({} as any, undefined, 0)
+        }catch (e) {
+            expect(e).toBeInstanceOf(Error)
+            expect((e as Error).message.trim()).toEqual(`
+Error validating database settings change:
+Validation errors:
+  - settings → tables: Invalid input: expected array, received undefined
+  - settings → jwtSecret: Invalid input: expected string, received undefined
+  - settings → appUrl: Invalid input: expected string, received undefined
+            `.trim())
+        }
+    })
+
+        // todo test other errors
+})

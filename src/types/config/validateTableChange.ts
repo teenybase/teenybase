@@ -5,7 +5,7 @@ import {indexName} from '../../sql/schema/tableQueries';
 import {AlterTable, TableData} from '../table';
 import {validateFieldChange} from './validateFieldChange'
 import {tableExtensionSchemas} from '../zod/tableExtensionsSchema'
-import {zParseWithPath, throwValidationError} from '../../utils/zod'
+import {zParseWithPath, zCustomError} from '../../utils/zod'
 
 export function validateTableChange(nextTable: TableData | undefined, lastTable: TableData | undefined, nextSettings?: DatabaseSettings, path: (string | number)[] = ['table']) {
     if (!nextTable) {
@@ -20,25 +20,25 @@ export function validateTableChange(nextTable: TableData | undefined, lastTable:
 
     // validations
     if (lastTable && nextTable.name !== lastTable?.name) {
-        if (nextTable.lastName !== lastTable?.name) throwValidationError(`Last table name must be set to ${lastTable.name} when changing table name`, ...tablePath, 'lastName')
+        if (nextTable.lastName !== lastTable?.name) throw zCustomError(`Last table name must be set to ${lastTable.name} when changing table name`, ...tablePath, 'lastName')
 
         if (lastTable.r2Base && nextTable.r2Base !== lastTable.r2Base) {
             // todo check if there are files in the bucket under base, and throw error only then
-            throwValidationError(`r2Base cannot be changed - ${nextTable.r2Base} !== ${lastTable.r2Base}`, ...tablePath, 'r2Base')
+            throw zCustomError(`r2Base cannot be changed - ${nextTable.r2Base} !== ${lastTable.r2Base}`, ...tablePath, 'r2Base')
         }
         if (!lastTable.r2Base && nextTable.r2Base !== lastTable.name) {
             // todo check if there are files in the bucket under base, and throw error only then
-            throwValidationError(`r2Base must be set to "${lastTable.name}" because changing table name`, ...tablePath, 'r2Base')
+            throw zCustomError(`r2Base must be set to "${lastTable.name}" because changing table name`, ...tablePath, 'r2Base')
         }
 
     }
     if (lastTable && nextTable.r2Base !== lastTable.r2Base && nextTable.name !== lastTable.r2Base && nextTable.r2Base !== lastTable.name) {
         // todo check if there are files in the bucket under that base, and throw error only then
-        throwValidationError(`r2Base cannot be changed - ${nextTable.r2Base ?? nextTable.name} !== ${lastTable.r2Base}`, ...tablePath, 'r2Base')
+        throw zCustomError(`r2Base cannot be changed - ${nextTable.r2Base ?? nextTable.name} !== ${lastTable.r2Base}`, ...tablePath, 'r2Base')
     }
     if (lastTable && nextTable.idInR2 !== lastTable.idInR2) {
         // todo check if there are files in the bucket under that base, and throw error only then
-        throwValidationError(`idInR2 cannot be changed - ${nextTable.r2Base} !== ${lastTable.r2Base}`, ...tablePath, 'idInR2')
+        throw zCustomError(`idInR2 cannot be changed - ${nextTable.r2Base} !== ${lastTable.r2Base}`, ...tablePath, 'idInR2')
     }
     if (lastTable && nextTable.allowMultipleFileRef !== lastTable.allowMultipleFileRef) {
         // this is fine
@@ -50,30 +50,30 @@ export function validateTableChange(nextTable: TableData | undefined, lastTable:
     if (nextTable.idInR2) {
         // check if noUpdate field is set on id field
         const idField = nextTable.fields.find(f => f.usage === TableFieldUsageRecord.record_uid)
-        if (!idField || !idField.noUpdate) throwValidationError(`idInR2 requires an id field with 'usage' = 'record_uid' and 'noUpdate' = 'true'.`, ...tablePath, 'idInR2')
+        if (!idField || !idField.noUpdate) throw zCustomError(`idInR2 requires an id field with 'usage' = 'record_uid' and 'noUpdate' = 'true'.`, ...tablePath, 'idInR2')
 
         if (nextTable.allowMultipleFileRef) {
-            throwValidationError(`allowMultipleFileRef cannot be true when idInR2 is true`, ...tablePath, 'allowMultipleFileRef')
+            throw zCustomError(`allowMultipleFileRef cannot be true when idInR2 is true`, ...tablePath, 'allowMultipleFileRef')
         }
     }
     const autoDeleteR2Files = nextTable.autoDeleteR2Files ?? true // default is true
 
     if (nextTable.allowMultipleFileRef) {
         if (nextTable.idInR2) {
-            throwValidationError(`idInR2 cannot be true when allowMultipleFileRef is true`, ...tablePath, 'idInR2')
+            throw zCustomError(`idInR2 cannot be true when allowMultipleFileRef is true`, ...tablePath, 'idInR2')
         }
         if (autoDeleteR2Files) {
-            throwValidationError(`autoDeleteR2Files must be false when allowMultipleFileRef is true`, ...tablePath, 'autoDeleteR2Files')
+            throw zCustomError(`autoDeleteR2Files must be false when allowMultipleFileRef is true`, ...tablePath, 'autoDeleteR2Files')
         }
     }
 
     if (nextTable.allowWildcard) {
-        throwValidationError(`allowWildcard is not supported yet`, ...tablePath, 'allowWildcard')
+        throw zCustomError(`allowWildcard is not supported yet`, ...tablePath, 'allowWildcard')
     }
 
     if (nextTable.autoSetUid) {
         const idField = nextTable.fields.find(f => f.usage === TableFieldUsageRecord.record_uid)
-        if (!idField || idField.type !== 'text') throwValidationError(`autoSetUid requires an id field with 'usage' = 'record_uid' and 'type' = 'text'.`, ...tablePath, 'autoSetUid')
+        if (!idField || idField.type !== 'text') throw zCustomError(`autoSetUid requires an id field with 'usage' = 'record_uid' and 'type' = 'text'.`, ...tablePath, 'autoSetUid')
     }
 
     const res: AlterTable[2] = {
@@ -87,13 +87,13 @@ export function validateTableChange(nextTable: TableData | undefined, lastTable:
 
     // todo improve lastName logic using multiple passes?
     for (const field of nextTable.fields) {
-        if (nextTable.fields.find(f => f.name === field.name) !== field) throwValidationError(`Duplicate field name`, ...tablePath, 'fields', field.name)
+        if (nextTable.fields.find(f => f.name === field.name) !== field) throw zCustomError(`Duplicate field name`, ...tablePath, 'fields', field.name)
         let lastField = lastTable?.fields?.filter((f) => f.name === field.name || f.name === field.lastName) ?? []
         // remove the last fields that are renamed now.
         lastField = lastField.filter(lf => {
             // find field in nextTable where lastName = lf.name
             const nextField = nextTable.fields.filter(f => f.lastName === lf.name && f !== field)
-            if (nextField.length > 1) throwValidationError(`Duplicate field name`, ...tablePath, 'fields', lf.name)
+            if (nextField.length > 1) throw zCustomError(`Duplicate field name`, ...tablePath, 'fields', lf.name)
             if (!nextField.length) return true
             // check if nextField[0] is renamed to lf
             // for that check if nextField is not in last table with same name and lastName
@@ -108,7 +108,7 @@ export function validateTableChange(nextTable: TableData | undefined, lastTable:
             if (exact) {
                 // const match = lastField.find(f => f !== exact && f.name === field.lastName)
                 // if (match) {
-                //     throwValidationError(`Duplicate field name`, ...tablePath, 'fields', field.name)
+                //     throw createValidationError(`Duplicate field name`, ...tablePath, 'fields', field.name)
                 // }
                 lastField = [exact]
                 cont = true
@@ -121,7 +121,7 @@ export function validateTableChange(nextTable: TableData | undefined, lastTable:
                     lastField = match
                 }
             }
-            if (!cont) throwValidationError(`Duplicate field name`, ...tablePath, 'fields', field.name)
+            if (!cont) throw zCustomError(`Duplicate field name`, ...tablePath, 'fields', field.name)
         }
         const res1 = validateFieldChange(field, lastField[0], nextTable.name, nextSettings, tablePath)
         if (res1.create) res.create.push(res1.create)
@@ -142,7 +142,7 @@ export function validateTableChange(nextTable: TableData | undefined, lastTable:
                 }
             }
 
-            if (!cont) throwValidationError(`Duplicate field name`, ...tablePath, 'fields', field.name)
+            if (!cont) throw zCustomError(`Duplicate field name`, ...tablePath, 'fields', field.name)
         }
         if (!nextField.length) { // deleted field
             const res1 = validateFieldChange(undefined, field, nextTable.name, nextSettings, tablePath)
@@ -202,20 +202,20 @@ export function validateTableChange(nextTable: TableData | undefined, lastTable:
         res.fts = true
     }
     if (nextTable.fullTextSearch) {
-        if (!nextTable.fullTextSearch.fields.length) throwValidationError(`Full text search fields must be set`, ...tablePath, 'fullTextSearch', 'fields')
+        if (!nextTable.fullTextSearch.fields.length) throw zCustomError(`Full text search fields must be set`, ...tablePath, 'fullTextSearch', 'fields')
         const invalidFields = nextTable.fullTextSearch.fields.filter(f => !nextTable.fields.find(f2 => f2.name === f))
-        if (invalidFields.length) throwValidationError(`Invalid full text search fields - ${invalidFields.join(', ')}`, ...tablePath, 'fullTextSearch', 'fields')
+        if (invalidFields.length) throw zCustomError(`Invalid full text search fields - ${invalidFields.join(', ')}`, ...tablePath, 'fullTextSearch', 'fields')
         if (nextTable.fullTextSearch.tokenize && !['unicode61', 'ascii', 'porter', 'trigram'].includes(nextTable.fullTextSearch.tokenize)) {
-            throwValidationError(`Invalid tokenize value - ${nextTable.fullTextSearch.tokenize}`, ...tablePath, 'fullTextSearch', 'tokenize')
+            throw zCustomError(`Invalid tokenize value - ${nextTable.fullTextSearch.tokenize}`, ...tablePath, 'fullTextSearch', 'tokenize')
         }
         if (!nextTable.fullTextSearch.contentless && nextTable.fullTextSearch.content_rowid) {
-            throwValidationError(`content_rowid must not be set when contentless is false`, ...tablePath, 'fullTextSearch', 'content_rowid')
+            throw zCustomError(`content_rowid must not be set when contentless is false`, ...tablePath, 'fullTextSearch', 'content_rowid')
         }
         if (nextTable.fullTextSearch.content_rowid) {
             const field = nextTable.fields.find(f => f.name === nextTable.fullTextSearch!.content_rowid)
-            if (!field) throwValidationError(`content_rowid field not found - ${nextTable.fullTextSearch!.content_rowid}`, ...tablePath, 'fullTextSearch', 'content_rowid')
-            if (field.sqlType !== 'integer') throwValidationError(`content_rowid field must be integer`, ...tablePath, 'fullTextSearch', 'content_rowid')
-            if (field.foreignKey) throwValidationError(`content_rowid field cannot have foreign key`, ...tablePath, 'fullTextSearch', 'content_rowid')
+            if (!field) throw zCustomError(`content_rowid field not found - ${nextTable.fullTextSearch!.content_rowid}`, ...tablePath, 'fullTextSearch', 'content_rowid')
+            if (field.sqlType !== 'integer') throw zCustomError(`content_rowid field must be integer`, ...tablePath, 'fullTextSearch', 'content_rowid')
+            if (field.foreignKey) throw zCustomError(`content_rowid field cannot have foreign key`, ...tablePath, 'fullTextSearch', 'content_rowid')
             // todo should be primary?
         }
     }
@@ -224,7 +224,7 @@ export function validateTableChange(nextTable: TableData | undefined, lastTable:
     for (const extension of extensions) {
         const parser = tableExtensionSchemas[extension.name as keyof typeof tableExtensionSchemas]
         if (!parser) {
-            throwValidationError(`Unknown extension: ${extension.name}`, ...tablePath, 'extension', extension.name)
+            throw zCustomError(`Unknown extension: ${extension.name}`, ...tablePath, 'extension', extension.name)
         }
         zParseWithPath<any>(
             parser,

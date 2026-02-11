@@ -25,7 +25,7 @@ export const zJsonString = z.string()
  * Create a ZodError for validation errors outside of Zod schema parsing
  * This allows us to use the same error structure and formatting for all validation errors
  */
-export function createValidationError(message: string, path: (string | number)[]): z.ZodError {
+export function zCustomError(message: string, ...path: (string | number)[]): z.ZodError {
     return new z.ZodError([
         {
             code: 'custom',
@@ -33,16 +33,6 @@ export function createValidationError(message: string, path: (string | number)[]
             path,
         }
     ])
-}
-
-/**
- * Throw a validation error with a structured path
- * This is a convenience wrapper around createValidationError
- * @param message - The error message
- * @param pathSegments - Path segments as rest parameters (e.g., 'table', tableName, 'fields', fieldName)
- */
-export function throwValidationError(message: string, ...pathSegments: (string | number)[]): never {
-    throw createValidationError(message, pathSegments)
 }
 
 /**

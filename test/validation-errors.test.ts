@@ -1,10 +1,10 @@
-import { describe, it, expect } from 'vitest'
-import { throwValidationError, createValidationError, formatZodError } from '../src/utils/zod'
-import { z } from 'zod'
+import {describe, expect, it} from 'vitest'
+import {zCustomError, formatZodError, throw zCustomError, validateSettingsChange} from '../src'
+import {z} from 'zod'
 
 describe('Validation Error Handling', () => {
     it('should create a ZodError with structured path', () => {
-        const error = createValidationError('Test error message', ['settings', 'tables', 'users', 'fields', 'email'])
+        const error = zCustomError('Test error message', ['settings', 'tables', 'users', 'fields', 'email'])
 
         expect(error).toBeInstanceOf(z.ZodError)
         expect(error.issues).toHaveLength(1)
@@ -15,12 +15,12 @@ describe('Validation Error Handling', () => {
 
     it('should throw a validation error', () => {
         expect(() => {
-            throwValidationError('Field is required', ['table', 'users', 'fields', 'name'])
+            throw zCustomError('Field is required', 'table', 'users', 'fields', 'name')
         }).toThrow(z.ZodError)
     })
 
     it('should format validation errors with path', () => {
-        const error = createValidationError('Field type is invalid', ['table', 'posts', 'fields', 'author_id', 'type'])
+        const error = zCustomError('Field type is invalid', ['table', 'posts', 'fields', 'author_id', 'type'])
         const formatted = formatZodError(error, 'Validation failed')
 
         expect(formatted).toContain('Validation failed')
@@ -51,3 +51,45 @@ describe('Validation Error Handling', () => {
     })
 })
 
+describe('validateSettingsChange errors test', () => {
+    // the script should be run from root dir(with package.json)
+    it('empty settings', async ()=>{
+        try {
+            validateSettingsChange({} as any, undefined)
+        } catch (e){
+            expect(e).toBeInstanceOf(z.ZodError)
+            const ze = e as z.ZodError
+            expect(ze.issues).toEqual([
+                {
+                    "expected": "array",
+                    "code": "invalid_type",
+                    "path": [
+                        "settings",
+                        "tables"
+                    ],
+                    "message": "Invalid input: expected array, received undefined"
+                },
+                {
+                    "expected": "string",
+                    "code": "invalid_type",
+                    "path": [
+                        "settings",
+                        "jwtSecret"
+                    ],
+                    "message": "Invalid input: expected string, received undefined"
+                },
+                {
+                    "expected": "string",
+                    "code": "invalid_type",
+                    "path": [
+                        "settings",
+                        "appUrl"
+                    ],
+                    "message": "Invalid input: expected string, received undefined"
+                }
+            ])
+        }
+    })
+
+    // todo test other errors
+})
