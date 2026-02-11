@@ -2,13 +2,13 @@ import {databaseSettingsSchema} from '../zod/databaseSettingsSchema';
 import {jsonStringify} from '../../utils/string';
 import {AlterSettings, DatabaseSettings} from '../config';
 import {validateTableChange} from './validateTableChange'
-import {zParseWithPath} from '../../utils/zod'
+import {zParseWithPath, throwValidationError} from '../../utils/zod'
 
 export function validateSettingsChange(nextConfig: DatabaseSettings, lastConfig: Partial<DatabaseSettings> | undefined) {
     // validations
     nextConfig = zParseWithPath(databaseSettingsSchema, nextConfig, ['settings'])
-    if (nextConfig.version !== undefined) throw new Error(`Database settings version should not be set manually`)
-    // if(nextConfig.version !== undefined && nextConfig.version !== lastConfig?.version) throw new Error(`Database version mismatch - ${nextConfig.version} !== ${lastConfig?.version}`)
+    if (nextConfig.version !== undefined) throwValidationError(`Database settings version should not be set manually`, 'settings', 'version')
+    // if(nextConfig.version !== undefined && nextConfig.version !== lastConfig?.version) throwValidationError(`Database version mismatch - ${nextConfig.version} !== ${lastConfig?.version}`, 'settings', 'version')
 
     {
         // not using destructuring to override properties as its not changing the order in nodejs
@@ -26,19 +26,19 @@ export function validateSettingsChange(nextConfig: DatabaseSettings, lastConfig:
 
     const res: AlterSettings = {create: [], drop: [], alter: []}
     for (const table of nextConfig.tables) {
-        if (nextConfig.tables.find(t => t.name === table.name) !== table) throw new Error(`Table ${table.name} - Duplicate table name found in nextConfig`)
+        if (nextConfig.tables.find(t => t.name === table.name) !== table) throwValidationError(`Duplicate table name found in nextConfig`, 'settings', 'tables', table.name)
         const lastTable = lastConfig?.tables?.filter(t => t.name === table.name || t.name === table.lastName) ?? []
-        if (lastTable.length > 1) throw new Error(`Table ${table.name} - Duplicate table name found in lastConfig`)
-        const res1 = validateTableChange(table, lastTable[0], nextConfig)
+        if (lastTable.length > 1) throwValidationError(`Duplicate table name found in lastConfig`, 'settings', 'tables', table.name)
+        const res1 = validateTableChange(table, lastTable[0], nextConfig, ['settings', 'tables'])
         if (res1.create) res.create.push(res1.create)
         if (res1.drop) res.drop.push(res1.drop)
         if (res1.alter) res.alter.push(res1.alter)
     }
     for (const table of lastConfig?.tables || []) {
         const nextTable = nextConfig.tables.filter(t => t.name === table.name || t.lastName === table.name) ?? []
-        if (nextTable.length > 1) throw new Error(`Table ${table.name} - Duplicate table name found in nextConfig`)
+        if (nextTable.length > 1) throwValidationError(`Duplicate table name found in nextConfig`, 'settings', 'tables', table.name)
         if (!nextTable.length) { // deleted field
-            const res1 = validateTableChange(undefined, table, nextConfig)
+            const res1 = validateTableChange(undefined, table, nextConfig, ['settings', 'tables'])
             if (res1.create) res.create.push(res1.create)
             if (res1.drop) res.drop.push(res1.drop)
             if (res1.alter) res.alter.push(res1.alter)

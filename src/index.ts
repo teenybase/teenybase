@@ -5,7 +5,7 @@ export {TableFieldUsageAuth, TableFieldUsageRecord, TableFieldUsage} from './wor
 
 export {randomString, generateUid, uuidV4} from './security/random'
 export {aesGcmEncrypt, aesGcmDecrypt} from './security/encryption'
-export {zJsonString, zStringToJSON} from './utils/zod'
+export {zJsonString, zStringToJSON, createValidationError, throwValidationError, formatZodError, zParseWithPath} from './utils/zod'
 export {pathJoin} from './utils/helpers'
 
 export {literalToQuery} from './sql/build/query'
