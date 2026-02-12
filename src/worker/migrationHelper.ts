@@ -2,13 +2,12 @@ import {HTTPException} from 'hono/http-exception'
 import {z} from 'zod'
 import splitSqlQuery from './wrangler/d1/splitter'
 import {DatabaseSettings} from '../types/config'
-import {$Database} from './$Database'
+import {type $Database, $DatabaseRaw} from './$Database'
 import {HttpRoute, HttpRouteZod} from '../types/route'
-import {$DBExtension} from './$DBExtension'
 import {D1Query} from '../sql/build/d1'
 import {$Env} from './env'
-import {InternalKV} from './internalKV'
 import {databaseSettingsSchema} from '../types/zod/databaseSettingsSchema';
+import {$DBExtension} from './$DBExtension'
 
 export interface DBMigration{
     id: number
@@ -22,9 +21,8 @@ export const zDBMigration = z.object({
     sql_revert: z.string().max(65535).optional()
 })
 
-export class MigrationHelper<T extends $Env = $Env> extends $DBExtension<T>{
-    constructor(db: $Database<T>, private readonly tableName = '_db_migrations', private readonly kv: InternalKV<any>) {
-        super(db)
+export class MigrationHelperRaw<T extends $DatabaseRaw = $DatabaseRaw>{
+    constructor(readonly db: T, private readonly tableName = '_db_migrations') {
     }
 
     async setup(version: number) {
@@ -48,7 +46,7 @@ export class MigrationHelper<T extends $Env = $Env> extends $DBExtension<T>{
         const q = `SELECT id, name, sql, sql_revert FROM ${this.tableName}`
         // const res = await this.db.database.prepare(q).run<DBMigration>()
         const migrations = await this.db.rawSQL<DBMigration>({q, v:[]}).run() || []
-        const settings = await this.kv.get('$settings')
+        const settings = await this.db.kv.get('$settings')
         return {migrations, settings: settings ? JSON.parse(settings) as DatabaseSettings : this.db.settings}
     }
 
@@ -76,9 +74,9 @@ export class MigrationHelper<T extends $Env = $Env> extends $DBExtension<T>{
             ]
         }).filter(q=>!!q) as D1Query[]
         const settings1 = JSON.stringify(settings)
-        prepared.push(this.kv.setQuery('$settings', settings1))
-        prepared.push(this.kv.setQuery('$settings_'+Date.now(), settings1))
-        prepared.push(this.kv.setQuery('$settings_version', settings.version?.toString() ?? '0'))
+        prepared.push(this.db.kv.setQuery('$settings', settings1))
+        prepared.push(this.db.kv.setQuery('$settings_'+Date.now(), settings1))
+        prepared.push(this.db.kv.setQuery('$settings_version', settings.version?.toString() ?? '0'))
 
         if(!prepared.length) return []
         try {
@@ -88,6 +86,15 @@ export class MigrationHelper<T extends $Env = $Env> extends $DBExtension<T>{
         }
         return names
     }
+
+}
+
+export class MigrationHelper<T extends $Env = $Env> extends MigrationHelperRaw<$Database<T>> implements $DBExtension<T>{
+    constructor(db: $Database<T>, tableName?: string) {
+        super(db, tableName)
+    }
+
+    async getAuthToken?(): Promise<string | undefined>
 
     routes: HttpRoute[] = [{
         path: '/migrations',

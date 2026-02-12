@@ -46,7 +46,16 @@ export type $DatabaseEventMap = {
     // run_sql: D1RunEvent
     // run_sql_fail: D1RunFailEvent
 }
-export class $Database<T extends $Env = $Env> extends EventTarget<$DatabaseEventMap>{
+
+export interface $DatabaseRaw/*<T extends $Env = $Env>*/{
+    rawSQL<T>(d1Expr: D1Query, c?: SQLRunContext): D1PreparedQuery<any, T[]>
+    rawSQLTransaction<T>(d1Expr: D1Query[], c?: SQLRunTransactionContext): D1PreparedTransaction<any, T[][]>
+    auth: AuthContext
+    readonly settings: DatabaseSettings
+    readonly kv: InternalKV/*<T>*/
+}
+
+export class $Database<T extends $Env = $Env> extends EventTarget<$DatabaseEventMap> implements $DatabaseRaw/*<T>*/{
     protected readonly tables: Record<string, $Table<T>> = {}
     readonly settings: DatabaseSettings
     auth: AuthContext = {
@@ -59,7 +68,7 @@ export class $Database<T extends $Env = $Env> extends EventTarget<$DatabaseEvent
     readonly email: EmailSendClient<T> | null
     // readonly notify: NotifyClient
     readonly jwt: JWTTokenHelper
-    readonly kv: InternalKV<T>
+    readonly kv: InternalKV/*<T>*/
     readonly identities: InternalIdentities<T> | null
     readonly extensions: $DBExtension<T>[] = []
 
@@ -85,7 +94,7 @@ export class $Database<T extends $Env = $Env> extends EventTarget<$DatabaseEvent
         this.kv = new InternalKV(this, this.settings._kvTableName)
         const hasIdentities = this.settings.tables.some(t => t.extensions?.some((e: any) => e.name === 'auth' && e.saveIdentities))
         this.identities = hasIdentities ? new InternalIdentities(this) : null
-        this.extensions.push(new MigrationHelper(this, undefined, this.kv))
+        this.extensions.push(new MigrationHelper(this, undefined))
         this.secretResolver = new SecretResolver(()=>c.env, SecretResolver.DEFAULT_KEY_ENV)
 
         // this can be set in the admin frontend to make sure we are working with the correct deployment of the worker
@@ -643,10 +652,10 @@ export class $Database<T extends $Env = $Env> extends EventTarget<$DatabaseEvent
 
     // region sql
 
-    rawSQL<T>(d1Expr: D1Query, c?: SQLRunContext) {
+    rawSQL<T>(d1Expr: D1Query, c?: SQLRunContext): D1PreparedQuery<any, T[]> {
         return this._prepareD1Query<T>(d1Expr, false, c)
     }
-    rawSQLTransaction<T>(d1Expr: D1Query[], c?: SQLRunTransactionContext) {
+    rawSQLTransaction<T>(d1Expr: D1Query[], c?: SQLRunTransactionContext): D1PreparedTransaction<any, T[][]> {
         return this._prepareD1Transaction<T>(d1Expr, false, c)
     }
     // async sql<T>(d1Expr: D1Query, c?: SQLRunContext) {

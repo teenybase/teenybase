@@ -1,6 +1,6 @@
 import {z} from 'zod'
 import {$Database} from '../$Database'
-import {HttpRouteZod} from '../../types/route'
+import {HttpRoute, HttpRouteZod} from '../../types/route'
 import {$DBExtension} from '../$DBExtension'
 import {deleteCookie, getSignedCookie, setCookie, setSignedCookie} from 'hono/cookie'
 import {ContentfulStatusCode, StatusCode} from 'hono/utils/http-status'
@@ -18,7 +18,7 @@ export type PocketUiEnv = $Env & {
     // Variables: $Env['Variables']
 }
 
-export class PocketUIExtension<T extends PocketUiEnv = PocketUiEnv> extends $DBExtension<T> {
+export class PocketUIExtension<T extends PocketUiEnv = PocketUiEnv> implements $DBExtension<T> {
 
     async getAuthToken(): Promise<string | undefined> {
         return (await getSignedCookie(this.db.c, this.db.c.env.ADMIN_SERVICE_TOKEN || 'admin', cookieName)) || undefined
@@ -33,8 +33,9 @@ export class PocketUIExtension<T extends PocketUiEnv = PocketUiEnv> extends $DBE
     baseUrl = 'https://cdn.jsdelivr.net/npm/@teenybase/pocket-ui@POCKET_UI_VERSION/dist/'
     // baseUrl = 'http://localhost:4173/'
 
-    constructor(db: $Database<T>, baseUrl?: string, uiVersion?: string) {
-        super(db)
+    routes: HttpRoute[] = []
+
+    constructor(private readonly db: $Database<T>, baseUrl?: string, uiVersion?: string) {
         if(baseUrl) this.baseUrl = baseUrl
         if(uiVersion) this.uiVersion = uiVersion
         this.routes.push({

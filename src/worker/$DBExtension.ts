@@ -2,13 +2,9 @@ import {HttpRoute} from "../types/route";
 import {$Database} from "./$Database";
 import {$Env} from './env'
 
-export abstract class $DBExtension<T extends $Env = $Env> {
-    constructor(readonly db: $Database<T>) {
-    }
-
-    async getAuthToken?(): Promise<string | undefined>
-
+export interface $DBExtension<T extends $Env = $Env>{
+    // new<T extends $Env = $Env>(db: $Database<T>, ...rest: any[]): $DBExtension<T>
+    getAuthToken?(): Promise<string | undefined>
     setup?(version: number): Promise<void>
-
-    routes: HttpRoute[] = []
+    routes: HttpRoute[]
 }

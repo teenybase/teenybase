@@ -8,9 +8,10 @@ import {$DBExtension} from '../$DBExtension'
 import {extendZodWithOpenApi, RouteConfig} from '@hono/zod-openapi'
 import {$Env} from '../env'
 
-export class OpenApiExtension<T extends $Env = $Env> extends $DBExtension<T>{
-    constructor(db: $Database<T>, swagger  = true) {
-        super(db)
+export class OpenApiExtension<T extends $Env = $Env> implements $DBExtension<T>{
+    routes: HttpRoute[] = []
+
+    constructor(private readonly db: $Database<T>, swagger  = true) {
         // todo move it somewhere else, shouldn't be in the constructor
         extendZodWithOpenApi(z);
         this.routes.push({

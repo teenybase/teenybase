@@ -10,6 +10,7 @@ import {$DBExtension} from '../$DBExtension'
 import {$Database} from '../$Database'
 import {$Env} from '../env'
 import {ResendHelper, ResendProps} from './resend'
+import {HttpRoute} from '../../types/route'
 
 export interface SendEmailProps {
     from: string,
@@ -53,14 +54,16 @@ export function buildEmailTemplate(templates: string[]) {
     return templates.reduce((acc, t) => acc.replace('{{EMAIL_CONTENT}}', t), '{{EMAIL_CONTENT}}')
 }
 
-export class EmailSendClient<T extends $Env = $Env> extends $DBExtension<T> {
+export class EmailSendClient<T extends $Env = $Env> implements $DBExtension<T> {
     private mg: MailgunHelper | null
     private rd: ResendHelper | null
 
-    constructor(db: $Database<T>, private props: Partial<SendEmailProps> & {
+    routes: HttpRoute[] = []
+
+    constructor(private readonly db: $Database<T>, private props: Partial<SendEmailProps> & {
         variables: BaseTemplateProps
     }, mg?: MailgunProps, rd?: ResendProps) {
-        super(db)
+        // super(db)
         this.mg = mg ? new MailgunHelper(mg) : null
         this.rd = rd ? new ResendHelper(rd) : null
         // todo also make a webhook that logs everything to an r2 bucket with encryption
