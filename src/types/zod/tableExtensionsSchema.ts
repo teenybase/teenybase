@@ -28,6 +28,7 @@ export const tableAuthDataSchema = z.object({
     passwordResetEmailDuration: z.number().optional(),
     emailVerifyEmailDuration: z.number().optional(),
     autoSendVerificationEmail: z.coerce.boolean().optional(),
+    saveIdentities: z.coerce.boolean().optional(),
     emailTemplates: z.object({
         verification: emailTemplateSchema.optional(),
         passwordReset: emailTemplateSchema.optional(),

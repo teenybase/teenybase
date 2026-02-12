@@ -15,7 +15,7 @@ npm run watch          # Watch mode for all build steps
 npm run check          # Type-check only (no emit)
 ```
 
-## Notes
+## Important Notes
 
 - Keep the edits quick, minimal, and accurate
 - Don't create unnecessary files
@@ -23,6 +23,8 @@ npm run check          # Type-check only (no emit)
 - Ask for clarifications when in doubt
 - Do not use any hacks, all code written should take care of all edge cases. If there are known issues or cases where any code might break, it should be added as a todo comment near the code.
 - Written code should be free of security issues and should use best practices in terms of both security and performance.
+- Do not lie, if there was an issue, tell about it, so we can find a solution, instead of making stuff up.
+- Every line in commits will be checked before merging to main, and since many people are working on the project, there could be many conflicts, make edits accordingly.
 
 ### Test
 ```bash

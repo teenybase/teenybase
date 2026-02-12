@@ -60,7 +60,7 @@ export class $Database<T extends $Env = $Env> extends EventTarget<$DatabaseEvent
     // readonly notify: NotifyClient
     readonly jwt: JWTTokenHelper
     readonly kv: InternalKV<T>
-    readonly identities: InternalIdentities<T>
+    readonly identities: InternalIdentities<T> | null
     readonly extensions: $DBExtension<T>[] = []
 
     public readonly c: Context<T>
@@ -83,7 +83,8 @@ export class $Database<T extends $Env = $Env> extends EventTarget<$DatabaseEvent
         this.database = database
         this.storage = storage
         this.kv = new InternalKV(this, this.settings._kvTableName)
-        this.identities = new InternalIdentities(this)
+        const hasIdentities = this.settings.tables.some(t => t.extensions?.some((e: any) => e.name === 'auth' && e.saveIdentities))
+        this.identities = hasIdentities ? new InternalIdentities(this) : null
         this.extensions.push(new MigrationHelper(this, undefined, this.kv))
         this.secretResolver = new SecretResolver(()=>c.env, SecretResolver.DEFAULT_KEY_ENV)
 
@@ -160,7 +161,7 @@ export class $Database<T extends $Env = $Env> extends EventTarget<$DatabaseEvent
         }
         await Promise.all([
             this.kv.setup(version),
-            this.identities.setup(version),
+            ...(this.identities ? [this.identities.setup(version)] : []),
             ...this.extensions.map(e => e.setup && e.setup(version)),
             ...this.settings.tables.map(t => this.table(t.name).setup(version))
         ])

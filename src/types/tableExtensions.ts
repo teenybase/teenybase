@@ -25,6 +25,7 @@ export interface TableAuthExtensionData extends TableExtensionData {
     emailVerifyEmailDuration?: number
     autoSendVerificationEmail?: boolean // default = false
     normalizeEmail?: boolean // default = true. converts to lower case, remove + suffix and remove dots from gmail. todo should this be in field level?
+    saveIdentities?: boolean // default = false. save external provider identity data (raw profile, provider ID) in _auth_identities table
 
     emailTemplates?: Partial<Record<'verification' | 'passwordReset', {
         subject?: string,

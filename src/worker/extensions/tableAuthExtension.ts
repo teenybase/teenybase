@@ -882,7 +882,7 @@ export class TableAuthExtension extends TableExtension<TableAuthExtensionData> {
                     returning: this._userFields(),
                 })?.run() ?? []
                 const user = this._fieldsToUser(res[0])
-                if (user && provider) {
+                if (user && provider && this.data.saveIdentities && this.table.$db.identities) {
                     const providerId = externalData?.providerId ?? externalData?.sub ?? externalData?.id
                     const rawData = externalData?.rawData ?? externalData
                     this.c.executionCtx.waitUntil(
