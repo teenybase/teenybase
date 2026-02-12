@@ -237,6 +237,7 @@ cli
             const wranglerConfig = await parseWrangler(options.root, options)
             const c = new CliContext(options.root, options, wranglerConfig)
 
+
             try {
                 if(!options.local) {
                     throw new Error('Remote dev server not support at the moment.')
@@ -251,7 +252,13 @@ cli
                     // process.exit(1)
                 }
 
-                const command = `npx wrangler dev --persist-to ${JSON.stringify(c.localPersistPath)} --port ${c.devServerPort}`
+                const command = `npx wrangler dev \
+                --persist-to=${JSON.stringify(c.localPersistPath)} \
+                --port=${c.devServerPort} \
+                --tsconfig=${JSON.stringify(c.createCustomTsconfigForWorker('dev'))}
+                `
+                // ${c.isLocal ? '--local' : '--remote'} \
+
                 execSync(command, {cwd: c.root, stdio: 'inherit'})
                 await c.stopLocal()
             } catch (e: any) {
@@ -262,6 +269,7 @@ cli
                 await c.stopLocal()
                 process.exit(1)
             } finally {
+                c.removeCustomTsconfig('dev')
                 // stopProfiler((message) => createLogger(options.logLevel).info(message))
             }
         },
@@ -282,6 +290,9 @@ cli
                 const dir = `db_backups/${options.local?'local':'remote'}/${wranglerConfig.db.binding}/${new Date().toISOString()}`
                 const absDir = path.join(c.root, dir)
                 fs.mkdirSync(absDir, {recursive: true})
+
+                loadLocalPersistConfig(c)
+
                 const migrations = await fetchDeployedMigrations(c)
                 if(migrations.settings)
                     fs.writeFileSync(path.join(absDir, 'config.json'), JSON.stringify(migrations.settings, null, 2))

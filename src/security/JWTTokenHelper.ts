@@ -103,6 +103,7 @@ export class JWTTokenHelper{
         const issuerConfig = this.issuerMap.get(payload.iss)
 
         // doing first way. todo do it properly in DO or when we figure out public cert caching in cf workers, till then this is better
+        // todo use this instead https://developers.google.com/identity/gsi/web/guides/verify-google-id-token
         const res = await fetch(`https://oauth2.googleapis.com/tokeninfo?id_token=${auth}`)
         const json = await res.json().catch(_=>({})) as any
         // console.log(json)

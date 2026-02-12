@@ -13,12 +13,25 @@ import {URL} from 'url'
 import {generateMigrations} from '../sql/schema/generateMigrations'
 import {jsonStringify} from '../utils/string'
 import {databaseSettingsSchema} from '../types/zod/databaseSettingsSchema'
-import { RequestInfo } from '@cloudflare/workers-types'
+import {RequestInfo} from '@cloudflare/workers-types'
 
 export const adminTokenKey = 'ADMIN_SERVICE_TOKEN'
 export const apiRouteKey = 'API_ROUTE'
 export const devVars = '.dev.vars'
 export const prodVars = '.prod.vars'
+
+// todo issue -
+//  after deploying the worker (either first time or subsequent),
+//  it is possible that it breaks the deployment (like when jwt secret cannot be resolved).
+//  after that when calling setup-db or fetch migrations, it returns an error, and we cannot do anything like generate, migrate or deploy
+//  to fix it, the only option is to re-deploy from scratch.
+//  to reproduce -
+//   delete local-persist in the notes-sample, change JWT_SECRET_MAIN to ABC in teenybase.ts and run migrate.
+//   other way - in an existing deployment, make the same change in .local-persist/config.json and run migrate.
+//   both will break the application
+
+// todo handle projects using vite with wrangler and maybe make that the primary workflow
+
 
 // global options
 export interface GlobalCLIOptions {
@@ -89,8 +102,7 @@ export class CliContext{
     }
 
     get localPersistPath(){
-        const persistPath = path.join(this.root, localPersist)
-        return persistPath
+        return path.join(this.root, localPersist)
     }
 
     buildLocal(outDir?: string, log = true, doThrow = true, clean = false, flags: string = ''): boolean{
@@ -101,7 +113,7 @@ export class CliContext{
         const lastWLogEnv = process.env.WRANGLER_LOG
         process.env.WRANGLER_LOG = log ? 'info' : 'error'
         try {
-            const command = `npx wrangler deploy --dry-run ${flags} --outdir=${JSON.stringify(_outDir)}`
+            const command = `npx wrangler deploy --dry-run ${flags} --outdir=${JSON.stringify(_outDir)} --tsconfig=${JSON.stringify(this.createCustomTsconfigForWorker('bl'))}`
             execSync(command, {cwd: this.root, stdio: ['inherit', 'pipe', 'pipe']})
             return true
         }catch (e: any) {
@@ -140,6 +152,7 @@ export class CliContext{
             process.env.WRANGLER_LOG = lastWLogEnv
             // cleanup
             if(clean) fs.rmSync(_outDir, {recursive: true})
+            this.removeCustomTsconfig('bl')
         }
     }
 
@@ -164,7 +177,9 @@ export class CliContext{
             // logLevel: "info",
             experimental: {
                 disableExperimentalWarning: true,
-            }
+            },
+            // @ts-expect-error types are wrong
+            tsconfig: this.createCustomTsconfigForWorker(),
         }) : undefined
         this.localWorker = await this._startingPromise
         if(this.localWorker) this.logger.debug('Local worker started')
@@ -184,6 +199,30 @@ export class CliContext{
         this.logger.debug('Local worker stopped')
         this.localWorker = undefined
         this._stopping = false
+        this.removeCustomTsconfig()
+    }
+
+    createCustomTsconfigForWorker(suffix = 'worker'){
+        const tsconfigPath = path.join(this.root, `.tmp.tsconfig.${suffix}.json`)
+        const currentTsconfig = path.join(this.root, this.wranglerConfig.config.tsConfig || 'tsconfig.json')
+        const currentTsconfigContent = fs.existsSync(currentTsconfig) ? JSON.parse(fs.readFileSync(currentTsconfig, 'utf-8')) : {}
+        const customTsconfigContent = {
+            "extends": normalizePath(path.relative(path.dirname(tsconfigPath), currentTsconfig)),
+            "compilerOptions": {
+                "paths": {
+                    // copying because they are not merged
+                    ...(currentTsconfigContent.compilerOptions?.paths || {}),
+                    "virtual:teenybase": ["./migrations/config.json"],
+                }
+            }
+        }
+        fs.writeFileSync(tsconfigPath, JSON.stringify(customTsconfigContent, null, 2))
+        return tsconfigPath
+    }
+
+    removeCustomTsconfig(suffix = 'worker'){
+        const tsconfigPath = path.join(this.root, `.tmp.tsconfig.${suffix}.json`)
+        fs.unlinkSync(tsconfigPath)
     }
 }
 
@@ -357,7 +396,7 @@ export async function fetchWorker(c: CliContext, fPath: string, reqOptions?: Req
 
 export async function fetchDeployedMigrations(c: CliContext) {
     c.logger.info(`Fetching deployed migrations from ${c.isLocal ? 'local' : 'remote'} deployment`)
-    loadLocalPersistConfig(c)
+
     const json = await fetchWorker(c, '/api/v1/migrations', {}).catch(e => {
         if (e.message?.includes('no such table: _db_migrations')) {
             c.logger.info('No migrations found in deployment')
@@ -537,7 +576,9 @@ export async function generateMigrationsDir(c: CliContext, clean = false, write 
 export function wranglerDeploy(c: CliContext, first = false){
     if(c.isLocal) throw new Error('Cannot deploy with --local')
     try {
-        const res = execSync(`wrangler deploy`, {cwd: c.root, stdio: first ? ['inherit', 'pipe', 'inherit'] : 'inherit'})
+        const res = execSync(
+            `wrangler deploy --tsconfig=${JSON.stringify(c.createCustomTsconfigForWorker('deploy'))}`,
+            {cwd: c.root, stdio: first ? ['inherit', 'pipe', 'inherit'] : 'inherit'})
         if(!first) return
         const resB = '' + res
         c.logger.info(resB)
@@ -556,6 +597,8 @@ export function wranglerDeploy(c: CliContext, first = false){
             // throw e
         }
         throw new Error('Unable to deploy worker, check logs above for more details.')
+    }finally{
+        c.removeCustomTsconfig('deploy')
     }
 }
 
