@@ -105,7 +105,7 @@ export class CliContext{
         return path.join(this.root, localPersist)
     }
 
-    buildLocal(outDir?: string, log = true, doThrow = true, clean = false, flags: string = ''): boolean{
+    buildLocal(config: DatabaseSettings, outDir?: string, log = true, doThrow = true, clean = false, flags: string = ''): boolean{
         const _outDir = outDir ?
             // explicit path is always resolved from cwd
             path.resolve(outDir) :
@@ -113,7 +113,7 @@ export class CliContext{
         const lastWLogEnv = process.env.WRANGLER_LOG
         process.env.WRANGLER_LOG = log ? 'info' : 'error'
         try {
-            const command = `npx wrangler deploy --dry-run ${flags} --outdir=${JSON.stringify(_outDir)} --tsconfig=${JSON.stringify(this.createCustomTsconfigForWorker('bl'))}`
+            const command = `npx wrangler deploy --dry-run ${flags} --outdir=${JSON.stringify(_outDir)} --tsconfig=${JSON.stringify(this.createCustomTsconfigForWorker(config, 'bl'))}`
             execSync(command, {cwd: this.root, stdio: ['inherit', 'pipe', 'pipe']})
             return true
         }catch (e: any) {
@@ -160,7 +160,11 @@ export class CliContext{
     async startLocal(){
         if(this.localWorker) return this.localWorker
         if(this._startingPromise) return await this._startingPromise
-        const built = this.buildLocal(undefined, false, false, true)
+        const localConfig = loadLocalPersistConfig(this)
+        if(!localConfig){
+            throw new Error(`No local config found in ${readableRelative(path.join(this.localPersistPath, 'config.json'))}. Starting local worker without persistence. Run "teeny migrate --local" to generate the local config.`)
+        }
+        const built = this.buildLocal(localConfig, undefined, false, false, true)
         if(!built){
             throw new Error('Unable to build and connect to local worker. Run "teeny dev --local" to check the errors.')
         }
@@ -179,7 +183,7 @@ export class CliContext{
                 disableExperimentalWarning: true,
             },
             // @ts-expect-error types are wrong
-            tsconfig: this.createCustomTsconfigForWorker(),
+            tsconfig: this.createCustomTsconfigForWorker(localConfig, 'dev'),
         }) : undefined
         this.localWorker = await this._startingPromise
         if(this.localWorker) this.logger.debug('Local worker started')
@@ -199,10 +203,13 @@ export class CliContext{
         this.logger.debug('Local worker stopped')
         this.localWorker = undefined
         this._stopping = false
-        this.removeCustomTsconfig()
+        this.removeCustomTsconfig('dev')
     }
 
-    createCustomTsconfigForWorker(suffix = 'worker'){
+    createCustomTsconfigForWorker(config: DatabaseSettings, suffix = 'worker'){
+        const tempConfigDir = path.join(this.root, '.teeny')
+        const tempConfigPath = path.join(tempConfigDir, `.tmp.config.${suffix}.json`)
+
         const tsconfigPath = path.join(this.root, `.tmp.tsconfig.${suffix}.json`)
         const currentTsconfig = path.join(this.root, this.wranglerConfig.config.tsConfig || 'tsconfig.json')
         const currentTsconfigContent = fs.existsSync(currentTsconfig) ? JSON.parse(fs.readFileSync(currentTsconfig, 'utf-8')) : {}
@@ -212,17 +219,23 @@ export class CliContext{
                 "paths": {
                     // copying because they are not merged
                     ...(currentTsconfigContent.compilerOptions?.paths || {}),
-                    "virtual:teenybase": ["./migrations/config.json"],
+                    "virtual:teenybase": [path.relative(path.dirname(currentTsconfig), tempConfigPath)],
                 }
             }
         }
         fs.writeFileSync(tsconfigPath, JSON.stringify(customTsconfigContent, null, 2))
+
+        if (!fs.existsSync(tempConfigDir)) fs.mkdirSync(tempConfigDir, {recursive: true})
+        fs.writeFileSync(tempConfigPath, JSON.stringify(config, null, 2))
+
         return tsconfigPath
     }
 
-    removeCustomTsconfig(suffix = 'worker'){
+    removeCustomTsconfig(suffix: string){
         const tsconfigPath = path.join(this.root, `.tmp.tsconfig.${suffix}.json`)
         fs.unlinkSync(tsconfigPath)
+        const tempConfigPath = path.join(this.root, `.tmp.config.${suffix}.json`)
+        fs.unlinkSync(tempConfigPath)
     }
 }
 
@@ -236,7 +249,7 @@ export function readMigrationsFolder(migrationsFolderPath: string) {
         .readdirSync(migrationsFolderPath)
     let sqlNames = fileNames
         .filter((name) => name.endsWith(".sql"));
-    let configFile = fileNames.find((name) => name === 'config.json')
+    // let configFile = fileNames.find((name) => name === 'config.json')
     let nextConfigFile = fileNames.find((name) => name === 'next-config.json')
     sqlNames.sort((a, b) => {
         const aNumber = parseInt(a.split("_")[0]);
@@ -250,19 +263,19 @@ export function readMigrationsFolder(migrationsFolderPath: string) {
         return {name, sql: migration};
     })
     let currentConfig, nextConfig
-    const configPath = configFile ? path.join(migrationsFolderPath, configFile) : null
+    // const configPath = configFile ? path.join(migrationsFolderPath, configFile) : null
     const nextConfigPath = nextConfigFile ? path.join(migrationsFolderPath, nextConfigFile) : null
-    try {
-        currentConfig = configPath ? JSON.parse(fs.readFileSync(configPath, 'utf8')) : undefined
-    }catch (e: any) {
-        throw new Error(`Unable to read file ${readableRelative(configPath||'')}\n${e?.message || e}\n\nThis file is not supposed to be manually edited. You may revert any changes, or delete the "${readableRelative(migrationsFolderPath)}" and "${readableRelative(localPersist)}" directory and run again.`)
-    }
+    // try {
+    //     currentConfig = configPath ? JSON.parse(fs.readFileSync(configPath, 'utf8')) : undefined
+    // }catch (e: any) {
+    //     throw new Error(`Unable to read file ${readableRelative(configPath||'')}\n${e?.message || e}\n\nThis file is not supposed to be manually edited. You may revert any changes, or delete the "${readableRelative(migrationsFolderPath)}" and "${readableRelative(localPersist)}" directory and run again.`)
+    // }
     try {
         nextConfig = nextConfigPath ? JSON.parse(fs.readFileSync(nextConfigPath, 'utf8')) : undefined
     } catch (e: any) {
         throw new Error(`Unable to read file ${readableRelative(nextConfigPath||'')}\n${e?.message || e}\n\nThis file is not supposed to be manually edited. You may try deleting the file and run again`)
     }
-    return {migrations: currentMigrations, config: currentConfig, nextConfig}
+    return {migrations: currentMigrations, /*config: currentConfig, */nextConfig}
 }
 
 export type WranglerConfigRet = {
@@ -417,12 +430,13 @@ export function loadLocalPersistConfig(c: CliContext) {
         } catch (e: any) {
             throw new Error(`Unable to read file ${readableRelative(localConfigPath || '')}\n${e?.message || e}\n\nThis file is not supposed to be manually edited. You may revert any changes, or delete the "${readableRelative(c.localPersistPath)}" directory and run again.`)
         }
-        // write to migrations/config.json so that fetchDeployedMigrations below can use it in local dev server. if clean is true, this will be deleted.
-        if(!fs.existsSync(c.migrationsPath)) fs.mkdirSync(c.migrationsPath, {recursive: true})
-        const configPath = path.join(c.migrationsPath, 'config.json')
-        fs.writeFileSync(configPath, JSON.stringify(localConfig, null, 2))
-        c.logger.info(`Config found in ${readableRelative(c.localPersistPath)}. Written to ${readableRelative(configPath)}`)
-        return localConfig
+        // // write to migrations/config.json so that fetchDeployedMigrations below can use it in local dev server. if clean is true, this will be deleted.
+        // if(!fs.existsSync(c.migrationsPath)) fs.mkdirSync(c.migrationsPath, {recursive: true})
+        // const configPath = path.join(c.migrationsPath, 'config.json')
+        // fs.writeFileSync(configPath, JSON.stringify(localConfig, null, 2))
+        // c.logger.info(`Config found in ${readableRelative(c.localPersistPath)}. Written to ${readableRelative(configPath)}`)
+        return localConfig ? databaseSettingsSchema.parse(localConfig) : undefined
+        // return true
     }
     return undefined
 }
@@ -433,18 +447,18 @@ export async function generateMigrationsDir(c: CliContext, clean = false, write 
     const config = await loadConfigFromFile(c.root, c.options.config, c.options.logLevel)
 
     let deployed = true
-    let lastConfig: Partial<DatabaseSettings>|undefined = undefined
+    let lastConfig: DatabaseSettings|undefined = undefined
     let lastMigrations: { name: string, sql: string, sql_revert: string }[] = []
 
-    let {migrations: currentMigrations, config: currentConfig, nextConfig: _nextConfig} = readMigrationsFolder(c.migrationsPath)
+    let {migrations: currentMigrations, /*config: currentConfig, */nextConfig: _nextConfig} = readMigrationsFolder(c.migrationsPath)
 
     // the local server cannot be running/deployed when there is no config.json as it's supposed to directly import it.
     if(c.isLocal && deployed){
         // check if there is a config in localpersist
-        currentConfig = loadLocalPersistConfig(c)
+        const hasLocalConfig = !!loadLocalPersistConfig(c)
 
-        if(!currentConfig) {
-            c.logger.info(`No config found at ${readableRelative(path.join(c.migrationsPath, 'config.json'))} or ${readableRelative(c.localPersistPath)}`)
+        if(!hasLocalConfig) {
+            c.logger.info(`No config found at ${readableRelative(c.localPersistPath)}`)
             deployed = false
         }
     }
@@ -475,16 +489,17 @@ export async function generateMigrationsDir(c: CliContext, clean = false, write 
         // if different, throw error
         // todo proper check
         const migrationsChanged = jsonStringify(currentMigrations) !== jsonStringify(lastMigrations)
-        const configChanged = jsonStringify(currentConfig||{}) !== jsonStringify(lastConfig||{})
+        // const configChanged = jsonStringify(currentConfig||{}) !== jsonStringify(lastConfig||{})
         if (migrationsChanged) {
             throw new Error('Migrations folder has been modified. Apply the migrations first or run with --clean to reset migrations from deployment')
         }
-        if (configChanged) {
-            throw new Error('Config has been modified. Deploy first or run with --clean to reset migrations from deployment')
-        }
+        // if (configChanged) {
+        //     throw new Error('Config has been modified. Deploy first or run with --clean to reset migrations from deployment')
+        // }
 
         c.logger.info(`Migrations folder and config are up to date with the ${c.isLocal ? 'local' : 'remote'} deployment`)
     }
+
     // generate migrations for tables
     const index = lastMigrations.length ? parseInt(lastMigrations[lastMigrations.length - 1].name.split('_')[0])+1 : 0
     const {migrations: newMigrations, config: nextConfig_, extraLogs} = generateMigrations(config.config, lastConfig, index)
@@ -501,9 +516,9 @@ export async function generateMigrationsDir(c: CliContext, clean = false, write 
             fs.unlinkSync(path.join(c.migrationsPath, m.name))
         }
         // delete config file
-        if (currentConfig) {
-            fs.unlinkSync(path.join(c.migrationsPath, 'config.json'))
-        }
+        // if (currentConfig) {
+        //     fs.unlinkSync(path.join(c.migrationsPath, 'config.json'))
+        // }
         // delete any next-config.json file from previous runs
         if (_nextConfig){
             fs.unlinkSync(path.join(c.migrationsPath, 'next-config.json'))
@@ -520,9 +535,9 @@ export async function generateMigrationsDir(c: CliContext, clean = false, write 
             }
         }
         // write the config from the deployment
-        if (lastConfig) {
-            fs.writeFileSync(path.join(c.migrationsPath, 'config.json'), JSON.stringify(lastConfig, null, 2))
-        }
+        // if (lastConfig) {
+        //     fs.writeFileSync(path.join(c.migrationsPath, 'config.json'), JSON.stringify(lastConfig, null, 2))
+        // }
         c.logger.info('Migrations folder cleaned' + (deployed ? ' and reset to deployment' : ''))
         // currentMigrations = []
         // currentConfig = undefined
@@ -541,7 +556,7 @@ export async function generateMigrationsDir(c: CliContext, clean = false, write 
         //     }
         //     // there could be a mismatch between the migrations we have on disk and what's supposed to be, but that's fine since it will be checked when we actually need to apply anything
         // }
-        return
+        return {newMigrations: [], nextConfig: undefined, lastMigrations, lastConfig, deployed/*, currentConfig*/}
     }
 
     if(write) {
@@ -570,14 +585,14 @@ export async function generateMigrationsDir(c: CliContext, clean = false, write 
         }
     }
 
-    return {newMigrations, nextConfig, lastMigrations, lastConfig, currentConfig}
+    return {newMigrations, nextConfig, lastMigrations, lastConfig, deployed/*, currentConfig*/}
 }
 
-export function wranglerDeploy(c: CliContext, first = false){
+export function wranglerDeploy(c: CliContext, config: DatabaseSettings, first = false){
     if(c.isLocal) throw new Error('Cannot deploy with --local')
     try {
         const res = execSync(
-            `wrangler deploy --tsconfig=${JSON.stringify(c.createCustomTsconfigForWorker('deploy'))}`,
+            `wrangler deploy --tsconfig=${JSON.stringify(c.createCustomTsconfigForWorker(config, 'deploy'))}`,
             {cwd: c.root, stdio: first ? ['inherit', 'pipe', 'inherit'] : 'inherit'})
         if(!first) return
         const resB = '' + res
@@ -602,6 +617,15 @@ export function wranglerDeploy(c: CliContext, first = false){
     }
 }
 
+export function localPersistDeploy(lastConfig: Partial<DatabaseSettings>|undefined, c: CliContext){
+    const localConfigPath = path.join(c.localPersistPath, 'config.json')
+    if(lastConfig) {
+        fs.mkdirSync(path.dirname(localConfigPath), {recursive: true})
+        fs.writeFileSync(localConfigPath, JSON.stringify(lastConfig, null, 2))
+    }else if(fs.existsSync(localConfigPath)) fs.unlinkSync(localConfigPath)
+
+}
+
 export function deploySecrets(c: CliContext, secrets: any){
     if(c.isLocal) throw new Error('Cannot deploy with --local')
     // deploy secrets since its the first time
@@ -620,9 +644,9 @@ export function deploySecrets(c: CliContext, secrets: any){
 }
 
 export async function migrateAndDeploy(c: CliContext, clean: boolean, doMigrate: boolean, forceDeploy: boolean, skipConfirmation: boolean = false) {
-    const {newMigrations, nextConfig} = await generateMigrationsDir(c, clean).catch(async e => {
+    const {newMigrations, nextConfig, lastConfig} = await generateMigrationsDir(c, clean).catch(async e => {
         throw e
-    }) || {}
+    })
     if (newMigrations?.length) {
         if (!doMigrate) {
             throw new Error('There are unapplied migrations. Run with --migrate to apply them')
@@ -630,16 +654,16 @@ export async function migrateAndDeploy(c: CliContext, clean: boolean, doMigrate:
     }
     let newSettingsSavedInDb = false
 
-    const {migrations, config: lastConfig, nextConfig: _nextConfig} = readMigrationsFolder(c.migrationsPath)
+    const {migrations, /*config: lastConfig, */nextConfig: _nextConfig} = readMigrationsFolder(c.migrationsPath)
     try {
         // this check is not obsolete, don't remove
         if (JSON.stringify(nextConfig||{}) !== JSON.stringify(_nextConfig||{})) {
             throw new Error('Unknown error: nextConfig does not match locally')
         }
-        if (nextConfig) {
-            c.logger.info('Updating config.json with next-config.json')
-            fs.writeFileSync(path.join(c.migrationsPath, 'config.json'), JSON.stringify(nextConfig, null, 2))
-        }
+        // if (nextConfig) {
+        //     c.logger.info('Updating config.json with next-config.json')
+        //     fs.writeFileSync(path.join(c.migrationsPath, 'config.json'), JSON.stringify(nextConfig, null, 2))
+        // }
 
         // let deployed = false
 
@@ -727,13 +751,14 @@ export async function migrateAndDeploy(c: CliContext, clean: boolean, doMigrate:
 
                         try {
                             c.logger.info('Deploying worker for the first time')
-                            // at this point, migrations/config.json should contain the nextConfig
+
+
+                            // write without tables first (because its first time deployment without any migrations)
                             const configNoTables = {
                                 ...nextConfig, tables: []
                             } as DatabaseSettings
-                            // write without tables first
-                            fs.writeFileSync(path.join(c.migrationsPath, 'config.json'), JSON.stringify(configNoTables, null, 2))
-                            let route = wranglerDeploy(c, true)
+
+                            let route = wranglerDeploy(c, configNoTables, true)
                             if (!route) {
                                 // check if there is custom domain in wrangler config
                                 // { pattern = "subdomain.example.com", custom_domain = true }
@@ -748,7 +773,7 @@ export async function migrateAndDeploy(c: CliContext, clean: boolean, doMigrate:
                             throw e
                         } finally {
                             // revert config to nextConfig
-                            fs.writeFileSync(path.join(c.migrationsPath, 'config.json'), JSON.stringify(nextConfig, null, 2))
+                            // fs.writeFileSync(path.join(c.migrationsPath, 'config.json'), JSON.stringify(nextConfig, null, 2))
                         }
                         // secrets
                         try {
@@ -763,11 +788,7 @@ export async function migrateAndDeploy(c: CliContext, clean: boolean, doMigrate:
                 } else {
                     // local deploy, nothing to do with wrangler
                     if(nextConfig) {
-                        // at this point, migrations/config.json should contain the nextConfig
-                        // write the nextConfig also to localPersist so we know for next time what config was saved
-                        const localConfigPath = path.join(c.localPersistPath, 'config.json')
-                        fs.mkdirSync(path.dirname(localConfigPath), {recursive: true})
-                        fs.writeFileSync(localConfigPath, JSON.stringify(nextConfig, null, 2))
+                        localPersistDeploy(nextConfig, c)
                     }
                 }
             }
@@ -848,17 +869,20 @@ export async function migrateAndDeploy(c: CliContext, clean: boolean, doMigrate:
 
             }
 
-            if (true /*!deployed*//* && (nextConfig || newMigrations?.length || forceDeploy)*/) {
+            if (true /*!deployed*//* && (nextConfig || newMigrations?.length || forceDeploy)*/) { // todo check if we need to deploy
                 if (!c.isLocal) {
-                    // todo incase of error during deployment, we need to prompt user to run the migrate again
-                    wranglerDeploy(c)
+                    const config = nextConfig || lastConfig
+                    if(config) {
+                        // todo incase of error during deployment, we need to prompt user to run the migrate again
+                        wranglerDeploy(c, config)
+                    }else {
+                        c.logger.error('No config to deploy, skipping wrangler deploy')
+                    }
                 } else {
                     // local worker is automatically deployed with new settings when next-config.json is written to config.json
                     if(nextConfig) {
                         // write the nextConfig also to localPersist
-                        const localConfigPath = path.join(c.localPersistPath, 'config.json')
-                        fs.mkdirSync(path.dirname(localConfigPath), {recursive: true})
-                        fs.writeFileSync(localConfigPath, JSON.stringify(nextConfig, null, 2))
+                        localPersistDeploy(nextConfig, c)
                     }
                 }
             }
@@ -878,17 +902,15 @@ export async function migrateAndDeploy(c: CliContext, clean: boolean, doMigrate:
         }
     } catch (e: any) {
         if (nextConfig && !newSettingsSavedInDb) {
-            c.logger.warn('Reverting config.json due to error')
-            const cp = path.join(c.migrationsPath, 'config.json')
-            if (lastConfig) {
-                fs.writeFileSync(cp, JSON.stringify(lastConfig, null, 2))
-            } else if(fs.existsSync(cp)) {
-                fs.unlinkSync(cp)
-            }
-            if(c.isLocal && lastConfig){
-                const localConfigPath = path.join(c.localPersistPath, 'config.json')
-                fs.mkdirSync(path.dirname(localConfigPath), {recursive: true})
-                fs.writeFileSync(localConfigPath, JSON.stringify(lastConfig, null, 2))
+            // const cp = path.join(c.migrationsPath, 'config.json')
+            // if (lastConfig) {
+            //     fs.writeFileSync(cp, JSON.stringify(lastConfig, null, 2))
+            // } else if(fs.existsSync(cp)) {
+            //     fs.unlinkSync(cp)
+            // }
+            if(c.isLocal){
+                c.logger.warn('Reverting config.json due to error')
+                localPersistDeploy(lastConfig, c)
             }
         }
         throw e

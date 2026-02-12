@@ -243,19 +243,23 @@ cli
                     throw new Error('Remote dev server not support at the moment.')
                 }
 
-                loadLocalPersistConfig(c)
-
-                // this check is for first time when .local-persist/config.json also doesn't exist
-                const configPath = path.join(c.migrationsPath, 'config.json')
-                if(!fs.existsSync(c.migrationsPath) || !fs.existsSync(configPath)){
-                    throw new Error(`Migrations or Config file not found. First run "teeny migrate ${c.isLocal ? '--local':'--remote'}" to generate and apply migrations to the ${c.isLocal ? 'local':'remote'}" database.`)
+                const config = loadLocalPersistConfig(c)
+                if(!config){
+                    throw new Error(`No local persist config found. Please run "teeny migrate --local" first to generate the config and migrations for the local database.`)
                     // process.exit(1)
                 }
+
+                // this check is for first time when .local-persist/config.json also doesn't exist
+                // const configPath = path.join(c.migrationsPath, 'config.json')
+                // if(!fs.existsSync(c.migrationsPath) || !fs.existsSync(configPath)){
+                //     throw new Error(`Migrations or Config file not found. First run "teeny migrate ${c.isLocal ? '--local':'--remote'}" to generate and apply migrations to the ${c.isLocal ? 'local':'remote'}" database.`)
+                //     process.exit(1)
+                // }
 
                 const command = `npx wrangler dev \
                 --persist-to=${JSON.stringify(c.localPersistPath)} \
                 --port=${c.devServerPort} \
-                --tsconfig=${JSON.stringify(c.createCustomTsconfigForWorker('dev'))}
+                --tsconfig=${JSON.stringify(c.createCustomTsconfigForWorker(config, 'dev'))}
                 `
                 // ${c.isLocal ? '--local' : '--remote'} \
 
@@ -291,7 +295,7 @@ cli
                 const absDir = path.join(c.root, dir)
                 fs.mkdirSync(absDir, {recursive: true})
 
-                loadLocalPersistConfig(c)
+                // loadLocalPersistConfig(c)
 
                 const migrations = await fetchDeployedMigrations(c)
                 if(migrations.settings)
@@ -352,7 +356,7 @@ cli
             const wranglerConfig = await parseWrangler(options.root, options)
             const c = new CliContext(options.root, options, wranglerConfig)
 
-            const {nextConfig} = await generateMigrationsDir(c, false, false).catch(async e=>{
+            const {nextConfig, lastConfig} = await generateMigrationsDir(c, false, false).catch(async e=>{
                 c.logger.error(
                     colors.red(`error when generating migrations:\n${e.stack}`),
                     {error: e},
@@ -362,23 +366,27 @@ cli
                 process.exit(1)
             }).finally(()=>{
                 // stopProfiler((message) => createLogger(options.logLevel).info(message))
-            }) || {}
+            })
 
             c.logger.info('Starting Build')
 
             if(!fs.existsSync(c.migrationsPath)) fs.mkdirSync(c.migrationsPath, {recursive: true})
-            const configFile = path.join(c.migrationsPath, 'config.json') // = ./migrations/config.json
-            const configData = fs.existsSync(configFile) ? fs.readFileSync(configFile, 'utf8') : null
+            // const configFile = path.join(c.migrationsPath, 'config.json') // = ./migrations/config.json
+            // const configData = fs.existsSync(configFile) ? fs.readFileSync(configFile, 'utf8') : null
             try {
                 // write the current generated one so that build can use it, we will delete it later
-                if(nextConfig){
-                    c.logger.debug('Temporarily writing next-config to config.json')
-                    fs.writeFileSync(configFile, JSON.stringify(nextConfig, null, 2))
-                }else{
-                    // no new changes
+                // if(nextConfig){
+                //     c.logger.debug('Temporarily writing next-config to config.json')
+                //     fs.writeFileSync(configFile, JSON.stringify(nextConfig, null, 2))
+                // }else{
+                //     // no new changes
+                // }
+                const config = nextConfig || lastConfig
+                if(!config){
+                    throw new Error(`No config found to build. Please run "teeny migrate ${c.isLocal ? '--local' : '--remote'}" first to generate the config and migrations for the database.`)
                 }
                 const outDir = options.outDir || path.join(c.root, 'dist')
-                const res = c.buildLocal(outDir, true, true, false, '--minify')
+                const res = c.buildLocal(config, outDir, true, true, false, '--minify')
                 if(res) c.logger.info(`Finished Build. Written to "${readableRelative(outDir)}"`)
                 await c.stopLocal()
                 // c.logger.info(res)
@@ -390,14 +398,14 @@ cli
                 await c.stopLocal()
                 process.exit(1)
             } finally {
-                if(nextConfig) {
-                    // revert the config
-                    c.logger.debug('Reverting config.json')
-                    if (!configData) {
-                        if(fs.existsSync(configFile)) fs.unlinkSync(configFile)
-                    }
-                    else fs.writeFileSync(configFile, configData)
-                }
+                // if(nextConfig) {
+                //     // revert the config
+                //     c.logger.debug('Reverting config.json')
+                //     if (!configData) {
+                //         if(fs.existsSync(configFile)) fs.unlinkSync(configFile)
+                //     }
+                //     else fs.writeFileSync(configFile, configData)
+                // }
                 // stopProfiler((message) => createLogger(options.logLevel).info(message))
             }
         },
