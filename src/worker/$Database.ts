@@ -8,6 +8,7 @@ import {AllowedIssuer, DatabaseSettings} from '../types/config'
 import {JWTTokenHelper} from '../security/JWTTokenHelper'
 import {EmailSendClient} from './email/send-email'
 import {InternalKV} from './internalKV'
+import {InternalIdentities} from './InternalIdentities'
 import {$Env} from './env'
 import {JWTPayloadOp} from '../types/jwt'
 import {TableAuthExtensionData} from '../types/tableExtensions'
@@ -59,6 +60,7 @@ export class $Database<T extends $Env = $Env> extends EventTarget<$DatabaseEvent
     // readonly notify: NotifyClient
     readonly jwt: JWTTokenHelper
     readonly kv: InternalKV<T>
+    readonly identities: InternalIdentities<T>
     readonly extensions: $DBExtension<T>[] = []
 
     public readonly c: Context<T>
@@ -81,6 +83,7 @@ export class $Database<T extends $Env = $Env> extends EventTarget<$DatabaseEvent
         this.database = database
         this.storage = storage
         this.kv = new InternalKV(this, this.settings._kvTableName)
+        this.identities = new InternalIdentities(this)
         this.extensions.push(new MigrationHelper(this, undefined, this.kv))
         this.secretResolver = new SecretResolver(()=>c.env, SecretResolver.DEFAULT_KEY_ENV)
 
@@ -157,6 +160,7 @@ export class $Database<T extends $Env = $Env> extends EventTarget<$DatabaseEvent
         }
         await Promise.all([
             this.kv.setup(version),
+            this.identities.setup(version),
             ...this.extensions.map(e => e.setup && e.setup(version)),
             ...this.settings.tables.map(t => this.table(t.name).setup(version))
         ])

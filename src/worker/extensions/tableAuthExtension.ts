@@ -119,11 +119,14 @@ export class TableAuthExtension extends TableExtension<TableAuthExtensionData> {
             }
 
             return {
+                provider: 'github',
+                providerId: String(user.id),
                 email: email!,
                 name: user.name,
                 avatar: user.avatar_url,
                 username: user.login,
                 verified: true,
+                rawData: user,
             }
         },
     }
@@ -397,13 +400,13 @@ export class TableAuthExtension extends TableExtension<TableAuthExtensionData> {
         // todo why this false and 0 check? because it can be 'true'?
         if(payload.verified === false || (payload as any).verified === 0) throw new HTTPException(400, {message: 'Not verified'})
 
-        return this._loginWithExternalUser(payload.sub, payload?.issData)
+        return this._loginWithExternalUser(payload.sub, payload?.issData, payload.iss)
     }
 
-    private async _loginWithExternalUser(email: string, issData: any) {
+    private async _loginWithExternalUser(email: string, issData: any, provider?: string) {
         let res = await this.findUser(email, true)
         // todo make a setting in this.data to control whether a new user should be created on new token or should it be explicit
-        if(!res) res = await this._createUserToken(email, true, issData)
+        if(!res) res = await this._createUserToken(email, true, issData, undefined, undefined, provider)
 
         if(!res) throw new HTTPException(401, {message: 'Unauthorized'})
         if(res.email !== email) throw new HTTPException(400, {message: 'Invalid email'})
@@ -526,7 +529,7 @@ export class TableAuthExtension extends TableExtension<TableAuthExtensionData> {
         if (!result.email) throw new HTTPException(400, {message: 'Email not available from provider'})
         if (result.verified === false) throw new HTTPException(400, {message: 'Email not verified'})
 
-        const ret = await this._loginWithExternalUser(result.email, result)
+        const ret = await this._loginWithExternalUser(result.email, result, providerName)
         this._setAuthCookie(ret.token)
 
         const redirectUrl = state.r || provider.redirectUrl || this.table.$db.settings.appUrl
@@ -573,11 +576,14 @@ export class TableAuthExtension extends TableExtension<TableAuthExtensionData> {
         // Extract fields using mapping
         const mapping = {email: 'email', name: 'name', verified: 'email_verified', ...provider.mapping}
         return {
+            provider: provider.name,
+            providerId: (userInfo.sub ?? userInfo.id) ? String(userInfo.sub ?? userInfo.id) : undefined,
             email: userInfo[mapping.email!],
             name: mapping.name ? userInfo[mapping.name] : undefined,
             avatar: mapping.avatar ? userInfo[mapping.avatar] : undefined,
             username: mapping.username ? userInfo[mapping.username] : undefined,
             verified: mapping.verified ? (userInfo[mapping.verified] ?? true) : true,
+            rawData: userInfo,
         }
     }
 
@@ -827,9 +833,8 @@ export class TableAuthExtension extends TableExtension<TableAuthExtensionData> {
         return user
     }
 
-    // todo we need to save id of the user from the external platform also.
     // this should only be used for auto user creation
-    private async _createUserToken(email: string|undefined, verified: boolean, externalData: any, record?:Record<string, SQLLiteral>, values2 ?:Record<string, SQLLiteral>) {
+    private async _createUserToken(email: string|undefined, verified: boolean, externalData: any, record?:Record<string, SQLLiteral>, values2 ?:Record<string, SQLLiteral>, provider?: string) {
         if(!this.table.data.autoSetUid) throw new HTTPException(500, {message: 'Invalid Configuration - autoSetUid required for auth extension'})
         const values: Record<string, SQLLiteral> = {
             ...record,
@@ -848,8 +853,6 @@ export class TableAuthExtension extends TableExtension<TableAuthExtensionData> {
             values[this.mapping.name] = {l: externalData.name || 'User'}
 
         // if(this.mapping.avatar) // todo avatar url
-
-        // todo put whole externalData in raw_user_meta_data like supabase
 
         if(this.data.passwordType && this.mapping.password && !values[this.mapping.password]){
             let pass = generateUid()
@@ -878,7 +881,15 @@ export class TableAuthExtension extends TableExtension<TableAuthExtensionData> {
                     values: {...values},
                     returning: this._userFields(),
                 })?.run() ?? []
-                return this._fieldsToUser(res[0])
+                const user = this._fieldsToUser(res[0])
+                if (user && provider) {
+                    const providerId = externalData?.providerId ?? externalData?.sub ?? externalData?.id
+                    const rawData = externalData?.rawData ?? externalData
+                    this.c.executionCtx.waitUntil(
+                        this.table.$db.identities.insert(user.id, provider, providerId ? String(providerId) : undefined, rawData)
+                    )
+                }
+                return user
             } catch (error: any) {
                 lastError = error
                 if(error instanceof D1Error){

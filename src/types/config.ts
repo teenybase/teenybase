@@ -46,11 +46,14 @@ export interface OAuthProviderConfig {
 }
 
 export type OAuthExchangeResult = {
+    provider?: string           // e.g. 'google', 'github'
+    providerId?: string         // user's ID on the external provider
     email: string
     name?: string
     avatar?: string
     username?: string
     verified?: boolean
+    rawData?: Record<string, any>  // full provider response
 }
 
 export interface DatabaseSettings {
