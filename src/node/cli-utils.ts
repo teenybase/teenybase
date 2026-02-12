@@ -14,6 +14,9 @@ import {generateMigrations} from '../sql/schema/generateMigrations'
 import {jsonStringify} from '../utils/string'
 import {databaseSettingsSchema} from '../types/zod/databaseSettingsSchema'
 import {RequestInfo} from '@cloudflare/workers-types'
+import {DBMigration, MigrationHelperRaw} from '../worker/migrationHelper'
+import {InternalKV} from '../worker/internalKV'
+import {$DatabaseRawImpl} from '../worker/$DatabaseRawImpl'
 
 export const adminTokenKey = 'ADMIN_SERVICE_TOKEN'
 export const apiRouteKey = 'API_ROUTE'
@@ -407,17 +410,49 @@ export async function fetchWorker(c: CliContext, fPath: string, reqOptions?: Req
     }
 }
 
-export async function fetchDeployedMigrations(c: CliContext) {
+export async function fetchDeployedMigrations(c: CliContext, kvTableName: string|undefined) {
     c.logger.info(`Fetching deployed migrations from ${c.isLocal ? 'local' : 'remote'} deployment`)
 
-    const json = await fetchWorker(c, '/api/v1/migrations', {}).catch(e => {
-        if (e.message?.includes('no such table: _db_migrations')) {
-            c.logger.info('No migrations found in deployment')
-            return {settings: null, migrations: []}
+    let migrations: DBMigration[]|null = null
+    let settings: DatabaseSettings | null = null
+    try {
+        const db = new $DatabaseRawImpl()
+        db.auth.superadmin = true
+        const kv = new InternalKV(db, kvTableName)
+        const helper = new MigrationHelperRaw(db, kv, undefined) // todo migration table name is fixed
+        migrations = await helper.list().catch(e=>{
+            // setup not done yet, todo test
+            if (e.message?.includes(`no such table: ${helper.tableName}`)) {
+                c.logger.info('No migrations found in deployment')
+                return []
+            }
+            throw e
+        })
+        settings = await helper.dbSettings() || null
+        if(!settings){
+            throw new Error('No settings found in the database state.')
         }
-        throw e
-    })
-    return json as {settings: DatabaseSettings, migrations: { name: string, sql: string, sql_revert: string }[]}
+        return {settings, migrations}
+    }catch (e) {
+        console.warn(e)
+        console.warn('Fallback to fetch migrations and settings through API.')
+        try {
+            const json = await fetchWorker(c, '/api/v1/migrations', {}).catch(e => {
+                // setup not done yet
+                if (e.message?.includes(`no such table: ${MigrationHelperRaw.DEFAULT_TABLE_NAME}`)) {  // todo migration table name is fixed
+                    c.logger.info('No migrations found in deployment')
+                    return {settings: null, migrations: []}
+                }
+                throw e
+            })
+            return json as { settings: DatabaseSettings, migrations: DBMigration[] }
+        }catch (e) {
+            // if(migrations){
+            //     return {settings, migrations}
+            // }
+            throw e
+        }
+    }
 }
 
 export function loadLocalPersistConfig(c: CliContext) {
@@ -448,7 +483,7 @@ export async function generateMigrationsDir(c: CliContext, clean = false, write 
 
     let deployed = true
     let lastConfig: DatabaseSettings|undefined = undefined
-    let lastMigrations: { name: string, sql: string, sql_revert: string }[] = []
+    let lastMigrations: DBMigration[] = []
 
     let {migrations: currentMigrations, /*config: currentConfig, */nextConfig: _nextConfig} = readMigrationsFolder(c.migrationsPath)
 
@@ -473,7 +508,7 @@ export async function generateMigrationsDir(c: CliContext, clean = false, write 
     }
 
     if (deployed) {
-        const json = await fetchDeployedMigrations(c)
+        const json = await fetchDeployedMigrations(c, config.config._kvTableName)
         if(json.settings === null) deployed = false
 
         lastConfig = json.settings ? databaseSettingsSchema.parse(json.settings) : undefined
