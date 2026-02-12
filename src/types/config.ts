@@ -33,6 +33,9 @@ export interface OAuthProviderConfig {
     clientSecret: string      // $ENV_VAR
     scopes?: string[]         // preset defaults for known providers
     redirectUrl?: string      // frontend URL to redirect after auth, default appUrl
+    authorizeParams?: Record<string, string> // extra params for authorize URL
+    userinfoHeaders?: Record<string, string> // extra headers for userinfo request
+    userinfoField?: string    // extract nested field from userinfo response (e.g., 'user', 'data')
     mapping?: {               // map provider response fields to standard names
         email?: string        // default 'email'
         name?: string         // default 'name'
@@ -40,6 +43,14 @@ export interface OAuthProviderConfig {
         username?: string
         verified?: string     // default 'email_verified'
     }
+}
+
+export type OAuthExchangeResult = {
+    email: string
+    name?: string
+    avatar?: string
+    username?: string
+    verified?: boolean
 }
 
 export interface DatabaseSettings {

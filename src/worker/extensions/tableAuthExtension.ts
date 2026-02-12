@@ -24,14 +24,17 @@ import {setupTableAuthExtensionRoutes} from './tableAuthExtension.routes'
 import {D1Error} from '../util/error'
 import {zParseWithPath} from '../../utils/zod'
 import {deleteCookie, getCookie, setCookie} from 'hono/cookie'
-import {OAuthProviderConfig} from '../../types/config'
+import {OAuthExchangeResult, OAuthProviderConfig} from '../../types/config'
 
-const OAUTH_PRESETS: Record<string, Pick<OAuthProviderConfig, 'authorizeUrl' | 'tokenUrl' | 'userinfoUrl' | 'scopes' | 'mapping'>> = {
+type OAuthPreset = Pick<OAuthProviderConfig, 'authorizeUrl' | 'tokenUrl' | 'userinfoUrl' | 'scopes' | 'mapping' | 'authorizeParams' | 'userinfoHeaders' | 'userinfoField'>
+
+const OAUTH_PRESETS: Record<string, OAuthPreset> = {
     google: {
         authorizeUrl: 'https://accounts.google.com/o/oauth2/v2/auth',
         tokenUrl: 'https://oauth2.googleapis.com/token',
         scopes: ['openid', 'email', 'profile'],
         mapping: {avatar: 'picture'},
+        authorizeParams: {include_granted_scopes: 'true'},
     },
     github: {
         authorizeUrl: 'https://github.com/login/oauth/authorize',
@@ -39,8 +42,34 @@ const OAUTH_PRESETS: Record<string, Pick<OAuthProviderConfig, 'authorizeUrl' | '
         userinfoUrl: 'https://api.github.com/user',
         scopes: ['user:email', 'read:user'],
         mapping: {avatar: 'avatar_url', username: 'login'},
+        userinfoHeaders: {'User-Agent': 'Teenybase'},
+    },
+    discord: {
+        authorizeUrl: 'https://discord.com/oauth2/authorize',
+        tokenUrl: 'https://discord.com/api/oauth2/token',
+        userinfoUrl: 'https://discord.com/api/oauth2/@me',
+        scopes: ['identify', 'email'],
+        userinfoField: 'user',
+    },
+    linkedin: {
+        authorizeUrl: 'https://www.linkedin.com/oauth/v2/authorization',
+        tokenUrl: 'https://www.linkedin.com/oauth/v2/accessToken',
+        userinfoUrl: 'https://api.linkedin.com/v2/userinfo',
+        scopes: ['openid', 'email', 'profile'],
+        mapping: {avatar: 'picture', verified: 'email_verified'},
     },
 }
+
+/** Custom exchange handler for providers with non-standard OAuth flows (e.g., GitHub emails, Facebook Graph API, X/Twitter PKCE).
+ *  CSRF verification, login, cookie setting, and redirect are handled by the framework — the handler only does token exchange + user info. */
+export type OAuthExchangeHandler = (ctx: {
+    c: Context,
+    code: string,
+    callbackUrl: string,
+    clientId: string,
+    clientSecret: string,
+    provider: OAuthProviderConfig & {scopes: string[]},
+}) => Promise<OAuthExchangeResult>
 
 type UserFields = {
     emailVerified?: boolean
@@ -62,6 +91,42 @@ const SALT_LENGTH = 20
 
 export class TableAuthExtension extends TableExtension<TableAuthExtensionData> {
     static readonly name = 'auth'
+    /** Registry for custom OAuth exchange handlers. Keyed by provider name. */
+    static oauthExchangeHandlers: Record<string, OAuthExchangeHandler> = {
+        // GitHub needs a separate /user/emails call because /user often returns email: null for private emails
+        github: async ({code, callbackUrl, clientId, clientSecret}) => {
+            const tokenRes = await fetch('https://github.com/login/oauth/access_token', {
+                method: 'POST',
+                headers: {'Content-Type': 'application/x-www-form-urlencoded', 'Accept': 'application/json'},
+                body: new URLSearchParams({code, client_id: clientId, client_secret: clientSecret, redirect_uri: callbackUrl}),
+            })
+            const tokenData = await tokenRes.json<Record<string, any>>()
+            if (!tokenRes.ok || tokenData.error) throw new HTTPException(400, {message: `Token exchange failed: ${tokenData.error_description || tokenData.error || tokenRes.statusText}`})
+
+            const headers = {'Authorization': `Bearer ${tokenData.access_token}`, 'Accept': 'application/json', 'User-Agent': 'Teenybase'}
+            const [userRes, emailsRes] = await Promise.all([
+                fetch('https://api.github.com/user', {headers}),
+                fetch('https://api.github.com/user/emails', {headers}),
+            ])
+            if (!userRes.ok) throw new HTTPException(400, {message: 'Failed to fetch GitHub user info'})
+            const user = await userRes.json<Record<string, any>>()
+
+            let email = user.email as string | null
+            if (emailsRes.ok) {
+                const emails = await emailsRes.json<{email: string, primary: boolean, verified: boolean}[]>()
+                const primary = emails.find(e => e.primary && e.verified) ?? emails.find(e => e.verified)
+                if (primary) email = primary.email
+            }
+
+            return {
+                email: email!,
+                name: user.name,
+                avatar: user.avatar_url,
+                username: user.login,
+                verified: true,
+            }
+        },
+    }
 
     readonly mapping
     private jwtSecret: ()=>Promise<string>
@@ -371,6 +436,9 @@ export class TableAuthExtension extends TableExtension<TableAuthExtensionData> {
             authorizeUrl: config.authorizeUrl ?? preset?.authorizeUrl,
             tokenUrl: config.tokenUrl ?? preset?.tokenUrl,
             userinfoUrl: config.userinfoUrl ?? preset?.userinfoUrl,
+            authorizeParams: {...preset?.authorizeParams, ...config.authorizeParams},
+            userinfoHeaders: {...preset?.userinfoHeaders, ...config.userinfoHeaders},
+            userinfoField: config.userinfoField ?? preset?.userinfoField,
         }
     }
 
@@ -419,6 +487,7 @@ export class TableAuthExtension extends TableExtension<TableAuthExtensionData> {
             response_type: 'code',
             scope: provider.scopes.join(' '),
             state,
+            ...provider.authorizeParams,
         })
 
         return this.c.redirect(`${provider.authorizeUrl}?${params.toString()}`)
@@ -426,12 +495,11 @@ export class TableAuthExtension extends TableExtension<TableAuthExtensionData> {
 
     async oauthCallback(providerName: string) {
         const provider = this._getOAuthProvider(providerName)
-        if (!provider.tokenUrl) throw new HTTPException(500, {message: `Missing tokenUrl for provider: ${providerName}`})
 
         const code = this.c.req.query('code')
         const stateParam = this.c.req.query('state')
         const error = this.c.req.query('error')
-        if (error) throw new HTTPException(400, {message: `OAuth error: ${error}`})
+        if (error) throw new HTTPException(400, {message: `OAuth error: ${this.c.req.query('error_description') || error}`})
         if (!code || !stateParam) throw new HTTPException(400, {message: 'Missing code or state'})
 
         // Verify CSRF from state
@@ -441,10 +509,37 @@ export class TableAuthExtension extends TableExtension<TableAuthExtensionData> {
         if (!csrfCookie || csrfCookie !== state.c) throw new HTTPException(403, {message: 'CSRF token mismatch'})
         deleteCookie(this.c, 'oauth_state', {path: '/'})
 
-        // Exchange code for token
         const clientId = await this.table.$db.secretResolver.resolve(provider.clientId)
         const clientSecret = await this.table.$db.secretResolver.resolve(provider.clientSecret, true, `OAuth client secret for ${providerName}`)
+        const callbackUrl = this._oauthCallbackUrl(providerName)
 
+        let result: OAuthExchangeResult
+
+        // Check for custom exchange handler first
+        const customHandler = TableAuthExtension.oauthExchangeHandlers[providerName]
+        if (customHandler) {
+            result = await customHandler({c: this.c, code, callbackUrl, clientId, clientSecret, provider: {...provider}})
+        } else {
+            result = await this._builtinOAuthExchange(provider, code, callbackUrl, clientId, clientSecret)
+        }
+
+        if (!result.email) throw new HTTPException(400, {message: 'Email not available from provider'})
+        if (result.verified === false) throw new HTTPException(400, {message: 'Email not verified'})
+
+        const ret = await this._loginWithExternalUser(result.email, result)
+        this._setAuthCookie(ret.token)
+
+        const redirectUrl = state.r || provider.redirectUrl || this.table.$db.settings.appUrl
+        return this.c.redirect(redirectUrl)
+    }
+
+    private async _builtinOAuthExchange(
+        provider: ReturnType<typeof this._getOAuthProvider>,
+        code: string, callbackUrl: string, clientId: string, clientSecret: string,
+    ): Promise<OAuthExchangeResult> {
+        if (!provider.tokenUrl) throw new HTTPException(500, {message: `Missing tokenUrl for provider: ${provider.name}`})
+
+        // Exchange code for token
         const tokenRes = await fetch(provider.tokenUrl, {
             method: 'POST',
             headers: {'Content-Type': 'application/x-www-form-urlencoded', 'Accept': 'application/json'},
@@ -452,12 +547,13 @@ export class TableAuthExtension extends TableExtension<TableAuthExtensionData> {
                 code,
                 client_id: clientId,
                 client_secret: clientSecret,
-                redirect_uri: this._oauthCallbackUrl(providerName),
+                redirect_uri: callbackUrl,
                 grant_type: 'authorization_code',
             }),
         })
         const tokenData = await tokenRes.json<Record<string, any>>()
-        if (!tokenRes.ok || tokenData.error) throw new HTTPException(400, {message: `Token exchange failed: ${tokenData.error || tokenRes.statusText}`})
+        if (!tokenRes.ok || tokenData.error)
+            throw new HTTPException(400, {message: `Token exchange failed: ${tokenData.error_description || tokenData.error || tokenData.message || tokenRes.statusText}`})
 
         // Get user info from id_token or userinfo endpoint
         let userInfo: Record<string, any> | undefined
@@ -465,32 +561,24 @@ export class TableAuthExtension extends TableExtension<TableAuthExtensionData> {
             userInfo = decode(tokenData.id_token).payload as Record<string, any>
         }
         if (provider.userinfoUrl) {
-            const userinfoRes = await fetch(provider.userinfoUrl, {
-                headers: {'Authorization': `Bearer ${tokenData.access_token}`, 'Accept': 'application/json'},
-            })
+            const headers: Record<string, string> = {'Authorization': `Bearer ${tokenData.access_token}`, 'Accept': 'application/json', ...provider.userinfoHeaders}
+            const userinfoRes = await fetch(provider.userinfoUrl, {headers})
             if (!userinfoRes.ok) throw new HTTPException(400, {message: 'Failed to fetch user info'})
-            userInfo = await userinfoRes.json<Record<string, any>>()
+            let data = await userinfoRes.json<Record<string, any>>()
+            if (provider.userinfoField) data = data?.[provider.userinfoField]
+            userInfo = data
         }
         if (!userInfo) throw new HTTPException(400, {message: 'No user info available'})
 
         // Extract fields using mapping
         const mapping = {email: 'email', name: 'name', verified: 'email_verified', ...provider.mapping}
-        const email = userInfo[mapping.email!]
-        if (!email || typeof email !== 'string') throw new HTTPException(400, {message: 'Email not available from provider'})
-        const verified = mapping.verified ? userInfo[mapping.verified] : true
-        if (verified === false || verified === 0) throw new HTTPException(400, {message: 'Email not verified'})
-
-        const issData = {
+        return {
+            email: userInfo[mapping.email!],
             name: mapping.name ? userInfo[mapping.name] : undefined,
             avatar: mapping.avatar ? userInfo[mapping.avatar] : undefined,
             username: mapping.username ? userInfo[mapping.username] : undefined,
+            verified: mapping.verified ? (userInfo[mapping.verified] ?? true) : true,
         }
-
-        const ret = await this._loginWithExternalUser(email, issData)
-        this._setAuthCookie(ret.token)
-
-        const redirectUrl = state.r || provider.redirectUrl || this.table.$db.settings.appUrl
-        return this.c.redirect(redirectUrl)
     }
 
     // endregion OAuth

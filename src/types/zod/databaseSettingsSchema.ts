@@ -41,6 +41,9 @@ export const databaseSettingsSchema = z.object({
         clientSecret: z.string().min(1),
         scopes: z.array(z.string()).optional(),
         redirectUrl: z.string().optional(),
+        authorizeParams: z.record(z.string(), z.string()).optional(),
+        userinfoHeaders: z.record(z.string(), z.string()).optional(),
+        userinfoField: z.string().optional(),
         mapping: z.object({
             email: z.string().optional(),
             name: z.string().optional(),
