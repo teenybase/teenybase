@@ -2,12 +2,14 @@ import {HTTPException} from 'hono/http-exception'
 import {z} from 'zod'
 import splitSqlQuery from './wrangler/d1/splitter'
 import {DatabaseSettings} from '../types/config'
-import {type $Database, $DatabaseRaw} from './$Database'
+import {type $Database} from './$Database'
 import {HttpRoute, HttpRouteZod} from '../types/route'
 import {D1Query} from '../sql/build/d1'
 import {$Env} from './env'
 import {databaseSettingsSchema} from '../types/zod/databaseSettingsSchema';
 import {$DBExtension} from './$DBExtension'
+import {InternalKV} from './internalKV'
+import {$DatabaseRaw} from './$DatabaseRawImpl'
 
 export interface DBMigration{
     id: number
@@ -22,7 +24,9 @@ export const zDBMigration = z.object({
 })
 
 export class MigrationHelperRaw<T extends $DatabaseRaw = $DatabaseRaw>{
-    constructor(readonly db: T, private readonly tableName = '_db_migrations') {
+    static readonly DEFAULT_TABLE_NAME = '_db_migrations'
+
+    constructor(readonly db: T, private readonly kv: InternalKV, readonly tableName = MigrationHelperRaw.DEFAULT_TABLE_NAME) {
     }
 
     async setup(version: number) {
@@ -41,13 +45,17 @@ export class MigrationHelperRaw<T extends $DatabaseRaw = $DatabaseRaw>{
         }
     }
 
+    async dbSettings(){
+        if (!this.db.auth.superadmin) throw new HTTPException(403, {message: 'Forbidden'})
+        const settings = await this.kv.get('$settings')
+        return settings ? JSON.parse(settings) as DatabaseSettings : undefined
+    }
+
     async list() {
         if (!this.db.auth.superadmin) throw new HTTPException(403, {message: 'Forbidden'})
         const q = `SELECT id, name, sql, sql_revert FROM ${this.tableName}`
         // const res = await this.db.database.prepare(q).run<DBMigration>()
-        const migrations = await this.db.rawSQL<DBMigration>({q, v:[]}).run() || []
-        const settings = await this.db.kv.get('$settings')
-        return {migrations, settings: settings ? JSON.parse(settings) as DatabaseSettings : this.db.settings}
+        return await this.db.rawSQL<DBMigration>({q, v: []}).run() || []
     }
 
     async apply(migrations: Omit<DBMigration, 'id'>[], settings: DatabaseSettings) {
@@ -55,7 +63,7 @@ export class MigrationHelperRaw<T extends $DatabaseRaw = $DatabaseRaw>{
         const last = await this.list()
         const names: string[] = []
         const prepared = z.array(zDBMigration).parse(migrations).flatMap(m => {
-            let last1 = last.migrations.find(r=>r.name === m.name)
+            let last1 = last.find(r=>r.name === m.name)
             if(last1) {
                 if (last1.sql !== m.sql) throw new Error(`Migration ${m.name} already applied but sql mismatch`)
                 if ((last1.sql_revert||null) !== (m.sql_revert||null)) throw new Error(`Migration ${m.name} already applied but sql_revert mismatch`)
@@ -74,9 +82,9 @@ export class MigrationHelperRaw<T extends $DatabaseRaw = $DatabaseRaw>{
             ]
         }).filter(q=>!!q) as D1Query[]
         const settings1 = JSON.stringify(settings)
-        prepared.push(this.db.kv.setQuery('$settings', settings1))
-        prepared.push(this.db.kv.setQuery('$settings_'+Date.now(), settings1))
-        prepared.push(this.db.kv.setQuery('$settings_version', settings.version?.toString() ?? '0'))
+        prepared.push(this.kv.setQuery('$settings', settings1))
+        prepared.push(this.kv.setQuery('$settings_'+Date.now(), settings1))
+        prepared.push(this.kv.setQuery('$settings_version', settings.version?.toString() ?? '0'))
 
         if(!prepared.length) return []
         try {
@@ -90,8 +98,8 @@ export class MigrationHelperRaw<T extends $DatabaseRaw = $DatabaseRaw>{
 }
 
 export class MigrationHelper<T extends $Env = $Env> extends MigrationHelperRaw<$Database<T>> implements $DBExtension<T>{
-    constructor(db: $Database<T>, tableName?: string) {
-        super(db, tableName)
+    constructor(db: $Database<T>, kv: InternalKV, tableName?: string) {
+        super(db, kv, tableName)
     }
 
     async getAuthToken?(): Promise<string | undefined>
@@ -100,8 +108,9 @@ export class MigrationHelper<T extends $Env = $Env> extends MigrationHelperRaw<$
         path: '/migrations',
         method: 'get',
         handler: async () => {
-            const res = await this.list()
-            return res
+            const migrations = await this.list()
+            const settings = await this.dbSettings()
+            return {migrations, settings: settings||this.db.settings}
         },
         zod: () => (<HttpRouteZod>{
             description: 'List all migrations',

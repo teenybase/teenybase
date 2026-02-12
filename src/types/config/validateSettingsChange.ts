@@ -21,6 +21,8 @@ export function validateSettingsChange(nextConfig: DatabaseSettings, lastConfig:
         if (jsonStringify(n) === jsonStringify(l)) return {config: null, changes: null}
     }
 
+    // todo make sure table name fields like _kvTableName(used in cli-utils) etc cannot be changed.
+
     // diff
     nextConfig.version = (nextConfig?.version ?? -1) + 1
 

@@ -1,9 +1,8 @@
-import {$DatabaseRaw} from './$Database'
-import {$Env} from './env'
+import {$DatabaseRaw} from './$DatabaseRawImpl'
 import {D1Query} from '../sql/build/d1'
 
 export class InternalKV/*<T extends $Env = $Env>*/ {
-    constructor(protected readonly db: $DatabaseRaw/*<T>*/, readonly tableName = '_ddb_internal_kv') {
+    constructor(protected readonly db: $DatabaseRaw, readonly tableName = '_ddb_internal_kv') {
     }
 
     async setup(version: number){

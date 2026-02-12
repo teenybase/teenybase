@@ -1,6 +1,6 @@
 export {teenyHono} from './honoApp'
 
-export {$Database, $DatabaseEventMap} from './$Database'
+export {$Database} from './$Database'
 
 export {$Table} from './$Table'
 export {parseRequestBody} from './util/parseRequestBody'
