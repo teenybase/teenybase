@@ -35,7 +35,14 @@ export function teenyHono<T extends $Env=$Env>(
             maxAge: 600,
             credentials: true,
         } : options.cors)
-        return corsMiddlewareHandler(c, next)
+        // todo handle wildcard ports in origins list (not supported in the above middleware)
+        const res = await corsMiddlewareHandler(c, next)
+        // todo check if response needs CORS and if it doesnt have origin or some other error, it should be logged(based on configured log level)
+        if(res){
+            // console.log('CORS preflight request:', res, res.ok, res.body, res.status, JSON.stringify([...res.headers.entries()]), c.req.header("origin"))
+            return res
+        }
+        return res
     })
 
     // $db init

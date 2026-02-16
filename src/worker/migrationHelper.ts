@@ -1,6 +1,6 @@
 import {HTTPException} from 'hono/http-exception'
 import {z} from 'zod'
-import splitSqlQuery from './wrangler/d1/splitter'
+import {splitSqlQuery} from './wrangler/d1/splitter'
 import {DatabaseSettings} from '../types/config'
 import {type $Database} from './$Database'
 import {HttpRoute, HttpRouteZod} from '../types/route'

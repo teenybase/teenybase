@@ -418,6 +418,8 @@ export class TableAuthExtension extends TableExtension<TableAuthExtensionData> {
             verified?: boolean,
         } = {
             ...await this.createSession(res),
+            // we are not returning the user's `name` in the record, which is generally useful for any UI.
+            // todo should we include it here if available?
             record: this._userToFields(res),
         }
         if(this.mapping.emailVerified && !res.emailVerified) ret.verified = false

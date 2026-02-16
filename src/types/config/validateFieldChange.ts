@@ -79,10 +79,18 @@ export function validateFieldChange(field: TableFieldData | undefined, lastField
 
         if (field.default !== undefined) {
             // todo try to parse and check valid sql string
+            if(typeof (field.default as SQLQuery).p === 'object' && Object.keys((field.default as SQLQuery).p!).length > 0)
+                addIssue(`Not implemented - Default SQL query cannot have parameters - ${JSON.stringify((field.default as SQLQuery).p)}`, 'default')
         }
         if (field.check) {
             // todo try to parse and check valid sql string
+            if(typeof (field.check as SQLQuery).p === 'object' && Object.keys((field.check as SQLQuery).p!).length > 0)
+                addIssue(`Not implemented - Check SQL query cannot have parameters - ${JSON.stringify((field.check as SQLQuery).p)}`, 'check')
+
         }
+
+        if (issues.length) throw new z.ZodError(issues)
+
         return {create: field}
     }
 

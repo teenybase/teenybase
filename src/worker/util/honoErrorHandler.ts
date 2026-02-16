@@ -16,8 +16,9 @@ export function ddbErrorHandler<T extends $Env>($db: $Database, err: Error | HTT
     // const zodErr = err instanceof ZodValidationError ? err.zodError : err as ZodError
 
     const status = isHTTP ? (err.status || 500) : ((isD1Error || isZodError) ? 400 : 500)
+    // todo we should make an option to control the log level, this might be a lot of logs.
     console.error(`Request Error: ${status}`)
-    console.error(err, (err as any).status, `http: ${isHTTP}`)
+    console.error(err, (err as any).status, (err as any).data, `http: ${isHTTP}`, respondWithErrors)
     // console.error(err.stack)
     return {
         code: status,
@@ -45,6 +46,8 @@ export function honoErrorHandler<T extends $Env>(err: Error | HTTPResponseError,
         status: res.code,
         headers: {
             'Content-Type': 'application/json',
+
+            // todo make a config option for CORS parameters during an error instead of defaulting to *
             'Access-Control-Allow-Origin': '*',
             'Access-Control-Allow-Headers': '*',
             'Access-Control-Allow-Methods': 'GET, POST, PUT, DELETE, OPTIONS',

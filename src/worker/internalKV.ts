@@ -43,8 +43,8 @@ export class InternalKV/*<T extends $Env = $Env>*/ {
 
     setQuery(key: string, value: string | { sql: string }, expiryOffsetSeconds?: number) {
         const s = typeof value !== 'string'
-        if(typeof expiryOffsetSeconds !== 'number' || isNaN(expiryOffsetSeconds)) {
-            expiryOffsetSeconds = 1
+        if(expiryOffsetSeconds !== undefined && (typeof expiryOffsetSeconds !== 'number' || isNaN(expiryOffsetSeconds))) {
+            expiryOffsetSeconds = 1 // expire in 1 sec(for temp data)
         }
         const q = `INSERT OR REPLACE INTO ${this.tableName} (key, value, expiry) VALUES (?, ${s ? value.sql || "''" : "?"}, ${expiryOffsetSeconds ? `unixepoch(CURRENT_TIMESTAMP) + ${expiryOffsetSeconds}` : 'NULL'})`
         const b = [key]
@@ -55,6 +55,9 @@ export class InternalKV/*<T extends $Env = $Env>*/ {
     async setMultiple(data: Record<string, (string | { sql: string })>, expiryOffsetSeconds?: number) {
         const qs = [] as string[]
         const b = []
+        if(expiryOffsetSeconds !== undefined && (typeof expiryOffsetSeconds !== 'number' || isNaN(expiryOffsetSeconds))) {
+            expiryOffsetSeconds = 1 // expire in 1 sec(for temp data)
+        }
         const expiry = expiryOffsetSeconds ? `unixepoch(CURRENT_TIMESTAMP) + ${expiryOffsetSeconds}` : 'NULL'
         for (const [key, value] of Object.entries(data)) {
             const s = typeof value !== 'string'
