@@ -75,3 +75,4 @@ export {sqlDataTypeAliases} from './types/zod/dataTypesSchemas'
 export {dataTypeToSqlDataType} from './types/zod/dataTypesSchemas'
 export {sqlDataTypeToDataTypeDefaults} from './types/zod/dataTypesSchemas'
 export {tableFieldTypeToZod} from './types/zod/dataTypesSchemas'
+export { version as TEENYBASE_VERSION } from "./../package.json";

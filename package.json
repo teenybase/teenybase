@@ -1,6 +1,6 @@
 {
     "name": "teenybase",
-    "version": "0.0.11",
+    "version": "0.0.12",
     "type": "module",
     "bin": {
         "teeny": "bin/teeny.js"
@@ -51,21 +51,22 @@
         "./package.json": "./package.json"
     },
     "dependencies": {
-        "@iarna/toml": "^2.2.5",
-        "hono": "4.11.9",
-        "wrangler": "^4.63.0",
-        "jsonc-parser": "^3.3.1",
-        "dotenv": "^17.2.4",
-        "cac": "^6.7.14",
-        "prompts": "^2.4.2",
-        "@types/prompts": "^2.4.9",
-        "@tsndr/cloudflare-worker-jwt": "^3.2.1",
-        "jsep": "^1.4.0",
+        "@cloudflare/workers-types": "^4.20260210.0",
         "@hono/swagger-ui": "^0.5.3",
         "@hono/zod-openapi": "^1.2.1",
         "@hono/zod-validator": "^0.7.6",
-        "@cloudflare/workers-types": "^4.20260210.0",
-        "picocolors": "^1.1.1"
+        "smol-toml": "^1.6.0",
+        "@tsndr/cloudflare-worker-jwt": "^3.2.1",
+        "@types/prompts": "^2.4.9",
+        "cac": "^6.7.14",
+        "dotenv": "^17.2.4",
+        "hono": "^4.11.9",
+        "jsep": "^1.4.0",
+        "jsonc-parser": "^3.3.1",
+        "md5-file": "^5.0.0",
+        "picocolors": "^1.1.1",
+        "prompts": "^2.4.2",
+        "wrangler": "^4.63.0"
     },
     "peerDependencies": {
         "@cloudflare/workers-types": "^4.20260210.0",
@@ -83,10 +84,10 @@
     "devDependencies": {
         "@cloudflare/vitest-pool-workers": "^0.12.10",
         "@types/node": "^22.5.0",
+        "concurrently": "^9.2.1",
         "typescript": "^5.9.3",
         "vite": "^7.3.1",
-        "vitest": "3.2.4",
-        "concurrently": "^9.2.1"
+        "vitest": "3.2.4"
     },
     "repository": {
         "type": "git",

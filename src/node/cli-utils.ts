@@ -17,24 +17,19 @@ import {RequestInfo} from '@cloudflare/workers-types'
 import {DBMigration, MigrationHelperRaw} from '../worker/migrationHelper'
 import {InternalKV} from '../worker/internalKV'
 import {$DatabaseRawImpl} from '../worker/$DatabaseRawImpl'
+// import {executeSql} from './wrangler/d1/execute'
+import {parseJSONC} from './workers-utils'
+import {D1Error} from '../worker'
+import {makeD1Binding} from './utils/make-d1-binding'
+import {execSyncStreaming} from './utils/execSyncStreaming'
+import {D1Database} from './cloudflare/d1-api'
 
 export const adminTokenKey = 'ADMIN_SERVICE_TOKEN'
 export const apiRouteKey = 'API_ROUTE'
 export const devVars = '.dev.vars'
 export const prodVars = '.prod.vars'
 
-// todo issue -
-//  after deploying the worker (either first time or subsequent),
-//  it is possible that it breaks the deployment (like when jwt secret cannot be resolved).
-//  after that when calling setup-db or fetch migrations, it returns an error, and we cannot do anything like generate, migrate or deploy
-//  to fix it, the only option is to re-deploy from scratch.
-//  to reproduce -
-//   delete local-persist in the notes-sample, change JWT_SECRET_MAIN to ABC in teenybase.ts and run migrate.
-//   other way - in an existing deployment, make the same change in .local-persist/config.json and run migrate.
-//   both will break the application
-
 // todo handle projects using vite with wrangler and maybe make that the primary workflow
-
 
 // global options
 export interface GlobalCLIOptions {
@@ -93,12 +88,12 @@ export class CliContext{
     readonly logger: Logger
     readonly devServerLogLevel: Unstable_DevOptions['logLevel']
     readonly devServerPort: number
-    constructor(root: string|undefined, public options: GlobalCLIOptions, public wranglerConfig: WranglerConfigRet, devServerLogLevel: Unstable_DevOptions['logLevel'] = "none") {
-        this.logger = createLogger(options.logLevel)
+    constructor(root: string|undefined, public options: GlobalCLIOptions, public wranglerConfig: WranglerConfigRet, logger: Logger, devServerLogLevel: Unstable_DevOptions['logLevel'] = "none") {
+        this.logger = logger
         this.root = normalizePath(root ? path.resolve(root) : process.cwd())
         this.migrationsPath = path.join(this.root, wranglerConfig.migrations)
         this.devServerLogLevel = devServerLogLevel
-        this.devServerPort = parseInt(process.env.TEENY_DEV_PORT || wranglerConfig.config.dev?.port || '8787')
+        this.devServerPort = parseInt(process.env.TEENY_DEV_PORT || wranglerConfig.config.config.dev?.port || '8787')
         if(isNaN(this.devServerPort) || this.devServerPort <= 0 || this.devServerPort >= 65536){
             throw new Error(`Invalid port number specified in TEENY_PORT environment variable: ${process.env.TEENY_PORT}`)
         }
@@ -173,7 +168,7 @@ export class CliContext{
         }
 
         if(this.options.local) this.logger.debug('Local worker starting')
-        this._startingPromise = this.options.local ? unstable_dev(this.wranglerConfig.config.main, {
+        this._startingPromise = this.options.local ? unstable_dev(this.wranglerConfig.config.config.main, {
             moduleRoot: this.root,
             // config: wranglerConfig.config,
             port: this.devServerPort,
@@ -214,15 +209,15 @@ export class CliContext{
         const tempConfigPath = path.join(tempConfigDir, `.tmp.config.${suffix}.json`)
 
         const tsconfigPath = path.join(this.root, `.tmp.tsconfig.${suffix}.json`)
-        const currentTsconfig = path.join(this.root, this.wranglerConfig.config.tsConfig || 'tsconfig.json')
-        const currentTsconfigContent = fs.existsSync(currentTsconfig) ? JSON.parse(fs.readFileSync(currentTsconfig, 'utf-8')) : {}
+        const currentTsconfig = path.join(this.root, this.wranglerConfig.config.config.tsConfig || 'tsconfig.json')
+        const currentTsconfigContent: any = fs.existsSync(currentTsconfig) ? parseJSONC(fs.readFileSync(currentTsconfig, 'utf-8')) : {}
         const customTsconfigContent = {
-            "extends": normalizePath(path.relative(path.dirname(tsconfigPath), currentTsconfig)),
+            "extends": "./" + normalizePath(path.relative(path.dirname(tsconfigPath), currentTsconfig)),
             "compilerOptions": {
                 "paths": {
                     // copying because they are not merged
                     ...(currentTsconfigContent.compilerOptions?.paths || {}),
-                    "virtual:teenybase": [path.relative(path.dirname(currentTsconfig), tempConfigPath)],
+                    "virtual:teenybase": ["./" + path.relative(path.dirname(currentTsconfig), tempConfigPath)],
                 }
             }
         }
@@ -236,9 +231,24 @@ export class CliContext{
 
     removeCustomTsconfig(suffix: string){
         const tsconfigPath = path.join(this.root, `.tmp.tsconfig.${suffix}.json`)
+        if(fs.existsSync(tsconfigPath))
         fs.unlinkSync(tsconfigPath)
         const tempConfigPath = path.join(this.root, `.tmp.config.${suffix}.json`)
+        if(fs.existsSync(tempConfigPath))
         fs.unlinkSync(tempConfigPath)
+    }
+
+    private migrationHelper: MigrationHelperRaw|undefined
+    private $db: $DatabaseRawImpl|undefined
+    getMigrationHelper(kvTableName: string|undefined){
+        if(this.migrationHelper) return this.migrationHelper
+        // @ts-expect-error check later, ts issue with return types
+        this.$db = this.$db || new $DatabaseRawImpl(makeD1Binding(this))
+        this.$db.auth.superadmin = true
+        const kv = new InternalKV(this.$db, kvTableName)
+        const helper = new MigrationHelperRaw(this.$db, kv, undefined) // todo migration table name is fixed
+        this.migrationHelper = helper
+        return helper
     }
 }
 
@@ -282,12 +292,15 @@ export function readMigrationsFolder(migrationsFolderPath: string) {
 }
 
 export type WranglerConfigRet = {
-    config: any
+    config: {
+        path: string
+        config: any
+    }
     db: { binding: string, migrations_dir: string }
     migrations: string
 }
 
-export async function parseWrangler(root: string|undefined, options: GlobalCLIOptions): Promise<WranglerConfigRet> {
+export async function parseWrangler(root: string|undefined, options: GlobalCLIOptions, logger: Logger): Promise<WranglerConfigRet> {
     try {
         const projectRoot = normalizePath(root ? path.resolve(root) : process.cwd())
         const wranglerConfig = await loadWranglerConfigFromFile(projectRoot, options.wrangler, options.logLevel)
@@ -302,7 +315,7 @@ export async function parseWrangler(root: string|undefined, options: GlobalCLIOp
         if (!migrationsDir) throw new Error('No migrations_dir found in wrangler config. Please specify a migrations_dir in wrangler config (like migrations)')
         return {config: wranglerConfig, db: d1, migrations: migrationsDir}
     }catch (e: any) {
-        createLogger(options.logLevel).error(
+        logger.error(
             colors.red(`error loading wrangler config:\n${e.stack}`),
             {error: e},
         )
@@ -372,6 +385,7 @@ export async function fetchWorker(c: CliContext, fPath: string, reqOptions?: Req
     let _fetch = fetch
     if (c.isLocal) {
         // check if apiRoute is accessible using the health endpoint
+        // todo check if its the same server, it could be some other wrangler/teeny server running on the same port
         const devServerRunning = apiRoute && !c.localWorker ? await fetch(path.join(apiRoute, '/api/v1/health'), {
             method: 'GET',
             signal: AbortSignal.timeout(1000)
@@ -399,8 +413,12 @@ export async function fetchWorker(c: CliContext, fPath: string, reqOptions?: Req
         try{
             const json = JSON.parse(rest)
             message = ((json.message ? json.message + ' ' : '') + ((json.error || json.data?.error) + '')) || json
-            if(logging) c.logger.error(`Failed to fetch ${fPath}. Status: ${res.status}, Response: ${message}\n${JSON.stringify(json, null, 2)}`)
+            if(logging) {
+                c.logger.error(`Failed to fetch ${fPath}. Status: ${res.status}, Response: ${message}\n${JSON.stringify(json, null, 2)}`)
+                c.logger.debug(`Failed response body: ${rest}`)
+            }
         }catch (_e){}
+        // c.logger.debug(`Failed response body: ${rest}`)
         throw new Error(`Failed to fetch ${fPath}. Status: ${res.status}, Response: ${typeof message==='string' ? message.slice(0, 1024) : message}`)
     }
     try {
@@ -416,37 +434,49 @@ export async function fetchDeployedMigrations(c: CliContext, kvTableName: string
     let migrations: DBMigration[]|null = null
     let settings: DatabaseSettings | null = null
     try {
-        const db = new $DatabaseRawImpl()
-        db.auth.superadmin = true
-        const kv = new InternalKV(db, kvTableName)
-        const helper = new MigrationHelperRaw(db, kv, undefined) // todo migration table name is fixed
+        const helper = c.getMigrationHelper(kvTableName)
+        let noMigrationTable = false
         migrations = await helper.list().catch(e=>{
+            c.logger.debug(e)
             // setup not done yet, todo test
-            if (e.message?.includes(`no such table: ${helper.tableName}`)) {
+            if (((e as D1Error).errorMessage || e.cause?.message || e.message)?.includes(`no such table: ${helper.tableName}`)) {
                 c.logger.info('No migrations found in deployment')
+                noMigrationTable = true
                 return []
             }
             throw e
         })
+        if (noMigrationTable) {
+            return {settings: null, migrations}
+        }
+        // console.log('migrations', migrations)
         settings = await helper.dbSettings() || null
         if(!settings){
             throw new Error('No settings found in the database state.')
         }
         return {settings, migrations}
     }catch (e) {
-        console.warn(e)
-        console.warn('Fallback to fetch migrations and settings through API.')
+        c.logger.debug(e as any)
+        c.logger.info('Fallback to fetch migrations and settings through API.')
+        // throw e
         try {
             const json = await fetchWorker(c, '/api/v1/migrations', {}).catch(e => {
+                // todo this error check will only work if RESPOND_WITH_ERRORS is set to true, should we check for that and warn the user before running this command? also shouldnt it be set to true by default?
+
                 // setup not done yet
                 if (e.message?.includes(`no such table: ${MigrationHelperRaw.DEFAULT_TABLE_NAME}`)) {  // todo migration table name is fixed
                     c.logger.info('No migrations found in deployment')
                     return {settings: null, migrations: []}
                 }
+                // if 404, then also the same thing
+                if (e.message?.includes(`/api/v1/migrations. Status: 404`)) {
+                    c.logger.info('No migrations found in deployment (404 from API)')
+                    return {settings: null, migrations: []}
+                }
                 throw e
             })
             return json as { settings: DatabaseSettings, migrations: DBMigration[] }
-        }catch (e) {
+        } catch (e) {
             // if(migrations){
             //     return {settings, migrations}
             // }
@@ -623,15 +653,19 @@ export async function generateMigrationsDir(c: CliContext, clean = false, write 
     return {newMigrations, nextConfig, lastMigrations, lastConfig, deployed/*, currentConfig*/}
 }
 
-export function wranglerDeploy(c: CliContext, config: DatabaseSettings, first = false){
+export async function wranglerDeploy(c: CliContext, config: DatabaseSettings, first = false): Promise<string | undefined> {
     if(c.isLocal) throw new Error('Cannot deploy with --local')
+
     try {
-        const res = execSync(
+        const resB = await execSyncStreaming(
             `wrangler deploy --tsconfig=${JSON.stringify(c.createCustomTsconfigForWorker(config, 'deploy'))}`,
-            {cwd: c.root, stdio: first ? ['inherit', 'pipe', 'inherit'] : 'inherit'})
-        if(!first) return
-        const resB = '' + res
-        c.logger.info(resB)
+            {cwd: c.root},
+            first // Only capture output for first deployment
+        )
+
+        if (!first) return undefined
+
+        // c.logger.info(resB)
         // setup-db is done just before migrations
 
         // find deployment route
@@ -643,11 +677,11 @@ export function wranglerDeploy(c: CliContext, config: DatabaseSettings, first = 
         c.logger.error(err)
         const bucketNotFound = err.includes('workers.api.error.bucket_not_found [code: 10085]')
         if(bucketNotFound) {
-            c.logger.error('Bucket specified in wrangler.toml is not found. Create a bucket in cloudflare using wrangler and set it in wrangler.toml')
+            c.logger.error('Bucket specified in wrangler config is not found. Create a bucket in cloudflare using wrangler and set it in wrangler config')
             // throw e
         }
         throw new Error('Unable to deploy worker, check logs above for more details.')
-    }finally{
+    } finally {
         c.removeCustomTsconfig('deploy')
     }
 }
@@ -661,7 +695,7 @@ export function localPersistDeploy(lastConfig: Partial<DatabaseSettings>|undefin
 
 }
 
-export function deploySecrets(c: CliContext, secrets: any){
+export async function deploySecrets(c: CliContext, secrets: any){
     if(c.isLocal) throw new Error('Cannot deploy with --local')
     // deploy secrets since its the first time
     const tempSecretsPath = path.join(c.root, '.teeny', '.temp-secrets.json')
@@ -670,7 +704,7 @@ export function deploySecrets(c: CliContext, secrets: any){
         // write to .teeny/temp-secrets.json
         fs.mkdirSync(path.dirname(tempSecretsPath), {recursive: true})
         fs.writeFileSync(tempSecretsPath, JSON.stringify(json, null, 2))
-        const res = execSync(`wrangler secret bulk ${JSON.stringify(tempSecretsPath)}`, {cwd: c.root, stdio: 'inherit'})
+        execSync(`wrangler secret bulk ${JSON.stringify(tempSecretsPath)}`, {cwd: c.root, stdio: 'pipe'})
     }catch (e) {
         throw new Error(`Unable to deploy secrets from ${prodVars}, check logs above for more details.`)
     }finally {
@@ -720,14 +754,15 @@ export async function migrateAndDeploy(c: CliContext, clean: boolean, doMigrate:
                 const commandCD = `wrangler deployments list --json`
                 try {
                     c.logger.debug('Fetching current deployments')
-                    const cdRes = execSync(commandCD, {
+                    const cdRes = await execSyncStreaming(commandCD, {
                         cwd: c.root,
-                        stdio: ['inherit', 'pipe', 'pipe']
-                    }).toString()
+                        // stdio: ['inherit', 'pipe', 'pipe']
+                    })
                     currentDeployments = JSON.parse(cdRes)
                     // c.logger.info(currentDeployments)
                 }catch (e: any) {
                     const err = '' + e?.stderr + '' + e?.stdout
+                    c.logger.debug(err)
                     const noDeployment = err.includes('This Worker does not exist on your account. [code: 10007]')
                     if(!noDeployment) {
                         c.logger.error(`Unknown error when fetching previous deployments of the worker ${workerName} in cloudflare account ${cfAccountId}. Please try again later.`)
@@ -760,7 +795,7 @@ export async function migrateAndDeploy(c: CliContext, clean: boolean, doMigrate:
                                 initial: false,
                             });
                             if (!res.value) {
-                                throw new Error(`Unknown error - Worker is already deployed but no settings and migrations found at ${envSec.apiRoute}`)
+                                throw new Error('Deployment cancelled by user.')
                             }
                         } else {
                             c.logger.info(message)
@@ -779,21 +814,22 @@ export async function migrateAndDeploy(c: CliContext, clean: boolean, doMigrate:
                             if (!res.value) {
                                 throw new Error('First time deployment cancelled by user')
                             }
-                        }else {
+                        } else {
                             c.logger.info(message)
                             c.logger.info('Continuing with first time deployment (--yes flag provided)')
                         }
+                    }
 
+                    {
                         try {
                             c.logger.info('Deploying worker for the first time')
-
 
                             // write without tables first (because its first time deployment without any migrations)
                             const configNoTables = {
                                 ...nextConfig, tables: []
                             } as DatabaseSettings
 
-                            let route = wranglerDeploy(c, configNoTables, true)
+                            let route = await wranglerDeploy(c, configNoTables, true)
                             if (!route) {
                                 // check if there is custom domain in wrangler config
                                 // { pattern = "subdomain.example.com", custom_domain = true }
@@ -812,7 +848,7 @@ export async function migrateAndDeploy(c: CliContext, clean: boolean, doMigrate:
                         }
                         // secrets
                         try {
-                            deploySecrets(c, envSec.secrets)
+                            await deploySecrets(c, envSec.secrets)
                         } catch (e) {
                             c.logger.error(`Unknown error when deploying worker, secrets during first deployment. Cannot continue. First, run "teeny secrets-deploy" then set the ${apiRouteKey} in ${prodVars} and rerun the command to migrate.`)
                             throw e
@@ -836,6 +872,15 @@ export async function migrateAndDeploy(c: CliContext, clean: boolean, doMigrate:
                     throw new Error('Deployment route not found')
                 }
 
+                // todo issue, check now after fix -
+                //  after deploying the worker (either first time or subsequent),
+                //  it is possible that it breaks the deployment (like when jwt secret cannot be resolved).
+                //  after that when calling setup-db, it returns an error
+                //  to reproduce -
+                //   delete local-persist in the notes-sample, change JWT_SECRET_MAIN to ABC in teenybase.ts and run migrate.
+                //   other way - in an existing deployment, make the same change in .local-persist/config.json and run migrate.
+                //   both will break the application
+
                 // c.logger.info('Setting up db')
                 // make sure db is deployed and initial setup is done. Note - don't setup during first deployment.
                 await fetchWorker(c, '/api/v1/setup-db', { // todo handle database settings mismatch error from this endpoint. we need to first deploy the worker with the settings in the db and then apply migrations.
@@ -846,6 +891,7 @@ export async function migrateAndDeploy(c: CliContext, clean: boolean, doMigrate:
                 }, false, deployRoute)
 
                 if (newMigrations?.length) {
+                    // todo this should be merged with the deploy for first time prompt above, otherwise we have a prompt, then a deploy then another prompt...
                     const message = `About to apply ${newMigrations.length} migration(s)\n Your database may not be available to serve requests during the migration, continue?`
                     if (!skipConfirmation) {
                         const res = await prompts({
@@ -869,11 +915,14 @@ export async function migrateAndDeploy(c: CliContext, clean: boolean, doMigrate:
                 try {
                     // todo ideally apply migrations should be done directly by wrangler/cloudflare api and not through this route.
                     //  note - we are not using wrangler because it has a different schema for migrations table without the sql code.
+
+                    // todo use c.getMigrationHelper
                     const json = await fetchWorker(c, '/api/v1/migrations', {
                         method: 'POST',
                         headers: {'Content-Type': 'application/json'},
                         body: JSON.stringify({migrations, settings: nextConfig || lastConfig}), // this will also save the settings in the db
                     }, false, deployRoute)
+
                     if (!json.applied?.length) {
                         if (newMigrations?.length) {
                             throw new Error(`Unable to apply ${newMigrations.length} new migrations`)
@@ -908,8 +957,9 @@ export async function migrateAndDeploy(c: CliContext, clean: boolean, doMigrate:
                 if (!c.isLocal) {
                     const config = nextConfig || lastConfig
                     if(config) {
+                        c.logger.info('Deploying worker with new config and migrations')
                         // todo incase of error during deployment, we need to prompt user to run the migrate again
-                        wranglerDeploy(c, config)
+                        await wranglerDeploy(c, config)
                     }else {
                         c.logger.error('No config to deploy, skipping wrangler deploy')
                     }

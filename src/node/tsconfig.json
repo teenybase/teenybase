@@ -1,9 +1,10 @@
 {
     "extends": "../../tsconfig.json",
     "compilerOptions": {
-        "moduleResolution": "Node",
+        "moduleResolution": "bundler",
         "types": [
-            "node"
+            "node",
+            "@cloudflare/workers-types"
         ],
         "declarationDir": "../../dist",
         "emitDeclarationOnly": true

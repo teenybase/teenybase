@@ -2,26 +2,41 @@
 import {cac} from 'cac'
 import colors from 'picocolors'
 import prompts from 'prompts'
-import {VERSION} from './constants'
-import {createLogger, Logger, LogLevel} from './logger'
+import {createLogger} from './logger'
 import * as fs from 'node:fs'
 import path from 'path'
-import {escapeRegExp, normalizePath, readableRelative} from './utils'
+import {readableRelative} from './utils'
 import {execSync} from 'node:child_process'
-import {exportLocal} from './wrangler/export'
+import {exportLocal} from './wrangler/d1/export'
 import {
-    CliContext, deploySecrets, devVars, fetchDeployedMigrations, fetchWorker,
+    CliContext,
+    deploySecrets,
+    devVars,
+    fetchDeployedMigrations,
+    fetchWorker,
     filterDuplicateOptions,
     generateMigrationsDir,
-    GlobalCLIOptions, loadLocalPersistConfig,
+    GlobalCLIOptions,
+    loadLocalPersistConfig,
     migrateAndDeploy,
-    parseWrangler, prodVars, readSecretsFile
+    parseWrangler,
+    prodVars,
+    readSecretsFile
 } from './cli-utils'
+import {TEENYBASE_VERSION} from '../index'
 
 process.env.WRANGLER_SEND_METRICS = 'false'
 process.env.WRANGLER_LOG = 'log' // none, error, warn, info, log, debug - https://github.com/cloudflare/workers-sdk/blob/3dce3881bdaf373aa9b2e52483e340ab8193151c/packages/wrangler/src/logger.ts#L10
 
 const cli = cac('teeny')
+
+async function initContext(options: GlobalCLIOptions) {
+    filterDuplicateOptions(options)
+    const logger = createLogger(options.logLevel)
+    const wranglerConfig = await parseWrangler(options.root, options, logger)
+    const c = new CliContext(options.root, options, wranglerConfig, logger)
+    return c
+}
 
 cli
     .option('-c, --config <file>', `[string] use specified config file`)
@@ -50,10 +65,7 @@ cli
         async (
             options: GlobalCLIOptions & { clean: boolean },
         ) => {
-            filterDuplicateOptions(options)
-            const wranglerConfig = await parseWrangler(options.root, options)
-            const c = new CliContext(options.root, options, wranglerConfig)
-
+            const c = await initContext(options)
             await generateMigrationsDir(c, Boolean(options.clean??true)).catch(async e=>{
                 c.logger.error(
                     colors.red(`error when generating migrations:\n${e.stack}`),
@@ -69,6 +81,26 @@ cli
 
         },
     )
+
+async function doMigrateAndDeploy(options: GlobalCLIOptions & {
+    clean?: boolean;
+    deploy?: boolean;
+    migrate?: boolean
+}, c: CliContext, force = false) {
+    const forceDeploy = Boolean(options.deploy ?? force)
+    const doMigrate = Boolean(options.migrate ?? true)
+    const clean = Boolean(options.clean ?? true)
+    const skipConfirm = Boolean(options.y || options.yes)
+    await migrateAndDeploy(c, clean, doMigrate, forceDeploy, skipConfirm).catch(async e => {
+        c.logger.error(
+            colors.red(`error when applying migrations and deploying:\n${e.stack}`),
+            {error: e},
+        )
+        await c.stopLocal()
+        process.exit(1)
+    })
+    await c.stopLocal()
+}
 
 // apply migrations
 cli
@@ -93,23 +125,8 @@ cli
         async (
             options: /*BuildEnvironmentOptions & BuilderCLIOptions &*/ GlobalCLIOptions & { clean?: boolean, deploy?: boolean, migrate?: boolean },
         ) => {
-            filterDuplicateOptions(options)
-            const wranglerConfig = await parseWrangler(options.root, options)
-            const c = new CliContext(options.root, options, wranglerConfig)
-
-            const forceDeploy = Boolean(options.deploy??false)
-            const doMigrate = Boolean(options.migrate??true)
-            const clean = Boolean(options.clean??true)
-            const skipConfirm = Boolean(options.y || options.yes)
-            await migrateAndDeploy(c, clean, doMigrate, forceDeploy, skipConfirm).catch(async e=>{
-                c.logger.error(
-                    colors.red(`error when applying migrations and deploying:\n${e.stack}`),
-                    {error: e},
-                )
-                await c.stopLocal()
-                process.exit(1)
-            })
-            await c.stopLocal()
+            const c = await initContext(options)
+            await doMigrateAndDeploy(options, c)
         },
     )
 
@@ -136,23 +153,8 @@ cli
         async (
             options: /*BuildEnvironmentOptions & BuilderCLIOptions &*/ GlobalCLIOptions & { clean?: boolean, deploy?: boolean, migrate?: boolean },
         ) => {
-            filterDuplicateOptions(options)
-            const wranglerConfig = await parseWrangler(options.root, options)
-            const c = new CliContext(options.root, options, wranglerConfig)
-
-            const forceDeploy = Boolean(options.deploy??true)
-            const doMigrate = Boolean(options.migrate??true)
-            const clean = Boolean(options.clean??true)
-            const skipConfirm = Boolean(options.y || options.yes)
-            await migrateAndDeploy(c, clean, doMigrate, forceDeploy, skipConfirm).catch(async e=>{
-                c.logger.error(
-                    colors.red(`error when applying migrations and deploying:\n${e.stack}`),
-                    {error: e},
-                )
-                await c.stopLocal()
-                process.exit(1)
-            })
-            await c.stopLocal()
+            const c = await initContext(options)
+            await doMigrateAndDeploy(options, c, true)
         },
     )
 
@@ -168,9 +170,7 @@ cli
         async (
             options: /*BuildEnvironmentOptions & BuilderCLIOptions &*/ GlobalCLIOptions & { upload?: boolean },
         ) => {
-            filterDuplicateOptions(options)
-            const wranglerConfig = await parseWrangler(options.root, options)
-            const c = new CliContext(options.root, options, wranglerConfig)
+            const c = await initContext(options)
 
             const doUpload = Boolean(options.upload??false)
             const envRes = readSecretsFile(c, false)
@@ -212,7 +212,7 @@ cli
             }
 
             try {
-                deploySecrets(c, envRes.secrets)
+                await deploySecrets(c, envRes.secrets)
             }catch (e: any){
                 c.logger.error(
                     colors.red(`error when applying migrations and deploying:\n${e.stack}`),
@@ -232,10 +232,7 @@ cli
         async (
             options: /*BuildEnvironmentOptions & BuilderCLIOptions &*/ GlobalCLIOptions & { clean: boolean, generate: boolean },
         ) => {
-            filterDuplicateOptions(options)
-            const logger = createLogger(options.logLevel)
-            const wranglerConfig = await parseWrangler(options.root, options)
-            const c = new CliContext(options.root, options, wranglerConfig)
+            const c = await initContext(options)
 
 
             try {
@@ -257,16 +254,16 @@ cli
                 // }
 
                 const command = `npx wrangler dev \
-                --persist-to=${JSON.stringify(c.localPersistPath)} \
-                --port=${c.devServerPort} \
-                --tsconfig=${JSON.stringify(c.createCustomTsconfigForWorker(config, 'dev'))}
+--persist-to=${JSON.stringify(c.localPersistPath)} \
+--port=${c.devServerPort} \
+--tsconfig=${JSON.stringify(c.createCustomTsconfigForWorker(config, 'dev'))}
                 `
-                // ${c.isLocal ? '--local' : '--remote'} \
+                // ${c.isLocal ? '--local' : '--remote'} \ // todo isLocal is diff than --local and --remote for dev command, here remote means whether to use remote database and preview or not, check wrangler docs on latest on this, it keeps changing
 
                 execSync(command, {cwd: c.root, stdio: 'inherit'})
                 await c.stopLocal()
             } catch (e: any) {
-                logger.error(
+                c.logger.error(
                     colors.red(`error when running wrangler dev:\n${e.stack}`),
                     { error: e },
                 )
@@ -286,18 +283,17 @@ cli
         async (
             options: /*BuildEnvironmentOptions & BuilderCLIOptions &*/ GlobalCLIOptions,
         ) => {
-            filterDuplicateOptions(options)
-            const wranglerConfig = await parseWrangler(options.root, options)
-            const c = new CliContext(options.root, options, wranglerConfig)
+            const c = await initContext(options)
 
             try {
-                const dir = `db_backups/${options.local?'local':'remote'}/${wranglerConfig.db.binding}/${new Date().toISOString()}`
+                const dir = `db_backups/${options.local?'local':'remote'}/${c.wranglerConfig.db.binding}/${new Date().toISOString()}`
                 const absDir = path.join(c.root, dir)
                 fs.mkdirSync(absDir, {recursive: true})
 
                 // loadLocalPersistConfig(c)
 
-                const migrations = await fetchDeployedMigrations(c)
+                // todo get and pass kvTableName from config here.
+                const migrations = await fetchDeployedMigrations(c, undefined)
                 if(migrations.settings)
                     fs.writeFileSync(path.join(absDir, 'config.json'), JSON.stringify(migrations.settings, null, 2))
 
@@ -312,11 +308,11 @@ cli
 
                 if(options.local){
                     // this is required since wrangler doesn't support persist-to for export command
-                    await exportLocal(wranglerConfig.config.config, wranglerConfig.db.binding, path.join(absDir, 'schema.sql'), [], false, true, c.localPersistPath, c.logger)
-                    await exportLocal(wranglerConfig.config.config, wranglerConfig.db.binding, path.join(absDir, 'data.sql'), [], true, false, c.localPersistPath, c.logger)
+                    await exportLocal(c.wranglerConfig.config.config, c.wranglerConfig.db.binding, path.join(absDir, 'schema.sql'), [], false, true, c.localPersistPath, c.logger)
+                    await exportLocal(c.wranglerConfig.config.config, c.wranglerConfig.db.binding, path.join(absDir, 'data.sql'), [], true, false, c.localPersistPath, c.logger)
                 }else {
-                    const command = `npx wrangler d1 export ${wranglerConfig.db.binding} ${options.local ? `--local --persist-to ${JSON.stringify(c.localPersistPath)}` : '--remote'} --no-data --output ${JSON.stringify(path.join(absDir, 'schema.sql'))}`
-                    const command2 = `npx wrangler d1 export ${wranglerConfig.db.binding} ${options.local ? `--local --persist-to ${JSON.stringify(c.localPersistPath)}` : '--remote'} --no-schema --output ${JSON.stringify(path.join(absDir, 'data.sql'))}`
+                    const command = `npx wrangler d1 export ${c.wranglerConfig.db.binding} ${options.local ? `--local --persist-to ${JSON.stringify(c.localPersistPath)}` : '--remote'} --no-data --output ${JSON.stringify(path.join(absDir, 'schema.sql'))}`
+                    const command2 = `npx wrangler d1 export ${c.wranglerConfig.db.binding} ${options.local ? `--local --persist-to ${JSON.stringify(c.localPersistPath)}` : '--remote'} --no-schema --output ${JSON.stringify(path.join(absDir, 'data.sql'))}`
                     execSync(command, {cwd: c.root, stdio: 'inherit'})
                     execSync(command2, {cwd: c.root, stdio: 'inherit'})
                 }
@@ -352,9 +348,7 @@ cli
         async (
             options: GlobalCLIOptions & { outDir?: string },
         ) => {
-            filterDuplicateOptions(options)
-            const wranglerConfig = await parseWrangler(options.root, options)
-            const c = new CliContext(options.root, options, wranglerConfig)
+            const c = await initContext(options)
 
             const {nextConfig, lastConfig} = await generateMigrationsDir(c, false, false).catch(async e=>{
                 c.logger.error(
@@ -424,9 +418,7 @@ cli
             route: string,
             options: GlobalCLIOptions & { method?: string, body?: string, yes?: boolean, raw?: boolean, explain?: boolean },
         ) => {
-            filterDuplicateOptions(options)
-            const wranglerConfig = await parseWrangler(options.root, options)
-            const c = new CliContext(options.root, options, wranglerConfig, "warn")
+            const c = await initContext(options)
 
             try {
                 if(!options.yes && options.method && options.method?.toUpperCase() !== 'GET'){
@@ -472,6 +464,6 @@ cli
     )
 
 cli.help()
-cli.version(VERSION)
+cli.version(TEENYBASE_VERSION)
 
 cli.parse()

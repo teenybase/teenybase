@@ -9,7 +9,7 @@ import {createLogger, Logger, LogLevel} from './logger'
 import {findNearestNodeModules, isObject, normalizePath} from './utils'
 import colors from 'picocolors'
 import {DatabaseSettings} from '../types/config'
-import {parseJSONC, parseTOML, readFileSync} from './wrangler/parse'
+import {parseJSONC, parseTOML, readFileSync} from './workers-utils'
 
 async function bundleCode(fileName: string, logLevel?: LogLevel) {
     const options: esbuild.BuildOptions = {
@@ -138,6 +138,7 @@ export async function loadConfigFromFile(
     }
 }
 
+// todo use experimental_readRawConfig from wrangler worker utils
 export async function loadWranglerConfigFromFile(
     // configEnv: ConfigEnv,
     configRoot: string,
@@ -148,8 +149,8 @@ export async function loadWranglerConfigFromFile(
     path: string
     config: any
 }> {
-    const start = performance.now()
-    const getTime = () => `${(performance.now() - start).toFixed(2)}ms`
+    // const start = performance.now()
+    // const getTime = () => `${(performance.now() - start).toFixed(2)}ms`
 
     let resolvedPath: string | undefined
 
@@ -177,9 +178,9 @@ export async function loadWranglerConfigFromFile(
     try {
         let loadedConfig = {}
         if(resolvedPath.endsWith('.json') || resolvedPath.endsWith('.jsonc')){
-            loadedConfig = parseJSONC(readFileSync(resolvedPath), resolvedPath);
+            loadedConfig = parseJSONC(readFileSync(resolvedPath), resolvedPath) as any;
         }else if(resolvedPath.endsWith('.toml')){
-            loadedConfig = parseTOML(readFileSync(resolvedPath), resolvedPath);
+            loadedConfig = parseTOML(readFileSync(resolvedPath), resolvedPath) as any;
         }
 
         return {

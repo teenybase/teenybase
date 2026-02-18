@@ -1,10 +1,9 @@
-import * as fs from "node:fs";
+import { readFileSync as fsReadFileSync } from "node:fs";
 import { resolve } from "node:path";
-import TOML from "@iarna/toml";
-import { formatMessagesSync } from "esbuild";
-import { parse as jsoncParse, printParseErrorCode } from "jsonc-parser";
-// import { UserError } from "./errors";
-// import { logger } from "./logger";
+import * as jsoncParser from "jsonc-parser";
+import TOML, { TomlError } from "smol-toml";
+import { UserError } from "./errors";
+import type { TelemetryMessage } from "./errors";
 import type { ParseError as JsoncParseError } from "jsonc-parser";
 
 export type Message = {
@@ -12,9 +11,9 @@ export type Message = {
 	location?: Location;
 	notes?: Message[];
 	kind?: "warning" | "error";
-};
+} & TelemetryMessage;
 
-export type Location = File & {
+export type Location = ParseFile & {
 	line: number;
 	column: number;
 	length?: number;
@@ -22,46 +21,10 @@ export type Location = File & {
 	suggestion?: string;
 };
 
-export type File = {
+export type ParseFile = {
 	file?: string;
 	fileText?: string;
 };
-
-/**
- * Formats a `Message` using esbuild's pretty-printing algorithm.
- */
-export function formatMessage(
-	{ text, notes, location, kind = "error" }: Message,
-	color = true
-): string {
-	const input = { text, notes, location };
-	delete input.location?.fileText;
-	for (const note of notes ?? []) {
-		delete note.location?.fileText;
-	}
-	const lines = formatMessagesSync([input], {
-		color,
-		kind: kind,
-		// terminalWidth: logger.columns,
-	});
-	return lines.join("\n");
-}
-
-/**
- * Base class for errors where the user has done something wrong. These are not
- * reported to Sentry. API errors are intentionally *not* `UserError`s, and are
- * reported to Sentry. This will help us understand which API errors need better
- * messaging.
- */
-export class UserError extends Error {
-    constructor(...args: ConstructorParameters<typeof Error>) {
-        super(...args);
-        // Restore prototype chain:
-        // https://www.typescriptlang.org/docs/handbook/release-notes/typescript-2-2.html#support-for-newtarget
-        Object.setPrototypeOf(this, new.target.prototype);
-    }
-}
-
 
 /**
  * An error that's thrown when something fails to parse.
@@ -72,8 +35,8 @@ export class ParseError extends UserError implements Message {
 	readonly location?: Location;
 	readonly kind: "warning" | "error";
 
-	constructor({ text, notes, location, kind }: Message) {
-		super(text);
+	constructor({ text, notes, location, kind, telemetryMessage }: Message) {
+		super(text, { telemetryMessage });
 		this.name = this.constructor.name;
 		this.text = text;
 		this.notes = notes ?? [];
@@ -104,6 +67,10 @@ export class APIError extends ParseError {
 		return false;
 	}
 
+	isRetryable() {
+		return String(this.#status).startsWith("5");
+	}
+
 	// Allow `APIError`s to be marked as handled.
 	#reportable = true;
 	get reportable() {
@@ -114,46 +81,44 @@ export class APIError extends ParseError {
 	}
 }
 
-const TOML_ERROR_NAME = "TomlError";
-const TOML_ERROR_SUFFIX = " at row ";
-
-type TomlError = Error & {
-	line: number;
-	col: number;
-};
-
 /**
- * A wrapper around `TOML.parse` that throws a `ParseError`.
+ * Parses a TOML string to an object.
+ *
+ * Note: throws a `ParseError` if parsing fails.
+ *
+ * @param tomlContent The TOML content to parse.
+ * @param filePath Optional file path for error reporting.
+ * @returns The parsed TOML object.
  */
-export function parseTOML(input: string, file?: string): TOML.JsonMap | never {
+export function parseTOML(tomlContent: string, filePath?: string): unknown {
 	try {
-		// Normalize CRLF to LF to avoid hitting https://github.com/iarna/iarna-toml/issues/33.
-		const normalizedInput = input.replace(/\r\n/g, "\n");
-		return TOML.parse(normalizedInput);
+		return TOML.parse(tomlContent);
 	} catch (err) {
-		const { name, message, line, col } = err as TomlError;
-		if (name !== TOML_ERROR_NAME) {
+		if (!(err instanceof TomlError)) {
 			throw err;
 		}
-		const text = message.substring(0, message.lastIndexOf(TOML_ERROR_SUFFIX));
-		const lineText = input.split("\n")[line];
+
 		const location = {
-			lineText,
-			line: line + 1,
-			column: col - 1,
-			file,
-			fileText: input,
+			lineText: tomlContent.split("\n")[err.line - 1],
+			line: err.line,
+			column: err.column - 1,
+			file: filePath,
+			fileText: tomlContent,
 		};
-		throw new ParseError({ text, location });
+		throw new ParseError({
+			text: err.message.substring(0, err.message.indexOf("\n")),
+			location,
+			telemetryMessage: "TOML parse error",
+		});
 	}
 }
-
-const JSON_ERROR_SUFFIX = " in JSON at position ";
 
 /**
  * A minimal type describing a package.json file.
  */
 export type PackageJSON = {
+	name?: string;
+	version?: string;
 	devDependencies?: Record<string, unknown>;
 	dependencies?: Record<string, unknown>;
 	scripts?: Record<string, unknown>;
@@ -162,47 +127,39 @@ export type PackageJSON = {
 /**
  * A typed version of `parseJSON()`.
  */
-export function parsePackageJSON<T extends PackageJSON = PackageJSON>(
-	input: string,
-	file?: string
-): T {
-	return parseJSON<T>(input, file);
+export function parsePackageJSON(input: string, file?: string): PackageJSON {
+	return parseJSON(input, file) as PackageJSON;
 }
 
 /**
- * A wrapper around `JSON.parse` that throws a `ParseError`.
+ * Parses JSON and throws a `ParseError`.
  */
-export function parseJSON<T>(input: string, file?: string): T {
-	try {
-		return JSON.parse(input);
-	} catch (err) {
-		const { message } = err as Error;
-		const index = message.lastIndexOf(JSON_ERROR_SUFFIX);
-		if (index < 0) {
-			throw err;
-		}
-		const text = message.substring(0, index);
-		const position = parseInt(
-			message.substring(index + JSON_ERROR_SUFFIX.length)
-		);
-		const location = indexLocation({ file, fileText: input }, position);
-		throw new ParseError({ text, location });
-	}
+export function parseJSON(input: string, file?: string): unknown {
+	return parseJSONC(input, file, {
+		allowEmptyContent: false,
+		allowTrailingComma: false,
+		disallowComments: true,
+	});
 }
 
 /**
  * A wrapper around `JSONC.parse` that throws a `ParseError`.
  */
-export function parseJSONC<T>(input: string, file?: string): T {
+export function parseJSONC(
+	input: string,
+	file?: string,
+	options: jsoncParser.ParseOptions = { allowTrailingComma: true }
+): unknown {
 	const errors: JsoncParseError[] = [];
-	const data = jsoncParse(input, errors);
+	const data = jsoncParser.parse(input, errors, options);
 	if (errors.length) {
 		throw new ParseError({
-			text: printParseErrorCode(errors[0].error),
+			text: jsoncParser.printParseErrorCode(errors[0].error),
 			location: {
 				...indexLocation({ file, fileText: input }, errors[0].offset + 1),
 				length: errors[0].length,
 			},
+			telemetryMessage: "JSON(C) parse error",
 		});
 	}
 	return data;
@@ -213,7 +170,7 @@ export function parseJSONC<T>(input: string, file?: string): T {
  */
 export function readFileSyncToBuffer(file: string): Buffer {
 	try {
-		return fs.readFileSync(file);
+		return fsReadFileSync(file);
 	} catch (err) {
 		const { message } = err as Error;
 		throw new ParseError({
@@ -232,8 +189,13 @@ export function readFileSyncToBuffer(file: string): Buffer {
  */
 export function readFileSync(file: string): string {
 	try {
-		return fs.readFileSync(file, { encoding: "utf-8" });
+		const buffer = fsReadFileSync(file);
+		return removeBOMAndValidate(buffer, file);
 	} catch (err) {
+		if (err instanceof ParseError) {
+			throw err;
+		}
+
 		const { message } = err as Error;
 		throw new ParseError({
 			text: `Could not read file: ${file}`,
@@ -242,6 +204,7 @@ export function readFileSync(file: string): string {
 					text: message.replace(file, resolve(file)),
 				},
 			],
+			telemetryMessage: "Could not read file",
 		});
 	}
 }
@@ -249,7 +212,7 @@ export function readFileSync(file: string): string {
 /**
  * Calculates the line and column location from an index.
  */
-export function indexLocation(file: File, index: number): Location {
+export function indexLocation(file: ParseFile, index: number): Location {
 	let lineText,
 		line = 0,
 		column = 0,
@@ -270,7 +233,7 @@ export function indexLocation(file: File, index: number): Location {
 /**
  * Guesses the line and column location of a search query.
  */
-export function searchLocation(file: File, query: unknown): Location {
+export function searchLocation(file: ParseFile, query: unknown): Location {
 	let lineText,
 		length,
 		line = 0,
@@ -374,4 +337,96 @@ export function parseNonHyphenedUuid(uuid: string | null): string | null {
 	uuid_parts.forEach((part) => (hyphenated += part + "-"));
 
 	return hyphenated.slice(0, 36);
+}
+
+export function parseByteSize(
+	s: string,
+	base: number | undefined = undefined
+): number {
+	const match = s.match(
+		/^(\d*\.*\d*)\s*([kKmMgGtTpP]{0,1})([i]{0,1}[bB]{0,1})$/
+	);
+	if (!match) {
+		return NaN;
+	}
+
+	const size = match[1];
+	if (size.length === 0 || isNaN(Number(size))) {
+		return NaN;
+	}
+
+	const unit = match[2].toLowerCase();
+	const sizeUnits = {
+		k: 1,
+		m: 2,
+		g: 3,
+		t: 4,
+		p: 5,
+	} as const;
+	if (unit.length !== 0 && !(unit in sizeUnits)) {
+		return NaN;
+	}
+
+	const binary = match[3].toLowerCase() == "ib";
+	if (binary && unit.length === 0) {
+		// Plain "ib" without a size unit is invalid
+		return NaN;
+	}
+
+	const pow = sizeUnits[unit as keyof typeof sizeUnits] || 0;
+
+	return Math.floor(
+		Number(size) * Math.pow(base ?? (binary ? 1024 : 1000), pow)
+	);
+}
+
+const UNSUPPORTED_BOMS = [
+	{
+		buffer: Buffer.from([0x00, 0x00, 0xfe, 0xff]),
+		encoding: "UTF-32 BE",
+	},
+	{
+		buffer: Buffer.from([0xff, 0xfe, 0x00, 0x00]),
+		encoding: "UTF-32 LE",
+	},
+	{
+		buffer: Buffer.from([0xfe, 0xff]),
+		encoding: "UTF-16 BE",
+	},
+	{
+		buffer: Buffer.from([0xff, 0xfe]),
+		encoding: "UTF-16 LE",
+	},
+];
+
+/**
+ * Removes UTF-8 BOM if present and validates that no other BOMs are present.
+ * Throws ParseError for non-UTF-8 BOMs with descriptive error messages.
+ */
+function removeBOMAndValidate(buffer: Buffer, file: string): string {
+	for (const bom of UNSUPPORTED_BOMS) {
+		if (
+			buffer.length >= bom.buffer.length &&
+			buffer.subarray(0, bom.buffer.length).equals(bom.buffer)
+		) {
+			throw new ParseError({
+				text: `Configuration file contains ${bom.encoding} byte order marker`,
+				notes: [
+					{
+						text: `The file "${file}" appears to be encoded as ${bom.encoding}. Please save the file as UTF-8 without BOM.`,
+					},
+				],
+				location: { file, line: 1, column: 0 },
+				telemetryMessage: `${bom.encoding} BOM detected`,
+			});
+		}
+	}
+
+	const content = buffer.toString("utf-8");
+
+	if (content.charCodeAt(0) === 0xfeff) {
+		return content.slice(1);
+	}
+
+	return content;
 }

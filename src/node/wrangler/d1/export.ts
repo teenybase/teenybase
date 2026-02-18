@@ -1,36 +1,10 @@
 import fs from "node:fs/promises";
 import path from "node:path";
 import {Miniflare} from "miniflare";
-import {UserError} from './parse'
-import {Logger} from '../logger'
-import {readableRelative} from '../utils'
-
-export function getDatabaseInfoFromConfig(
-    config: any, // wrangler config
-    name: string
-) {
-    for (const d1Database of config.d1_databases) {
-        if (
-            d1Database.database_id &&
-            (name === d1Database.database_name || name === d1Database.binding)
-        ) {
-            return {
-                uuid: d1Database.database_id,
-                previewDatabaseUuid: d1Database.preview_database_id,
-                binding: d1Database.binding,
-                name: d1Database.database_name,
-                // migrationsTableName:
-                //     d1Database.migrations_table,
-                // migrationsFolderPath:
-                //     d1Database.migrations_dir,
-                // internal_env: d1Database.database_internal_env,
-            };
-        }
-    }
-    return null;
-}
-
-// todo keep updated with https://github.com/cloudflare/workers-sdk/blob/5462ead9207459e7547ba571157159c8618d3583/packages/wrangler/src/d1/export.ts#L101
+import {Logger} from '../../logger'
+import {readableRelative} from '../../utils'
+import {getDatabaseInfoFromConfig} from './utils'
+import {UserError} from '../../workers-utils/errors'
 
 export async function exportLocal(
     config: any, // wrangler config
@@ -45,7 +19,7 @@ export async function exportLocal(
     const localDB = getDatabaseInfoFromConfig(config, name);
     if (!localDB) {
         throw new UserError(
-            `Couldn't find a D1 DB with the name or binding '${name}' in wrangler.toml.`
+            `Couldn't find a D1 DB with the name or binding '${name}' in wrangler config.`
         );
     }
 
