@@ -47,7 +47,8 @@ export function makeD1Binding(c: CliContext) {
                     c.logger.debug('Executing command: npx ' + args.join(' '))
                     const cdRes = execFileSync('npx', args, {
                         cwd: c.root,
-                        stdio: ['inherit', 'pipe', 'pipe']
+                        stdio: ['inherit', 'pipe', 'pipe'],
+                        shell: true
                     }).toString()
                     c.logger.debug('Command output: ' + cdRes)
                     result = JSON.parse(cdRes)
