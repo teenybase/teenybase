@@ -373,7 +373,7 @@ cli
             await printEndpointInfo(devUrl, true, c.logger)
             c.logger.info('')
 
-            const child = spawn('npx', wranglerArgs, {cwd: c.root, stdio: 'inherit'})
+            const child = spawn('npx', wranglerArgs, {cwd: c.root, stdio: 'inherit', shell: true})
 
             const doCleanup = () => {
                 c.removeCustomTsconfig('dev')

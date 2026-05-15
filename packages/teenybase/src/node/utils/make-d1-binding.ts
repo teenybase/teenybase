@@ -52,7 +52,8 @@ export function makeD1Binding(c: CliContext) {
                     c.logger.debug('Executing: wrangler d1 execute ' + (c.isLocal ? '--local' : '--remote'))
                     const cdRes = execFileSync('npx', args, {
                         cwd: c.root,
-                        stdio: ['inherit', 'pipe', 'pipe']
+                        stdio: ['inherit', 'pipe', 'pipe'],
+                        shell: true
                     }).toString()
                     if (cdRes.length > 500) {
                         const tmpPath = path.join(c.root, '.teeny', 'd1-debug.log')
