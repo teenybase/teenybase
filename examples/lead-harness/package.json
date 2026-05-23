@@ -1,0 +1,15 @@
+{
+  "name": "lead-harness",
+  "version": "0.1.0",
+  "description": "Self-improving lead classifier on teenybase. Local scraper pushes samples; blitz holds state, scoring, labels, and metrics.",
+  "type": "module",
+  "private": true,
+  "scripts": {
+    "dev": "teeny dev --local",
+    "deploy": "teeny deploy --remote --yes",
+    "generate": "teeny generate --local"
+  },
+  "devDependencies": {
+    "teenybase": "*"
+  }
+}
