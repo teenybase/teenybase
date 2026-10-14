@@ -19,12 +19,12 @@ Uses Google's [Sign In With Google](https://developers.google.com/identity/gsi/w
 ### Config
 
 ```ts
-// teeny.config.ts
+// teenybase.ts
 const settings: DatabaseSettings = {
   appUrl: 'https://myapp.com',
   jwtSecret: '$JWT_SECRET',
-  jwtAllowedIssuers: [
-    { issuer: 'https://accounts.google.com', clientId: '$GOOGLE_CLIENT_ID' }
+  authProviders: [
+    { name: 'google', clientId: '$GOOGLE_CLIENT_ID' }
   ],
   authCookie: {              // optional: set token as cookie
     name: 'auth_token',
@@ -54,7 +54,7 @@ const settings: DatabaseSettings = {
 <script src="https://accounts.google.com/gsi/client" async></script>
 ```
 
-Google posts `credential` + `g_csrf_token` as `application/x-www-form-urlencoded` to your endpoint. Teenybase verifies the CSRF cookie, decodes the JWT credential using `jwtAllowedIssuers`, finds/creates the user, and returns the session. If `authCookie` is configured, the token is also set as a cookie.
+Google posts `credential` + `g_csrf_token` as `application/x-www-form-urlencoded` to your endpoint. Teenybase verifies the CSRF cookie, decodes the JWT credential using the Google provider in `authProviders`, finds/creates the user, and returns the session. If `authCookie` is configured, the token is also set as a cookie.
 
 **Endpoint:** `POST /api/v1/table/{auth_table}/auth/google-login`
 
@@ -98,7 +98,7 @@ For standard OAuth2 authorization code flow with any provider.
 ```ts
 const settings: DatabaseSettings = {
   // ... base config + authCookie (recommended for redirect flow)
-  oauthProviders: [
+  authProviders: [
     {
       name: 'google',  // preset: URLs + scopes auto-filled
       clientId: '$GOOGLE_CLIENT_ID',
@@ -126,6 +126,47 @@ const settings: DatabaseSettings = {
 
 **Built-in presets:** `google`, `github`, `discord`, `linkedin` (auto-fill URLs, scopes, field mappings).
 
+### Email Verification Trust
+
+Teenybase only accepts OAuth logins where the provider confirms the user's email is verified:
+
+- **Explicit truthy** (e.g., `email_verified: true`) — user signed in, marked verified.
+- **Explicit falsy** (e.g., `email_verified: false`) — login rejected with `400 Email not verified`.
+- **Field missing** — falls back to `trustEmailVerified`. Default `false` rejects the login.
+
+Rejection responds with a plain `400` to the OAuth callback URL — same shape as all other OAuth callback failures (invalid state, CSRF mismatch, etc.). No redirect-with-error-query; the browser lands on the raw error page. If you need user-facing error UX, intercept the callback path in your frontend or proxy.
+
+Built-in presets handle this for you:
+
+| Preset | How verification is determined |
+|---|---|
+| `google` | `trustEmailVerified: true` — Google verifies email at account creation. |
+| `linkedin` | `trustEmailVerified: true` — LinkedIn verifies email at account creation. |
+| `discord` | Reads explicit `verified` field from the Discord user object. |
+| `github` | Custom exchange handler fetches `/user/emails` and selects only verified addresses. |
+
+**Custom providers** must declare how to verify. The `verified` mapping defaults to `email_verified`; if your provider returns a different field name, remap it:
+
+```ts
+{
+  name: 'my-idp',
+  // ... URLs + credentials
+  mapping: { verified: 'email_is_verified' }, // whatever your provider returns
+}
+```
+
+Or, if the provider doesn't return a verification field but you know it verifies email:
+
+```ts
+{
+  name: 'my-idp',
+  // ...
+  trustEmailVerified: true,
+}
+```
+
+**Why this matters.** If teenybase accepted unverified emails, an attacker could register at the OAuth provider claiming a victim's email (without controlling the inbox), sign in to teenybase, and have an account created under the victim's email. When the real victim later signs up via the same provider, they'd inherit the attacker-controlled record. This is called *pre-account-takeover*. The strict default blocks the attack and forces custom-provider integrators to assert their trust explicitly.
+
 ### Frontend
 
 Just link to the authorize endpoint:
@@ -142,6 +183,27 @@ Just link to the authorize endpoint:
 ```
 
 **Flow:** User clicks link -> redirected to provider -> authenticates -> redirected back to callback -> session created + cookie set -> redirected to `redirect` param (or `redirectUrl` config, or `appUrl`).
+
+#### Redirect URL validation
+
+The `redirect` parameter is validated to prevent open redirect attacks:
+
+- **Relative paths** (e.g., `/settings`) are resolved against `appUrl` (e.g., `https://myapp.com/settings`).
+- **No `allowedRedirectUrls` configured** (default): only URLs matching `appUrl` hostname are allowed.
+- **`allowedRedirectUrls` configured**: only exact matches against that list are allowed.
+- **Rejected URLs**: silently fall back to `provider.redirectUrl`, then `appUrl`.
+
+```ts
+// Example: restrict redirects to specific URLs
+{
+  appUrl: 'https://myapp.com',
+  allowedRedirectUrls: [
+    'https://myapp.com/dashboard',
+    'https://myapp.com/settings',
+    'https://staging.myapp.com/dashboard',
+  ],
+}
+```
 
 **Endpoints:**
 - `GET /api/v1/table/{auth_table}/auth/oauth/{provider}` — starts the flow
@@ -177,19 +239,29 @@ const res = await fetch('/api/v1/table/users/auth/login-token', {
 const { token, refresh_token, record } = await res.json()
 ```
 
-Teenybase verifies the token against `jwtAllowedIssuers`, finds/creates the user, and returns a session.
+Teenybase verifies the token against `authProviders`, finds/creates the user, and returns a session.
 
 ---
 
 ## Cookie-Based Auth
 
-When `authCookie` is configured in `DatabaseSettings`, the token is readable from the cookie on subsequent requests — no need to send `Authorization` headers.
+When `authCookie` is configured, teenybase reads the token from the cookie on every request (after checking the `Authorization` header). Cookies are set automatically on OAuth redirect flows (Google One Tap, OAuth callback).
+
+For JSON endpoints (`login-password`, `sign-up`), the token is returned in the response body — your app sets the cookie:
 
 ```ts
-// Works automatically — cookie is sent by the browser
+// After calling login-password or sign-up, set the cookie server-side (SSR)
+const { token } = await response.json()
+setCookie('auth_token', token, { httpOnly: true, secure: true, sameSite: 'Lax', path: '/' })
+
+// Subsequent requests — cookie is sent automatically by the browser
 const res = await fetch('/api/v1/table/posts', { credentials: 'include' })
 ```
 
 **Logout** (clears cookie + invalidates session):
 - Table-level: `POST /api/v1/table/{auth_table}/auth/logout`
 - Global (cookie only): `POST /api/v1/auth/logout`
+
+---
+
+**See also:** [Configuration Reference](config-reference.md) | [Frontend Guide](frontend-guide.md) | [Recipe: Full App](recipe-full-app.md) | [Troubleshooting](troubleshooting.md)

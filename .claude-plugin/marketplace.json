@@ -1,0 +1,15 @@
+{
+    "name": "teenybase-tools",
+    "description": "Teenybase skills for Claude Code",
+    "owner": {
+        "name": "Teenybase",
+        "url": "https://github.com/teenybase"
+    },
+    "plugins": [
+        {
+            "name": "teenybase",
+            "source": "./",
+            "description": "Skills for building backends with Teenybase on Cloudflare Workers + D1: config, auth, access rules, migrations and deployment"
+        }
+    ]
+}

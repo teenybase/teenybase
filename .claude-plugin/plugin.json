@@ -1,0 +1,10 @@
+{
+    "name": "teenybase",
+    "version": "0.0.15",
+    "description": "Skills for building backends with Teenybase on Cloudflare Workers + D1: config, auth, access rules, migrations and deployment",
+    "author": { "name": "Teenybase", "url": "https://github.com/teenybase" },
+    "homepage": "https://teenybase.com",
+    "repository": "https://github.com/teenybase/teenybase",
+    "license": "Apache-2.0",
+    "keywords": ["teenybase", "backend", "cloudflare-workers", "d1", "sqlite", "serverless"]
+}
