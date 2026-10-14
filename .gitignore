@@ -36,3 +36,12 @@ lerna-debug.log*
 test/**/_migrations.ts
 persist-primary
 primary-migrations
+.teeny
+.local-persist
+tmp/
+compose.dev.yaml
+.aibox
+marketing/
+.trash/
+
+# local backup snapshots (never commit)

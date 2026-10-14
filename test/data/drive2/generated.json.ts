@@ -1,7 +1,7 @@
 import {DatabaseSettings} from '../../../src'
 export const migrations = [
   {
-    "name": "0000_create_table_users.sql",
+    "name": "10000_create_table_users.sql",
     "sql": "CREATE TABLE users (\n\tid TEXT PRIMARY KEY NOT NULL, \n\tcreated TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP, \n\tupdated TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP, \n\tusername TEXT UNIQUE NOT NULL, \n\temail TEXT UNIQUE NOT NULL, \n\temail_verified BOOLEAN NOT NULL DEFAULT 0, \n\tpassword TEXT NOT NULL, \n\tpassword_salt TEXT NOT NULL, \n\tname TEXT NOT NULL, \n\tavatar TEXT, \n\trole TEXT, \n\tmeta JSON\n);\nCREATE INDEX idx_users_name ON users (name);\nCREATE INDEX idx_users_role ON users (role);\nCREATE TRIGGER tgr_users_raise_on_created_update BEFORE UPDATE OF created ON users BEGIN SELECT RAISE(FAIL, 'Cannot update created column') WHERE OLD.created != NEW.created; END;\nCREATE TRIGGER tgr_users_update_updated_on_update AFTER UPDATE ON users BEGIN UPDATE users SET updated = CURRENT_TIMESTAMP WHERE id = NEW.id AND OLD.updated = NEW.updated; END;",
     "sqlRevert": "DROP TABLE IF EXISTS users;",
     "logs": [
@@ -9,16 +9,16 @@ export const migrations = [
     ]
   },
   {
-    "name": "0001_create_table_files.sql",
-    "sql": "CREATE TABLE files (\n\tid TEXT PRIMARY KEY NOT NULL, \n\tcreated TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP, \n\tupdated TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP, \n\tcreated_by TEXT REFERENCES users(id) ON DELETE CASCADE, \n\tpath TEXT NOT NULL, \n\tname TEXT NOT NULL, \n\tthumb TEXT DEFAULT NULL, \n\tfile TEXT, \n\tnotes TEXT NOT NULL DEFAULT \"\", \n\tconfig JSON DEFAULT \"{}\" CHECK(json_valid(config)), \n\tmeta JSON DEFAULT \"{}\" CHECK(json_valid(meta)), \n\ttags TEXT, \n\tdeleted_by TEXT REFERENCES users(id) ON DELETE SET NULL, \n\tdeleted_at TIMESTAMP\n);\nCREATE INDEX idx_files_name ON files (name);\nCREATE INDEX idx_files_path ON files (path);\nCREATE INDEX idx_files_tags ON files (tags);\nCREATE INDEX idx_files_created_by ON files (created_by);\nCREATE INDEX idx_files_deleted_by ON files (deleted_by);\nCREATE TRIGGER tgr_files_raise_on_created_update BEFORE UPDATE OF created ON files BEGIN SELECT RAISE(FAIL, 'Cannot update created column') WHERE OLD.created != NEW.created; END;\nCREATE TRIGGER tgr_files_update_updated_on_update AFTER UPDATE ON files BEGIN UPDATE users SET updated = CURRENT_TIMESTAMP WHERE id = NEW.id AND OLD.updated = NEW.updated; END;\nCREATE TRIGGER tgr_files_set_deleted_at_on_delete_by BEFORE UPDATE OF deleted_by ON files BEGIN UPDATE files SET deleted_at = CURRENT_TIMESTAMP WHERE id = NEW.id AND OLD.deleted_by IS NULL AND NEW.deleted_by IS NOT NULL; END;",
+    "name": "10001_create_table_files.sql",
+    "sql": "CREATE TABLE files (\n\tid TEXT PRIMARY KEY NOT NULL, \n\tcreated TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP, \n\tupdated TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP, \n\tcreated_by TEXT REFERENCES users(id) ON DELETE CASCADE, \n\tpath TEXT NOT NULL, \n\tname TEXT NOT NULL, \n\tthumb TEXT DEFAULT NULL, \n\tfile TEXT, \n\tnotes TEXT NOT NULL DEFAULT \"\", \n\tconfig JSON DEFAULT \"{}\" CHECK(json_valid(config)), \n\tmeta JSON DEFAULT \"{}\" CHECK(json_valid(meta)), \n\ttags TEXT, \n\tdeleted_by TEXT REFERENCES users(id) ON DELETE SET NULL, \n\tdeleted_at TIMESTAMP\n);\nCREATE INDEX idx_files_name ON files (name);\nCREATE INDEX idx_files_path ON files (path);\nCREATE INDEX idx_files_tags ON files (tags);\nCREATE INDEX idx_files_created_by ON files (created_by);\nCREATE INDEX idx_files_deleted_by ON files (deleted_by);\nCREATE TRIGGER tgr_files_raise_on_created_update BEFORE UPDATE OF created ON files BEGIN SELECT RAISE(FAIL, 'Cannot update created column') WHERE OLD.created != NEW.created; END;\nCREATE TRIGGER tgr_files_update_updated_on_update AFTER UPDATE ON files BEGIN UPDATE files SET updated = CURRENT_TIMESTAMP WHERE id = NEW.id AND OLD.updated = NEW.updated; END;\nCREATE TRIGGER tgr_files_set_deleted_at_on_delete_by BEFORE UPDATE OF deleted_by ON files BEGIN UPDATE files SET deleted_at = CURRENT_TIMESTAMP WHERE id = NEW.id AND OLD.deleted_by IS NULL AND NEW.deleted_by IS NOT NULL; END;",
     "sqlRevert": "DROP TABLE IF EXISTS files;",
     "logs": [
       "✔ Table Created - files"
     ]
   },
   {
-    "name": "0002_create_table_drive_config.sql",
-    "sql": "CREATE TABLE drive_config (\n\tcreated TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP, \n\tupdated TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP, \n\tid TEXT PRIMARY KEY NOT NULL, \n\tval TEXT, \n\tprotected BOOLEAN NOT NULL DEFAULT 0\n);\nCREATE INDEX idx_drive_config_protected ON drive_config (protected);\nCREATE TRIGGER tgr_drive_config_raise_on_created_update BEFORE UPDATE OF created ON drive_config BEGIN SELECT RAISE(FAIL, 'Cannot update created column') WHERE OLD.created != NEW.created; END;\nCREATE TRIGGER tgr_drive_config_update_updated_on_update AFTER UPDATE ON drive_config BEGIN UPDATE users SET updated = CURRENT_TIMESTAMP WHERE id = NEW.id AND OLD.updated = NEW.updated; END;",
+    "name": "10002_create_table_drive_config.sql",
+    "sql": "CREATE TABLE drive_config (\n\tcreated TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP, \n\tupdated TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP, \n\tid TEXT PRIMARY KEY NOT NULL, \n\tval TEXT, \n\tprotected BOOLEAN NOT NULL DEFAULT 0\n);\nCREATE INDEX idx_drive_config_protected ON drive_config (protected);\nCREATE TRIGGER tgr_drive_config_raise_on_created_update BEFORE UPDATE OF created ON drive_config BEGIN SELECT RAISE(FAIL, 'Cannot update created column') WHERE OLD.created != NEW.created; END;\nCREATE TRIGGER tgr_drive_config_update_updated_on_update AFTER UPDATE ON drive_config BEGIN UPDATE drive_config SET updated = CURRENT_TIMESTAMP WHERE id = NEW.id AND OLD.updated = NEW.updated; END;",
     "sqlRevert": "DROP TABLE IF EXISTS drive_config;",
     "logs": [
       "✔ Table Created - drive_config"
@@ -162,7 +162,7 @@ export const config = {
           "event": "UPDATE",
           "seq": "AFTER",
           "body": {
-            "q": "UPDATE users SET updated = CURRENT_TIMESTAMP WHERE id = NEW.id AND OLD.updated = NEW.updated"
+            "q": "UPDATE \u0000TABLEREF\u0000 SET updated = CURRENT_TIMESTAMP WHERE id = NEW.id AND OLD.updated = NEW.updated"
           }
         }
       ],
@@ -356,7 +356,7 @@ export const config = {
           "event": "UPDATE",
           "seq": "AFTER",
           "body": {
-            "q": "UPDATE users SET updated = CURRENT_TIMESTAMP WHERE id = NEW.id AND OLD.updated = NEW.updated"
+            "q": "UPDATE \u0000TABLEREF\u0000 SET updated = CURRENT_TIMESTAMP WHERE id = NEW.id AND OLD.updated = NEW.updated"
           }
         },
         {
@@ -455,7 +455,7 @@ export const config = {
           "event": "UPDATE",
           "seq": "AFTER",
           "body": {
-            "q": "UPDATE users SET updated = CURRENT_TIMESTAMP WHERE id = NEW.id AND OLD.updated = NEW.updated"
+            "q": "UPDATE \u0000TABLEREF\u0000 SET updated = CURRENT_TIMESTAMP WHERE id = NEW.id AND OLD.updated = NEW.updated"
           }
         }
       ],
@@ -473,6 +473,5 @@ export const config = {
     }
   ],
   "jwtSecret": "ldhsadiudsyg76r75vddqdxhaoxindgcx79cxha",
-  "appUrl": "https://localhost",
-  "version": 0
+  "appUrl": "https://localhost"
 } as const satisfies DatabaseSettings

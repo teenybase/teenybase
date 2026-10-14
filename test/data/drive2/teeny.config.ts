@@ -16,10 +16,12 @@ export default {
             name: 'users',
             r2Base: 'users',
             autoSetUid: true,
+            // allowMultipleFileRef: true,
+            // idInR2: true,
             // allowWildcard: false,
             fields: [
                 ...baseFields,
-                ...authFields
+                ...authFields,
             ],
             triggers: [createdTrigger, updatedTrigger],
             indexes: [

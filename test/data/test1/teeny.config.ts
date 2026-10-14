@@ -86,11 +86,11 @@ export default {
             } as TableRulesExtensionData]
         }
     ],
-    procedures: [{
-        name: 'inc_counter_query',
-        params: ['file_id'],
-        rule: false,
-        query: [
+    actions: [{
+        name: 'inc_counter_sql',
+        params: {file_id: 'integer'},
+        applyTableRules: false,
+        sql: [
             {
                 type: 'UPDATE',
                 table: 'files',
@@ -102,10 +102,10 @@ export default {
             }
         ],
     }, {
-        name: 'inc_counter_statement',
-        params: ['file_id'],
-        rule: false,
-        statement: [
+        name: 'inc_counter_steps',
+        params: {file_id: 'integer'},
+        applyTableRules: false,
+        steps: [
             {
                 type: 'UPDATE',
                 table: 'files',
@@ -116,5 +116,165 @@ export default {
                 returning: ['counter']
             }
         ],
+    }, {
+        name: 'inc_counter_guarded',
+        params: {file_id: 'integer'},
+        guard: "auth.uid != null",
+        applyTableRules: false,
+        steps: [
+            {
+                type: 'UPDATE',
+                table: 'files',
+                set: {
+                    'counter': 'counter + 1',
+                },
+                where: 'id = params.file_id',
+                returning: ['counter']
+            }
+        ],
+    },
+    // Part 2: rawSelectRaise smoke tests
+    // These use RAISE() in SELECT to confirm it fails outside triggers (regression test)
+    {
+        name: 'test_raise_match',
+        params: {file_id: 'integer'},
+        applyTableRules: false,
+        sql: {
+            type: 'SELECT',
+            from: 'files',
+            selects: ["RAISE(FAIL, 'Condition matched')"],
+            where: sql`id = {:file_id}`,
+        },
+    },
+    {
+        name: 'test_raise_nomatch',
+        applyTableRules: false,
+        sql: {
+            type: 'SELECT',
+            from: 'files',
+            selects: ["RAISE(FAIL, 'Condition matched')"],
+            where: sql`id = -999`,
+        },
+    },
+    // Part 3: Comprehensive action tests
+    // #1 SELECT sql mode — where, selects, orderBy, limit
+    {
+        name: 'list_files_sql',
+        applyTableRules: false,
+        sql: {
+            type: 'SELECT',
+            from: 'files',
+            selects: ['id', 'name'],
+            orderBy: 'name ASC',
+            limit: 5,
+        },
+    },
+    // #2 SELECT sql mode — aggregation with alias selects, groupBy
+    {
+        name: 'count_files_by_user_sql',
+        applyTableRules: false,
+        sql: {
+            type: 'SELECT',
+            from: 'files',
+            selects: ['user_id', {q: 'COUNT(*)', as: 'total'}],
+            groupBy: ['user_id'],
+            orderBy: 'user_id ASC',
+        },
+    },
+    // #3 INSERT sql mode — values with sql``, returning
+    {
+        name: 'create_file_sql',
+        params: {name: 'string', url: 'string'},
+        applyTableRules: false,
+        sql: {
+            type: 'INSERT',
+            table: 'files',
+            values: {name: sql`{:name}`, url: sql`{:url}`, user_id: sql`1`},
+            returning: ['id', 'name', 'url'],
+        },
+    },
+    // #4 DELETE sql mode — where, returning
+    {
+        name: 'delete_file_sql',
+        params: {file_id: 'integer'},
+        applyTableRules: false,
+        sql: {
+            type: 'DELETE',
+            table: 'files',
+            where: sql`id = {:file_id}`,
+            returning: ['id'],
+        },
+    },
+    // #5 SELECT steps mode
+    {
+        name: 'list_files_steps',
+        applyTableRules: false,
+        steps: {
+            type: 'SELECT',
+            table: 'files',
+        },
+    },
+    // #6 INSERT steps mode — expr for expressions
+    {
+        name: 'create_file_steps',
+        params: {name: 'string', url: 'string'},
+        applyTableRules: false,
+        steps: {
+            type: 'INSERT',
+            table: 'files',
+            expr: {name: 'params.name', url: 'params.url', user_id: '1'},
+        },
+    },
+    // #7 DELETE steps mode
+    {
+        name: 'delete_file_steps',
+        params: {file_id: 'integer'},
+        applyTableRules: false,
+        steps: {
+            type: 'DELETE',
+            table: 'files',
+            where: 'id = params.file_id',
+        },
+    },
+    // #8 Multi-query transaction (sql array)
+    {
+        name: 'swap_names_sql',
+        params: {id1: 'integer', id2: 'integer', name1: 'string', name2: 'string'},
+        applyTableRules: false,
+        sql: [
+            {type: 'UPDATE', table: 'files', set: {name: sql`{:name1}`}, where: sql`id = {:id1}`, returning: ['id', 'name']},
+            {type: 'UPDATE', table: 'files', set: {name: sql`{:name2}`}, where: sql`id = {:id2}`, returning: ['id', 'name']},
+        ],
+    },
+    // #9 Multi-step workflow (steps array)
+    {
+        name: 'insert_and_list_steps',
+        params: {name: 'string', url: 'string'},
+        applyTableRules: false,
+        steps: [
+            {type: 'INSERT', table: 'files', expr: {name: 'params.name', url: 'params.url', user_id: '1'}},
+            {type: 'SELECT', table: 'files'},
+        ],
+    },
+    // #10 applyTableRules: true — verifies RLS rules apply in steps mode
+    {
+        name: 'list_files_with_rules',
+        applyTableRules: true,
+        steps: {
+            type: 'SELECT',
+            table: 'files',
+        },
+    },
+    // #11 Optional param with default
+    {
+        name: 'list_with_default',
+        params: {page: {type: 'integer', optional: true, default: 1}},
+        applyTableRules: false,
+        sql: {
+            type: 'SELECT',
+            from: 'files',
+            selects: ['id', 'name'],
+            limit: 10,
+        },
     }]
 } satisfies DatabaseSettings

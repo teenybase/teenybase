@@ -1,10 +1,10 @@
-import {$Database, $Env, OpenApiExtension, teenyHono} from '../../src/worker'
+import {$Database, $Env, OpenApiExtension, teenyHono, D1Adapter} from '../../src/worker'
 import {ProvidedEnv} from 'cloudflare:test'
 import {Hono} from 'hono'
 
 type Env = $Env & {Bindings: ProvidedEnv}
 const app = teenyHono<Env>(async (c)=> {
-    const db = new $Database(c, undefined, c.env.PRIMARY_DB, c.env.PRIMARY_R2)
+    const db = new $Database(c, undefined, new D1Adapter(c.env.PRIMARY_DB), c.env.PRIMARY_R2)
     db.extensions.push(new OpenApiExtension(db, true))
     // db.extensions.push(new PocketUIExtension(db))
     return db

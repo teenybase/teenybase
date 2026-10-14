@@ -16,6 +16,7 @@
         "experimentalDecorators": true,
         "jsx": "react-jsx",
         "jsxImportSource": "hono/jsx",
+        "rootDir": "src",
         "outDir": "dist",
         "declaration": true
     },

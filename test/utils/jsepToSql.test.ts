@@ -133,3 +133,50 @@ describe('jsepToSql', () => {
     // test('85', ()=> expect(f("(CASE WHEN status=='active' THEN 1 ELSE 0 END)==1", "test", true, true)).toBe("ParseError - SQL CASE statement"))
 });
 
+describe('rowid and order parsing', () => {
+    // Helper with column checking ENABLED (unlike the `f` function above which disables it)
+    const fCol = (input: string, table: string) => {
+        const tables = [{
+            name: table,
+            autoSetUid: false,
+            fields: [
+                { name: 'id', type: 'text', sqlType: 'text' },
+                { name: 'title', type: 'text', sqlType: 'text' },
+                { name: 'created', type: 'date', sqlType: 'timestamp' },
+            ],
+        }]
+        const jc = createJsepContext(table, tables as any, {
+            request: { ...emptyGlobals.request, method: 'GET', url: { ...emptyGlobals.request.url, pathname: '/test' } },
+            auth: { ...emptyGlobals.auth, sid: 'test', role: 'user' }
+        }, [table])
+        // _checkColumns stays true (default) — unlike the f() helper
+        try {
+            const sql = literalToQuery(queryToSqlQuery(input, jc))
+            return logSQLQuery(sql)
+        } catch (e: any) {
+            return e?.message
+        }
+    }
+
+    // rowid is allowed as a column in queries with column checking enabled
+    test('rowid in where clause', () => {
+        expect(fCol('rowid > 10', 'posts')).toContain('[posts].[rowid]')
+    })
+
+    test('rowid equality', () => {
+        expect(fCol('rowid == 5', 'posts')).toContain('[posts].[rowid]')
+    })
+
+    test('known column still works', () => {
+        expect(fCol("title == 'hello'", 'posts')).toContain('[posts].[title]')
+    })
+
+    test('unknown column rejected', () => {
+        expect(fCol('nonexistent > 1', 'posts')).toContain('Column not found')
+    })
+
+    // sort alias and DESC/ASC tested via the f() helper (no column checking needed)
+    test('DESC keyword in order', () => expect(f('created DESC', 'test', true, true)).not.toContain('error'))
+    test('ASC keyword in order', () => expect(f('title ASC', 'test', true, true)).not.toContain('error'))
+});
+

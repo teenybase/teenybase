@@ -1,5 +1,6 @@
 import {describe, expect, it} from 'vitest'
-import {zCustomError, formatZodError, validateSettingsChange, DatabaseSettings} from '../src'
+import {zCustomError, formatZodError, validateSettingsChange, validateFieldChange, DatabaseSettings} from '../src'
+import {authFields, baseFields} from '../src/scaffolds/fields'
 import {z} from 'zod'
 
 describe('Validation Error Handling', () => {
@@ -165,6 +166,66 @@ describe('validateSettingsChange errors test', () => {
         ])
     })
 
+    it('public: true combined with a rules extension - 1 issue', () => {
+        const c = clone(base)
+        c.tables[0].public = true
+        c.tables[0].extensions = [{name: 'rules', listRule: 'true'}]
+        expectIssues(() => validateSettingsChange(c, undefined), 1, [
+            {message: "'public: true' cannot be combined with a rules extension", path: ['settings', 'tables', 0, 'public']},
+        ])
+    })
+
+    it('public must be a boolean - 1 issue', () => {
+        const c = clone(base) as any
+        c.tables[0].public = 'yes'
+        expectIssues(() => validateSettingsChange(c, undefined), 1, [
+            {path: ['settings', 'tables', 0, 'public']},
+        ])
+    })
+
+    it('auth table missing field usages - 3 issues', () => {
+        const c: DatabaseSettings = {
+            appUrl: 'https://localhost',
+            jwtSecret: 'test-secret-1234567890',
+            tables: [{
+                name: 'users',
+                autoSetUid: true,
+                fields: [
+                    ...baseFields,
+                    {name: 'username', sqlType: 'text', type: 'text', unique: true},
+                    {name: 'email', sqlType: 'text', type: 'text', unique: true},
+                    {name: 'password', sqlType: 'text', type: 'text', noSelect: true},
+                ],
+                extensions: [{name: 'auth', passwordType: 'sha256', jwtSecret: 'users-secret', jwtTokenDuration: 3600, maxTokenRefresh: 4}],
+            }],
+        }
+        expectIssues(() => validateSettingsChange(c, undefined), 3, [
+            {message: "requires a field with usage 'auth_username'"},
+            {message: "requires a field with usage 'auth_email'"},
+            {message: "requires a field with usage 'auth_password'"},
+        ])
+    })
+
+    it('auth table rejects required fields the auth insert path cannot populate - 1 issue', () => {
+        const c: DatabaseSettings = {
+            appUrl: 'https://localhost',
+            jwtSecret: 'test-secret-1234567890',
+            tables: [{
+                name: 'users',
+                autoSetUid: true,
+                fields: [
+                    ...baseFields,
+                    ...authFields,
+                    {name: 'plan', sqlType: 'text', type: 'text', notNull: true},
+                ],
+                extensions: [{name: 'auth', passwordType: 'sha256', jwtSecret: 'users-secret', jwtTokenDuration: 3600, maxTokenRefresh: 4}],
+            }],
+        }
+        expectIssues(() => validateSettingsChange(c, undefined), 1, [
+            {message: "cannot auto-populate NOT NULL field 'plan'", path: ['settings', 'tables', 0, 'fields', 12, 'notNull']},
+        ])
+    })
+
     // --- 2 issues ---
 
     it('two duplicate table pairs - 2 issues', () => {
@@ -215,6 +276,36 @@ describe('validateSettingsChange errors test', () => {
             {message: 'Field cannot be dropped - record_uid usage exists', path: ['settings', 'tables', 'posts', 'fields', 'id']},
             {message: 'Field cannot be dropped - record_created usage exists', path: ['settings', 'tables', 'posts', 'fields', 'title']},
             {message: 'Field cannot be dropped - record_updated usage exists', path: ['settings', 'tables', 'posts', 'fields', 'author_id']},
+        ])
+    })
+})
+
+describe('validateFieldChange error paths', () => {
+
+    it('missing type and sqlType - throws proper error', () => {
+        const field = {name: 'bad_field'} as any
+        expectIssues(() => validateFieldChange(field, undefined, 'users', undefined, ['table']), 1, [
+            {message: 'type or sqlType is required', path: ['table', 'fields', 'bad_field']},
+        ])
+    })
+
+    it('FK target not found - correct path without duplication', () => {
+        const field = {name: 'ref', sqlType: 'integer', type: 'integer', foreignKey: {table: 'missing', column: 'id'}} as any
+        const settings = {tables: [{name: 'users', fields: [field]}]} as DatabaseSettings
+        expectIssues(() => validateFieldChange(field, undefined, 'users', settings, ['table']), 1, [
+            {message: 'Foreign key field not found - missing.id', path: ['table', 'fields', 'ref', 'foreignKey']},
+        ])
+    })
+
+    it('FK sqlType mismatch - correct path without duplication', () => {
+        const targetField = {name: 'id', sqlType: 'text', type: 'text'}
+        const field = {name: 'ref', sqlType: 'integer', type: 'integer', foreignKey: {table: 'targets', column: 'id'}} as any
+        const settings = {tables: [
+            {name: 'users', fields: [field]},
+            {name: 'targets', fields: [targetField]},
+        ]} as DatabaseSettings
+        expectIssues(() => validateFieldChange(field, undefined, 'users', settings, ['table']), 1, [
+            {message: 'Foreign key field sqlType mismatch - integer !== text', path: ['table', 'fields', 'ref', 'foreignKey']},
         ])
     })
 })

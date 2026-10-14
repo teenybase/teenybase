@@ -1,27 +1,53 @@
 {
     "name": "teenybase",
-    "version": "0.0.12",
+    "version": "0.0.15",
+    "description": "A teeny tiny Supabase for your own Cloudflare account: one TypeScript config gives you a REST API, auth, access rules, generated migrations, OpenAPI docs and an admin panel on Workers + D1.",
+    "keywords": [
+        "cloudflare-workers",
+        "cloudflare",
+        "d1",
+        "sqlite",
+        "backend",
+        "baas",
+        "rest-api",
+        "auth",
+        "row-level-security",
+        "migrations",
+        "openapi",
+        "hono",
+        "typescript",
+        "serverless",
+        "pocketbase-alternative",
+        "firebase-alternative"
+    ],
     "type": "module",
     "bin": {
-        "teeny": "bin/teeny.js"
+        "teeny": "bin/teeny.js",
+        "teenybase": "bin/teeny.js"
     },
     "scripts": {
-        "build": "npm run build-ts && npm run ts-node && npm run js-node",
+        "clean": "node -e \"require('fs').rmSync('dist',{recursive:true,force:true})\"",
+        "build": "npm run clean && npm run build-ts && npm run ts-node && npm run js-node",
         "test": "npm run check && npm run vitest && npm run test-check && npm run vitest-worker",
         "watch": "concurrently -n \"r,ts,js\" \"npm run build-ts -- -w --preserveWatchOutput\" \"npm run ts-node -- -w --preserveWatchOutput\" \"npm run js-node -- --watch\"",
         "run-pack": "npm pack",
-
         "prepare": "npm run build",
         "prepublishOnly": "npm run test",
-        "vitest": "vitest run --exclude test/worker",
+        "vitest": "vitest run --dir test --exclude \"worker/**\" --exclude cli-proxy.test.ts --exclude cli-managed.test.ts",
+        "vitest-proxy": "vitest run test/cli-proxy.test.ts",
+        "vitest-managed": "vitest run test/cli-managed.test.ts",
         "vitest-worker": "vitest run -r test/worker",
-        "check": "tsc -p tsconfig.json --pretty --noEmit",
+        "vitest-init": "npm run test-init && bash scripts/test-init-dev.sh --ci",
+        "check": "tsc -p tsconfig.json --pretty --noEmit && tsc -p src/node/tsconfig.json --pretty --noEmit",
+        "check:backend": "tsc -p backend/tsconfig.json --pretty --noEmit",
         "build-ts": "tsc -p tsconfig.json --pretty",
         "ts-node": "tsc -p src/node/tsconfig.json --pretty",
         "js-node": "esbuild src/node/cli.ts --bundle --outfile=dist/node/cli.js --platform=node --format=esm --packages=external --sourcemap",
         "test-check": "tsc -p test/tsconfig.json --pretty --noEmit",
         "build-runtime-esbuild-temp": "esbuild src/worker/index.ts --bundle --outfile=dist/worker/index.js --format=esm --sourcemap",
-        "run-publish": "git diff --exit-code --name-only origin/master * && npm publish && git tag v$npm_package_version && git push --tags"
+        "build:cf-ui-bundle": "esbuild src/bundle/cf-ui-entry.ts --bundle --format=esm --platform=browser --target=es2022 --outfile=../cf-ui-sample/teenybase_lib_$npm_package_version.js --sourcemap --jsx=automatic --jsx-import-source=hono/jsx --external:cloudflare:*",
+        "run-publish": "git diff --exit-code --name-only origin/master * && npm publish && git tag v$npm_package_version && git push --tags",
+        "linkcheck": "python3 scripts/linkcheck.py . README.md CONTRIBUTING.md SECURITY.md CHANGELOG.md docs skills/teenybase skills/teeny-config skills/teeny-migrate skills/teeny-rules"
     },
     "exports": {
         ".": {
@@ -51,33 +77,47 @@
         "./package.json": "./package.json"
     },
     "dependencies": {
-        "@cloudflare/workers-types": "^4.20260210.0",
+        "@asteasolutions/zod-to-openapi": "^8.4.3",
+        "@cloudflare/workers-types": "^4.20260210.0 || ^5.0.0",
         "@hono/swagger-ui": "^0.5.3",
         "@hono/zod-openapi": "^1.2.1",
         "@hono/zod-validator": "^0.7.6",
-        "smol-toml": "^1.6.0",
         "@tsndr/cloudflare-worker-jwt": "^3.2.1",
         "@types/prompts": "^2.4.9",
         "cac": "^6.7.14",
         "dotenv": "^17.2.4",
+        "esbuild": "^0.27.3 || ^0.28.0",
         "hono": "^4.11.9",
         "jsep": "^1.4.0",
         "jsonc-parser": "^3.3.1",
         "md5-file": "^5.0.0",
+        "miniflare": "^4.20260310.0",
         "picocolors": "^1.1.1",
         "prompts": "^2.4.2",
-        "wrangler": "^4.63.0"
+        "smol-toml": "^1.6.0",
+        "undici": "^7.18.2",
+        "workerd": "^1.20260402.1",
+        "wrangler": "^4.63.0",
+        "zod": "^4.3.6"
     },
     "peerDependencies": {
-        "@cloudflare/workers-types": "^4.20260210.0",
+        "@cloudflare/workers-types": "^4.20260210.0 || ^5.0.0",
         "hono": "^4.11.9",
         "wrangler": "^4.63.0"
     },
     "files": [
         "bin",
         "dist",
+        ".claude-plugin",
+        "docs",
+        "!docs/images",
+        "skills/teenybase",
+        "skills/teeny-config",
+        "skills/teeny-migrate",
+        "skills/teeny-rules",
         "README.md",
         "LICENSE",
+        "CHANGELOG.md",
         "package.json",
         "tsconfig.json"
     ],
@@ -91,12 +131,12 @@
     },
     "repository": {
         "type": "git",
-        "url": "git://github.com/repalash/teenybase"
+        "url": "git+https://github.com/teenybase/teenybase.git"
     },
     "author": "repalash <palash@shaders.app>",
     "license": "Apache-2.0",
     "bugs": {
-        "url": "https://github.com/repalash/teenybase/issues"
+        "url": "https://github.com/teenybase/teenybase/issues"
     },
     "engines": {
         "node": ">=18.14.1"

@@ -4,7 +4,7 @@ import {applyMigrations} from '../apply-migrations'
 // to regenerate config, see ../../generateMigrations.test.ts
 export async function setup(){
     await applyMigrations([...migrations, {
-        name: '1000_Fill_Dummy_Data.sql',
+        name: '20000_Fill_Dummy_Data.sql',
         sql: dummyData
     }])
     return structuredClone(config)

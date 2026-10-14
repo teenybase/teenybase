@@ -3,11 +3,17 @@ import {baseLayout1} from '../../src/worker/email/templates/base-layout-1'
 import {messageLayout1} from '../../src/worker/email/templates/message-layout-1'
 import {actionLinkTemplate} from '../../src/worker/email/templates/action-link'
 import {actionTextTemplate} from '../../src/worker/email/templates/action-text'
+import {baseLayout1Text} from '../../src/worker/email/templates/base-layout-1.text'
+import {messageLayout1Text} from '../../src/worker/email/templates/message-layout-1.text'
+import {actionLinkTextTemplate} from '../../src/worker/email/templates/action-link.text'
+import {actionTextTextTemplate} from '../../src/worker/email/templates/action-text.text'
 import {buildEmailTemplate} from '../../src/worker/email/send-email'
 import {replaceTemplateVariables} from '../../src/worker/util/replaceTemplateVariables'
 
 const actionLink = [baseLayout1, messageLayout1, actionLinkTemplate]
 const actionText = [baseLayout1, messageLayout1, actionTextTemplate]
+const actionLinkText = [baseLayout1Text, messageLayout1Text, actionLinkTextTemplate]
+const actionTextText = [baseLayout1Text, messageLayout1Text, actionTextTextTemplate]
 
 const f = (s: any)=>{
     const r = buildEmailTemplate(s)
@@ -38,7 +44,44 @@ describe('buildEmailTemplate', () => {
         TOKEN: "1234567890abcdef",
         APP_NAME: "Teenybase",
     }).replace(/\s+/g, '')).toBe(actionLink2Res.replace(/\s+/g, '')))
+    // Text templates: exact-match (no whitespace collapse) — whitespace IS the rendered structure for plain text.
+    test('actionLinkText', () => expect(f(actionLinkText)).toBe(actionLinkTextRes))
+    test('actionTextText', () => expect(f(actionTextText)).toBe(actionTextTextRes))
 })
+
+const actionLinkTextRes = `{{company_name}}
+{{company_url}}
+
+{{message_title}}
+
+{{message_description}}
+
+{{action_text | Click here}}: {{action_link}}
+
+{{message_footer}}
+
+—
+Problems or questions? {{support_email}}
+{{company_name}} • {{company_address}}
+© {{company_copyright | Copyright}}
+`
+
+const actionTextTextRes = `{{company_name}}
+{{company_url}}
+
+{{message_title}}
+
+{{message_description}}
+
+{{action_text}}
+
+{{message_footer}}
+
+—
+Problems or questions? {{support_email}}
+{{company_name}} • {{company_address}}
+© {{company_copyright | Copyright}}
+`
 
 
 const actionLinkRes = `
@@ -316,6 +359,15 @@ const actionLinkRes = `
         </tr>
     </table>
 </a>
+<table width="100%" border="0" cellspacing="0" cellpadding="0">
+    <tr><td height="10" style="height:10px; font-size:0px; line-height:0px;">&nbsp;</td></tr>
+    <tr>
+        <td align="left" style="font-family:-apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Helvetica Neue', Ubuntu, sans-serif; font-size: 12px; line-height: 18px; color: #666666; word-break: break-all;">
+            If the button above doesn't work, copy and paste this link into your browser:<br/>
+            <a href="{{action_link}}" style="color: #0074d4; text-decoration: underline;">{{action_link}}</a>
+        </td>
+    </tr>
+</table>
 
         </td>
     </tr>
@@ -718,6 +770,15 @@ const actionLink2Res = `
            </tr>
           </table>
          </a>
+<table width="100%" border="0" cellspacing="0" cellpadding="0">
+    <tr><td height="10" style="height:10px; font-size:0px; line-height:0px;">&nbsp;</td></tr>
+    <tr>
+        <td align="left" style="font-family:-apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Helvetica Neue', Ubuntu, sans-serif; font-size: 12px; line-height: 18px; color: #666666; word-break: break-all;">
+            If the button above doesn't work, copy and paste this link into your browser:<br/>
+            <a href="https://app.teenybase.com/verify-email/1234567890abcdef" style="color: #0074d4; text-decoration: underline;">https://app.teenybase.com/verify-email/1234567890abcdef</a>
+        </td>
+    </tr>
+</table>
 
         </td>
        </tr>

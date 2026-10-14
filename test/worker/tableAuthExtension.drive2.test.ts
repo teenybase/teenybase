@@ -57,7 +57,7 @@ test('sign up user fail no confirm', async () => {
     })
     const json = await res.json() as any
     expect(res.status).toEqual(400)
-    expect(json.data).toEqual({_errors: [], passwordConfirm: { _errors: [ 'password and passwordConfirm do not match' ] }})
+    expect(json.data).toEqual({_errors: [], passwordConfirm: { _errors: [ 'passwordConfirm is required' ] }})
     expect(json.message).toEqual('Validation Error')
 })
 

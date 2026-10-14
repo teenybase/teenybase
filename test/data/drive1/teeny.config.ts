@@ -114,29 +114,43 @@ export default {
             } as TableRulesExtensionData]
         }
     ],
-    procedures: [
+    actions: [
         {
             name: 'mark_verified',
-            rule: false,
-            params: ['email', 'id'],
-            // todo only allow logged in users to call this function, also check if uid is the same
-            query: {
+            description: 'Mark a user email as verified (test-only)',
+            applyTableRules: false,
+            params: {email: 'string', id: 'string'},
+            sql: {
                 type: 'UPDATE',
                 table: 'users',
                 set: {email_verified: sqlValue(true)},
                 where: sql`{:email} LIKE '%@example.com' AND email = {:email} AND email_verified = false AND id = {:id}`,
-                returning: ['*'], // todo this should throw error or unwrap all the fields, which isn't happening
+                returning: ['*'],
             }
         },
         {
             name: 'mark_verified_stat',
-            rule: false,
-            params: ['email'],
-            statement: {
+            applyTableRules: false,
+            requireAuth: true,
+            params: {email: 'string'},
+            steps: {
                 type: 'UPDATE',
                 table: 'users',
                 setValues: {email_verified: true},
                 where: "email = params.email & email_verified = false & email ~ '%@example.com' & id = auth.uid",
+            }
+        },
+        {
+            name: 'mark_verified_guarded',
+            applyTableRules: false,
+            guard: "auth.uid != null",
+            params: {email: 'string', id: 'string'},
+            sql: {
+                type: 'UPDATE',
+                table: 'users',
+                set: {email_verified: sqlValue(true)},
+                where: sql`{:email} LIKE '%@example.com' AND email = {:email} AND email_verified = false AND id = {:id}`,
+                returning: ['*'],
             }
         },
     ]

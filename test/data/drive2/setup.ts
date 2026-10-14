@@ -5,7 +5,7 @@ import {passwordProcessors} from '../../../src/worker/util/passwordProcessors'
 // to regenerate config, see ../../generateMigrations.test.ts
 export async function setup() {
     await applyMigrations([...migrations, {
-        name: '1000_Fill_Dummy_Data.sql',
+        name: '20000_Fill_Dummy_Data.sql',
         sql: await dummyData()
     }])
     return await setupConfig(config)

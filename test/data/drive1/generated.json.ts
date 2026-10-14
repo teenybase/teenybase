@@ -1,7 +1,7 @@
 import {DatabaseSettings} from '../../../src'
 export const migrations = [
   {
-    "name": "0000_create_table_users.sql",
+    "name": "10000_create_table_users.sql",
     "sql": "CREATE TABLE users (\n\tid TEXT PRIMARY KEY NOT NULL, \n\tname TEXT NOT NULL, \n\temail TEXT UNIQUE NOT NULL, \n\temail_verified BOOLEAN DEFAULT 0, \n\tusername TEXT UNIQUE NOT NULL, \n\tpassword TEXT NOT NULL, \n\tcreated TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP, \n\trole TEXT DEFAULT \"guest\", \n\tmeta JSON DEFAULT \"{}\", \n\tavatar TEXT DEFAULT NULL\n);\nCREATE INDEX idx_users_name ON users (name);\nCREATE INDEX idx_users_role ON users (role);\nCREATE TRIGGER tgr_users_raise_on_created_update BEFORE UPDATE OF created ON users BEGIN SELECT RAISE(FAIL, 'Cannot update created column') WHERE OLD.created != NEW.created; END;",
     "sqlRevert": "DROP TABLE IF EXISTS users;",
     "logs": [
@@ -9,7 +9,7 @@ export const migrations = [
     ]
   },
   {
-    "name": "0001_create_table_files.sql",
+    "name": "10001_create_table_files.sql",
     "sql": "CREATE TABLE files (\n\tid TEXT PRIMARY KEY NOT NULL, \n\tcreated TIMESTAMP DEFAULT CURRENT_TIMESTAMP, \n\tupdated TIMESTAMP DEFAULT CURRENT_TIMESTAMP, \n\tpath TEXT NOT NULL, \n\tname TEXT NOT NULL, \n\tthumb TEXT, \n\tfile TEXT, \n\tnotes TEXT NOT NULL DEFAULT \"\", \n\tconfig JSON CHECK(json_valid(config)), \n\tmeta JSON CHECK(json_valid(meta)), \n\tcreated_by TEXT REFERENCES users(id) ON DELETE CASCADE, \n\ttags TEXT, \n\tdeleted_by TEXT REFERENCES users(id) ON DELETE SET NULL, \n\tdeleted_at TIMESTAMP\n);\nCREATE INDEX idx_files_name ON files (name);\nCREATE INDEX idx_files_path ON files (path);\nCREATE INDEX idx_files_tags ON files (tags);\nCREATE INDEX idx_files_created_by ON files (created_by);\nCREATE INDEX idx_files_deleted_by ON files (deleted_by);\nCREATE TRIGGER tgr_files_raise_on_created_update BEFORE UPDATE OF created ON files BEGIN SELECT RAISE(FAIL, 'Cannot update created column') WHERE OLD.created != NEW.created; END;\nCREATE TRIGGER tgr_files_set_deleted_at_on_delete_by BEFORE UPDATE OF deleted_by ON files BEGIN UPDATE files SET deleted_at = CURRENT_TIMESTAMP WHERE id = NEW.id AND OLD.deleted_by IS NULL AND NEW.deleted_by IS NOT NULL; END;",
     "sqlRevert": "DROP TABLE IF EXISTS files;",
     "logs": [
@@ -321,15 +321,17 @@ export const config = {
   ],
   "jwtSecret": "ldhsadiudsadqdxhaoxindgcx79cxha",
   "appUrl": "https://localhost",
-  "procedures": [
+  "actions": [
     {
       "name": "mark_verified",
-      "rule": false,
-      "params": [
-        "email",
-        "id"
-      ],
-      "query": {
+      "description": "Mark a user email as verified (test-only)",
+      "applyTableRules": false,
+      "requireAuth": false,
+      "params": {
+        "email": "string",
+        "id": "string"
+      },
+      "sql": {
         "type": "UPDATE",
         "table": "users",
         "set": {
@@ -347,11 +349,12 @@ export const config = {
     },
     {
       "name": "mark_verified_stat",
-      "rule": false,
-      "params": [
-        "email"
-      ],
-      "statement": {
+      "applyTableRules": false,
+      "requireAuth": true,
+      "params": {
+        "email": "string"
+      },
+      "steps": {
         "where": "email = params.email & email_verified = false & email ~ '%@example.com' & id = auth.uid",
         "setValues": {
           "email_verified": true
@@ -359,7 +362,31 @@ export const config = {
         "type": "UPDATE",
         "table": "users"
       }
+    },
+    {
+      "name": "mark_verified_guarded",
+      "guard": "auth.uid != null",
+      "applyTableRules": false,
+      "requireAuth": false,
+      "params": {
+        "email": "string",
+        "id": "string"
+      },
+      "sql": {
+        "type": "UPDATE",
+        "table": "users",
+        "set": {
+          "email_verified": {
+            "l": true
+          }
+        },
+        "where": {
+          "q": "{:email} LIKE '%@example.com' AND email = {:email} AND email_verified = false AND id = {:id}"
+        },
+        "returning": [
+          "*"
+        ]
+      }
     }
-  ],
-  "version": 0
+  ]
 } as const satisfies DatabaseSettings

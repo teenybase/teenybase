@@ -1,7 +1,6 @@
-import splitSqlQuery from '../../src/worker/wrangler/d1/splitter'
+import { splitSqlQuery } from '../../src/worker/wrangler/d1/splitter'
 import {applyD1Migrations, D1Migration, env, SELF} from 'cloudflare:test'
 import {DBMigration} from '../../src/worker/migrationHelper'
-import {config} from './drive2/generated.json'
 
 export async function applyMigrations(generated: Pick<DBMigration, 'name'|'sql'>[]){
     // to be called from beforeAll
@@ -15,7 +14,7 @@ export async function applyMigrations(generated: Pick<DBMigration, 'name'|'sql'>
         } as D1Migration
     })
     // migrations.push({
-    //     name: '1000_Fill_Dummy_Data.sql',
+    //     name: '20000_Fill_Dummy_Data.sql',
     //     queries: splitSqlQuery(dummyData)
     // })
     await applyD1Migrations(env.PRIMARY_DB, migrations);
