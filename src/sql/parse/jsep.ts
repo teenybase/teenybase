@@ -212,19 +212,23 @@ export interface JsepContext{
 export function createJsepContext(tableName: string, tables: TableData[], globals: JsepGlobals, allowedTables?: string[], extras?: JsepContext['extras'], autoNullProps = true, autoSimplifyExpr = true): JsepContext{
     setupJsep()
     const isAdmin = globals.auth?.admin === true
+    const rowIdField: JsepFieldType = { name: columnify('rowid'), sqlType: 'integer', isUnique: true }
     const allTables = Object.fromEntries(tables.map(t=>[
-        columnify(t.name), t.fields
-            .filter(f=>isAdmin || !f.noSelect)
-            .map(f=>(<JsepFieldType>{
-                name: columnify(f.name),
-                sqlType: f.sqlType,
-                foreignKey: f.foreignKey ? {
-                    table: columnify(f.foreignKey.table),
-                    column: columnify(f.foreignKey.column),
-                } : undefined,
-                isUnique: isTableFieldUnique(f, t)
-            }))
-    ] as const))
+        columnify(t.name), [
+            rowIdField,
+            ...t.fields
+                .filter(f=>isAdmin || !f.noSelect)
+                .map(f=>(<JsepFieldType>{
+                    name: columnify(f.name),
+                    sqlType: f.sqlType,
+                    foreignKey: f.foreignKey ? {
+                        table: columnify(f.foreignKey.table),
+                        column: columnify(f.foreignKey.column),
+                    } : undefined,
+                    isUnique: isTableFieldUnique(f, t)
+                })),
+        ] as JsepFieldType[]
+    ]))
     return {
         tableName: columnify(tableName),
         globals,
@@ -864,8 +868,8 @@ export function parseColumnList(q: string|string[]|jsep.Compound, context: JsepC
 
                     let fkSelectColumns // columns to query in the fk_table
                     if (!exp.arguments.length) {
-                        // all columns. equivalent to table.*
-                        fkSelectColumns = fkTable.map(f => `${fkTableName}.${f.name}`)
+                        // all columns. equivalent to table.* (exclude implicit rowid)
+                        fkSelectColumns = fkTable.filter(f => f.name !== columnify('rowid')).map(f => `${fkTableName}.${f.name}`)
                     } else {
                         const args: jsep.Compound = {
                             type: 'Compound',
@@ -919,6 +923,8 @@ export function parseColumnList(q: string|string[]|jsep.Compound, context: JsepC
 
 export function parseColumnListOrder(q: string | string[], context: JsepContext): string[] {
     if(Array.isArray(q)) q = q.join(', ')
+    // Accept SQL-style "column DESC/ASC" syntax by converting to -/+ prefix before jsep parsing
+    q = (q as string).replace(/\b([a-zA-Z_]\w*)\s+DESC\b/gi, '-$1').replace(/\b([a-zA-Z_]\w*)\s+ASC\b/gi, '+$1')
     let tree = jsepParse(q as string)
     if(tree.type !== 'Compound') {
         tree = {type: 'Compound', body: [tree]}

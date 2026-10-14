@@ -3,6 +3,9 @@ import {SQLTrigger} from '../types/sql'
 import {tableField} from '../types/config/tableField';
 import {sql, sqlValue} from '../types/config/sqlUtils'
 
+/** Placeholder for the current table name in trigger bodies. Resolved at migration generation time. */
+export const TABLE_REF_TOKEN = '\x00TABLEREF\x00'
+
 export const fields = {
     id: tableField("id" as const, 'text', 'text', {usage: TableFieldUsageRecord.record_uid, primary: true, notNull: true, noUpdate: true}),
     created: tableField("created" as const, 'date', 'timestamp', {usage: TableFieldUsageRecord.record_created, default: sql`CURRENT_TIMESTAMP`, notNull: true, noInsert: true, noUpdate: true}),
@@ -32,7 +35,7 @@ export const triggers = {
         name: "update_updated_on_update",
         seq: "AFTER",
         event: "UPDATE",
-        body: sql`UPDATE users SET ${fields.updated.name} = CURRENT_TIMESTAMP WHERE id = NEW.id AND OLD.${fields.updated.name} = NEW.${fields.updated.name}`,
+        body: sql`UPDATE ${TABLE_REF_TOKEN} SET ${fields.updated.name} = CURRENT_TIMESTAMP WHERE id = NEW.id AND OLD.${fields.updated.name} = NEW.${fields.updated.name}`,
     } as const satisfies SQLTrigger,
 } as const
 

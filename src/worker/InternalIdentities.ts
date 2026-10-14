@@ -1,25 +1,28 @@
-import {$Database} from './$Database'
-import {$Env} from './env'
+import {$DatabaseRaw} from './$DatabaseRawImpl'
 import {generateUid} from '../security/random'
+import type {DBMigration} from './migrationHelper'
 
-export class InternalIdentities<T extends $Env = $Env> {
-    constructor(private db: $Database<T>, readonly tableName = '_auth_identities') {
+export class InternalIdentities {
+    constructor(private db: $DatabaseRaw, readonly tableName = '_auth_identities') {
     }
 
-    async setup(version: number) {
-        if (version >= 0) {
-            const sql = `
-            CREATE TABLE IF NOT EXISTS "${this.tableName}" (
-                id TEXT PRIMARY KEY,
-                user_id TEXT NOT NULL,
-                provider TEXT NOT NULL,
-                provider_id TEXT,
-                identity_data TEXT,
-                created_at TEXT DEFAULT CURRENT_TIMESTAMP,
-                UNIQUE(user_id, provider)
-            )`.split('\n').map(l => l.trim()).join(' ')
-            await this.db.rawSQL({q: sql, v: []}).run()
+    // Pure entry-build: setup() calls this and runs the SQL; preview endpoints call
+    // it alone. Fixed 00001 prefix — infra slot, below user migrations (≥ 10000).
+    previewEntry(version: number): Omit<DBMigration, 'id'> | null {
+        if (version < 0) return null
+        const sql = `CREATE TABLE IF NOT EXISTS "${this.tableName}" (id TEXT PRIMARY KEY, user_id TEXT NOT NULL, provider TEXT NOT NULL, provider_id TEXT, identity_data TEXT, created_at TEXT DEFAULT CURRENT_TIMESTAMP, UNIQUE(user_id, provider))`
+        return {
+            name: '00001_create_auth_identities.sql',
+            sql,
+            sql_revert: `DROP TABLE IF EXISTS "${this.tableName}"`,
         }
+    }
+
+    async setup(version: number): Promise<Omit<DBMigration, 'id'> | null> {
+        const entry = this.previewEntry(version)
+        if (!entry) return null
+        await this.db.rawSQL({q: entry.sql, v: []}).run()
+        return entry
     }
 
     async insert(userId: string, provider: string, providerId?: string, identityData?: Record<string, any>) {

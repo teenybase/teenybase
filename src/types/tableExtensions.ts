@@ -2,10 +2,30 @@ import {TableExtensionData} from './table'
 
 export interface TableRulesExtensionData extends TableExtensionData{
     name: "rules"
+    /**
+     * Expression filter for list/select queries. Converted to a SQL WHERE clause.
+     * `null` blocks all non-admin access (403). Admin requests bypass all rules.
+     */
     listRule: string | null
+    /**
+     * Expression filter for single-record view. Converted to a SQL WHERE clause.
+     * `null` blocks all non-admin access (403). Admin requests bypass all rules.
+     */
     viewRule: string | null
+    /**
+     * Expression guard for insert operations. Evaluated against the new record values at parse time.
+     * `null` blocks all non-admin access (403). Admin requests bypass all rules.
+     */
     createRule: string | null
+    /**
+     * Expression filter for update operations. Converted to a SQL WHERE clause.
+     * `null` blocks all non-admin access (403). Admin requests bypass all rules.
+     */
     updateRule: string | null
+    /**
+     * Expression filter for delete operations. Converted to a SQL WHERE clause.
+     * `null` blocks all non-admin access (403). Admin requests bypass all rules.
+     */
     deleteRule: string | null
 }
 
@@ -13,25 +33,85 @@ export type PasswordTypes = 'sha256'
 
 export interface TableAuthExtensionData extends TableExtensionData {
     name: "auth"
+    /**
+     * Table-level JWT signing secret. Concatenated with the global `DatabaseSettings.jwtSecret`
+     * to form the actual signing key (globalSecret + tableSecret).
+     * Prefix with `$` to resolve from environment variables (e.g. `'$JWT_SECRET'`).
+     */
     jwtSecret: string
+    /** JWT access token expiry in seconds. Required. */
     jwtTokenDuration: number
-    maxTokenRefresh: number  // number of times token can be refreshed. set to 0 to disable.
+    /** Maximum number of times a token can be refreshed before requiring re-login. Set to 0 for unlimited. Required. */
+    maxTokenRefresh: number
+    /**
+     * Password hashing algorithm. Currently only `'sha256'` is supported.
+     * @default 'sha256'
+     */
     passwordType: PasswordTypes
-    passwordConfirmSuffix?: string // Confirm
-    passwordCurrentSuffix?: string // Current
+    /**
+     * Suffix appended to the password field name to create an additional request body field
+     * for password confirmation. For example, if the password field is `password` and suffix
+     * is `'Confirm'`, the sign-up/update request body must include both `password` and
+     * `passwordConfirm` with matching values. The confirm field is validated and then
+     * stripped before storage.
+     * When not set, only the password field is required.
+     */
+    passwordConfirmSuffix?: string
+    /**
+     * Suffix appended to the password field name to create an additional request body field
+     * for current password verification. For example, if the password field is `password` and
+     * suffix is `'Current'`, the update request body must include `passwordCurrent` containing
+     * the user's existing password. Verified against the stored hash before allowing the change.
+     * Only enforced for non-admin users.
+     * Set to empty string to disable (not recommended).
+     * @default 'Current'
+     */
+    passwordCurrentSuffix?: string
+    /**
+     * Password reset token validity in seconds.
+     * @default 3600 (1 hour)
+     */
     passwordResetTokenDuration?: number
+    /**
+     * Email verification token validity in seconds.
+     * @default 3600 (1 hour)
+     */
     emailVerifyTokenDuration?: number
+    /**
+     * Minimum interval in seconds between password reset emails to prevent spam.
+     * @default 120 (2 minutes)
+     */
     passwordResetEmailDuration?: number
+    /**
+     * Minimum interval in seconds between verification emails to prevent spam.
+     * @default 120 (2 minutes)
+     */
     emailVerifyEmailDuration?: number
-    autoSendVerificationEmail?: boolean // default = false
-    normalizeEmail?: boolean // default = true. converts to lower case, remove + suffix and remove dots from gmail. todo should this be in field level?
-    saveIdentities?: boolean // default = false. save external provider identity data (raw profile, provider ID) in _auth_identities table
+    /**
+     * Automatically send a verification email on sign-up. Requires email service to be configured.
+     * @default false
+     */
+    autoSendVerificationEmail?: boolean
+    /**
+     * Normalize email addresses before storage and lookup.
+     * Applies: lowercase, trim, punycode domain normalization, and provider-specific rules
+     * (gmail/googlemail: remove dots and plus-addressing, hotmail/outlook/yahoo: remove plus-addressing).
+     * @default true
+     */
+    normalizeEmail?: boolean
+    /**
+     * Save OAuth provider identity data (raw profile, provider ID) in the `_auth_identities` table.
+     * @default false
+     */
+    saveIdentities?: boolean
 
+    /** Custom email templates for verification and password reset emails. */
     emailTemplates?: Partial<Record<'verification' | 'passwordReset', {
         subject?: string,
         variables?: Record<string, any>
         tags?: string,
-        layoutHtml?: string
+        layoutHtml?: string | string[]
+        layoutText?: string | string[]
     }>>
 
     // todo implement these in backend
@@ -47,4 +127,3 @@ export interface TableAuthExtensionData extends TableExtensionData {
     // todo
     // requireEmail?: boolean // always require when email field exists or dictate by not null?
 }
-

@@ -10,6 +10,8 @@ import {
 } from './util/sql';
 import {logSQLQuery, QueryType} from '../sql/build/query';
 import {D1Error, ProcessError} from './util/error';
+import {StorageAdapter, PreparedQuery, QueryResult} from './storage/StorageAdapter';
+import {D1Adapter} from './storage/D1Adapter';
 
 export type $DatabaseEventMap = {
     // run_sql: D1RunEvent
@@ -27,11 +29,12 @@ export interface $DatabaseRaw/*<T extends $Env = $Env>*/{
 export class $DatabaseRawImpl extends EventTarget<$DatabaseEventMap> implements $DatabaseRaw {
     protected dryRunMode = false
     protected readOnlyMode = false
-    protected readonly database: D1Database
+    readonly adapter: StorageAdapter
 
-    constructor(database: D1Database) {
+    // TODO: Remove D1Database acceptance once multiple adapters exist (for tree-shaking)
+    constructor(adapter: StorageAdapter | D1Database) {
         super()
-        this.database = database
+        this.adapter = 'run' in adapter && 'runBatch' in adapter ? adapter : 'prepare' in adapter ? new D1Adapter(adapter as D1Database) : adapter
     }
 
     auth: AuthContext = {
@@ -55,15 +58,16 @@ export class $DatabaseRawImpl extends EventTarget<$DatabaseEventMap> implements 
         if (this.readOnlyMode && !readOnly) throw new ProcessError('Running raw SQL is not allowed in read only mode.')
         if (this.dryRunMode) throw new ProcessError('Running raw SQL is not allowed in dry run.')
         const prep: D1PreparedQuery<T, TRet, TC> = {
-            prepared: d1Expr.q ? this.database.prepare(d1Expr.q).bind(...d1Expr.v) : null,
+            prepared: d1Expr.q ? new PreparedQuery(d1Expr.q, d1Expr.v) : null,
             c,
-            onError: async (er: any) => {
-                // todo only dispatch event if the error is from this query in transaction
-                const msg = er.message ? er.message.replace(/D1_ERROR: /g, '') : 'Unknown error'
+            onError: async (er: any, er2?: D1Error | any) => {
+                // todo only dispatch event if the error is from this query in transaction, right now D1 is not providing this information
                 // throw new HTTPException(500, { message: err??'Error running transaction' });
-                const e = new D1Error(prep.c?.errorMessage || 'Unknown SQL Error', msg, er, prep.c?.query ? logSQLQuery(prep.c.query) : '')
+                const e = er2 instanceof D1Error ? er2 : new D1Error(prep.c?.errorMessage || 'SQL Error',
+                    er.message ? er.message.replace(/D1_ERROR: /g, '') : 'Unknown error when running sql', er, prep.c?.query ? logSQLQuery(prep.c.query) : '')
                 const error = prep.c?.table?.parseD1Error(e) ?? e
-                const event = (new D1RunFailEvent({input: {...prep.c, d1Expr}, error: er}))
+                const event = (new D1RunFailEvent({input: {...prep.c, d1Expr}, error: er, d1Error: error}))
+
                 for (const listener of this.onRunFailSQL) await listener(event)
                 return c?.onError ? c.onError(error) : error
             },
@@ -113,52 +117,15 @@ export class $DatabaseRawImpl extends EventTarget<$DatabaseEventMap> implements 
             }
         } as D1PreparedTransaction<T, TRet, TC>
         return prep
-        // const onError = (er: any)=>{
-        //     let i = 0
-        //     for (const d1Expr of d1Exprs) {
-        //         this.dispatchEvent(new D1RunFailEvent({input: {...c, d1Expr, query: c?.query[i], crudQuery: c?.crudQuery[i]}, error: er}))
-        //         i++
-        //     }
-        //     return onErr ? onErr(er) : er
-        // }
-        // const onSuccess = (res: D1Result<T>[])=>{
-        //     if (!res) throw onError({message: 'No result'})
-        //     let ki = 0
-        //     let i = 0
-        //     const events: D1RunEvent[] = []
-        //     const results = [] as (D1Result<T>|Omit<D1Result<T>, 'meta'>)[]
-        //     for (const d1Expr of d1Exprs) {
-        //         const p = prepared[i]
-        //         const r = p ? res[ki] : ({success: true, results: []} as Omit<D1Result<T>, 'meta'>)
-        //         if(p) events.push(new D1RunEvent({input: {...c, d1Expr, query: c?.query[i], crudQuery: c?.crudQuery[i]}, result: res[ki]}))
-        //         if(!r.success) throw onError(r.error)
-        //         results.push(r)
-        //         i++
-        //         if(p) ki++
-        //     }
-        //     events.forEach(e=>this.dispatchEvent(e))
-        //
-        //     return results
-        // }
-        //
-        // // console.log('Running batch queries:', qs)
-        //
-        // // todo proper error return for transaction
-        // const p2 = prepared.filter(p => !!p) as D1PreparedStatement[]
-        // return [p2, onSuccess, onError]
-        // return async ()=>{
-        //     const res = p2.length ? await this.database.batch<T>(p2).catch((e)=>{
-        //         throw onError(e)
-        //     }) : []
-        //     return onSuccess(res)
-        // }
     }
 
     protected async _exec<T, TRet = T[]>(prep: D1PreparedQuery<T, TRet>): Promise<TRet | null> {
         let res
         try {
             prep.c?.onRun && await prep.c.onRun()
-            res = await prep.prepared?.run<T>()
+            res = prep.prepared
+                ? await this.adapter.run<T>(prep.prepared.q, prep.prepared.v)
+                : undefined
         } catch (e) {
             throw await prep.onError(e)
         }
@@ -179,9 +146,9 @@ export class $DatabaseRawImpl extends EventTarget<$DatabaseEventMap> implements 
     }
 
     protected async _execBatch<T = any, TRet = T[][]>(transaction: D1PreparedTransaction<T, TRet>): Promise<TRet | null> {
-        const statements: D1PreparedStatement[] = []
+        const queries: PreparedQuery[] = []
         const onRuns: (() => Promise<void>)[] = []
-        const onErrors: ((e: any) => any)[] = []
+        const onErrors: ((e: any, e1?: D1Error|undefined) => any)[] = []
 
         function collect(t: D1PreparedTransaction<T, TRet>) {
             t.c?.onRun && onRuns.push(t.c.onRun)
@@ -193,29 +160,41 @@ export class $DatabaseRawImpl extends EventTarget<$DatabaseEventMap> implements 
                     const prep1 = prep as D1PreparedQuery<T, TRet>;
                     prep.c?.onRun && onRuns.push(prep.c.onRun)
                     prep1.onError && onErrors.push(prep1.onError)
-                    statements.push(prep.prepared)
+                    queries.push(prep.prepared)
                 }
             }
         }
 
         collect(transaction)
 
-        let res: D1Result<T>[]
+        let res: QueryResult<T>[]
         try {
             for (const onRun of onRuns) { // todo promise.all in batch?
                 await onRun()
             }
-            res = statements.length ? await this.database.batch<T>(statements) : []
+            res = queries.length ? await this.adapter.runBatch<T>(queries) : []
         } catch (e) {
+            // throw e
+            // console.error(e)
+            // todo figure out a better error format after parsing D1Error, like CompoundD1Error, but in batch operation there would only be one error, and we could have some results from some statements, and error with statement index etc.
+            // todo create test for error from a batch transaction fail, doesn't look like there is any yet.
+            const res1 = []
+            let d1Error: D1Error | undefined = undefined
             for (const onError of onErrors) {
                 try {
-                    e = await onError(e)
+                    let res2 = await onError(e, d1Error)
+                    if(res2 && res2 !== d1Error) res1.push(res2)
+                    if(res2 && res2 instanceof D1Error)
+                        d1Error = res2
                 } catch (e1) {
                     console.error('Unknown error in onError', e1)
-                    e = e1
+                    // e = e1
+                    res1.push(e1)
                 }
             }
-            throw e
+            if(res1.length === 1)
+                throw res1[0]
+            throw new ProcessError('D1Errors - Multiple errors when executing sql transaction', 400, {errors: res1}, e)
         }
         let i = 0
 
@@ -233,7 +212,7 @@ export class $DatabaseRawImpl extends EventTarget<$DatabaseEventMap> implements 
                     }
                 } else {
                     const prep = prep1 as D1PreparedQuery<T, T[], 'select'>;
-                    const r = prep.prepared ? res[i++] : ({success: true, results: []} as Omit<D1Result<T>, 'meta'>)
+                    const r: QueryResult<T> = prep.prepared ? res[i++] : {success: true, results: []}
                     let ret: T[]
                     try {
                         ret = await prep.onSuccess(r)

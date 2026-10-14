@@ -3,7 +3,10 @@ import {z} from 'zod';
 export const sqlExprSchema = z.string().max(1000).regex(/^[a-zA-Z0-9_=\s():.*~%'"><!+\-&|@,\/\\${}]*$/, 'Invalid expression')
 export const sqlExprSchemaRecord = z.record(z.string(), sqlExprSchema)
 export const sqlValSchema = z.string().or(z.number()).or(z.boolean()).or(z.null())
-export const sqlValSchemaFile = z.boolean().or(z.string().or(z.number()).or(z.null()).or(z.instanceof(File)))
+// z.any() for File — z.instanceof(File) is incompatible with OpenAPI schema generation,
+// and actual file validation is handled by multipart parsing, not zod.
+// todo can we use something better than just z.any? or change it when parsing with openapi?
+export const sqlValSchemaFile = z.boolean().or(z.string().or(z.number()).or(z.null()).or(z.any()))
 export const sqlValSchemaRecord = z.record(z.string(), sqlValSchema)
 export const sqlValSchema2 = sqlValSchema.or(sqlValSchemaRecord)
 export const sqlValSchemaFile2 = z.record(z.string(), sqlValSchemaFile)
@@ -33,9 +36,10 @@ export const selectSchema = z.object({
     limit: z.coerce.number().optional(),
     offset: z.coerce.number().optional(),
     order: sqlColListSchemaOrder2.optional(),
+    sort: sqlColListSchemaOrder2.optional(), // alias for order (PocketBase convention)
     group: sqlColListSchema2.optional(),
     select: sqlExprSchema.or(z.array(sqlExprSchema)).optional(), // todo rename to fields in api v2
-    distinct: z.coerce.boolean().optional(),
+    distinct: z.boolean().or(z.enum(['true', '1', '']).transform(() => true)).or(z.enum(['false', '0']).transform(() => false)).optional(),
 
     // join: joinObjSchema2.array().optional(),
     // having: z.string().regex(/^[a-zA-Z0-9_=\s\(\)\.\*]*$/).optional(),
@@ -72,7 +76,7 @@ export const selectStatementSchema = tableSelectSchema.extend({
     type: z.literal('SELECT'),
     table: tableColumnNameSchema,
 })
-export const insertStatementSchema = tableInsertSchema.extend({
+export const insertStatementSchema = insertSchema.extend({
     type: z.literal('INSERT'),
     table: tableColumnNameSchema,
 })
@@ -86,7 +90,7 @@ export const deleteStatementSchema = tableDeleteSchema.extend({
 })
 export const zSQLIndex = z.object({
     name: tableColumnNameSchema.optional(),
-    unique: z.coerce.boolean().optional(),
+    unique: z.boolean().optional(),
     // fields: tableColumnNameSchema.or(z.array(tableColumnNameSchema)),
     fields: z.string().or(z.array(z.string())),// fields can include collate also
     where: zSQLQuery.optional(),
@@ -100,14 +104,80 @@ export const zSQLTrigger = z.object({
     body: zSQLQuery.or(z.array(zSQLQuery)),
     when: zSQLQuery.optional(),
 })
-export const zTypedSQLQuery = z.record(z.string(), z.any()) // todo SelectQuery|UpdateQuery...
+// Typed schemas for sql-mode action queries (sql`` tagged templates produce {q}, sqlValue() produces {l})
+const zSQLQueryObj = z.object({q: z.string(), p: z.record(z.string(), z.any()).optional()})
+const zSQLLiteralObj = z.object({l: z.any(), key: z.string().optional()})
+const zSQLQueryOrLiteralObj = zSQLQueryObj.or(zSQLLiteralObj)
+const zSetValueRecord = z.record(z.string(), z.union([zSQLQueryOrLiteralObj, z.string()]))
+const zSelectItem = z.string().or(z.object({q: z.string(), as: z.string()}))
+const zReturningItem = z.string().or(z.object({q: z.string(), as: z.string()}))
+const zTypedSelectQuery = z.object({
+    type: z.literal('SELECT'),
+    from: z.string().or(z.array(z.string())).optional(),
+    selects: z.array(zSelectItem).optional(),
+    distinct: z.boolean().optional(),
+    where: zSQLQueryOrLiteralObj.optional(),
+    orderBy: z.string().or(z.array(z.string())).optional(),
+    groupBy: z.array(z.string()).optional(),
+    limit: z.number().optional(),
+    offset: z.number().optional(),
+    params: z.record(z.string(), z.any()).optional(),
+}).passthrough()
+const zTypedUpdateQuery = z.object({
+    type: z.literal('UPDATE'),
+    table: z.string(),
+    set: zSetValueRecord,
+    where: zSQLQueryOrLiteralObj.optional(),
+    returning: z.array(zReturningItem).optional(),
+    or: zOnConflict.optional(),
+    params: z.record(z.string(), z.any()).optional(),
+}).passthrough()
+const zTypedInsertQuery = z.object({
+    type: z.literal('INSERT'),
+    table: z.string(),
+    values: zSetValueRecord.or(z.array(zSetValueRecord)),
+    returning: z.array(zReturningItem).optional(),
+    or: zOnConflict.optional(),
+    params: z.record(z.string(), z.any()).optional(),
+}).passthrough()
+const zTypedDeleteQuery = z.object({
+    type: z.literal('DELETE'),
+    table: z.string(),
+    where: zSQLQueryOrLiteralObj.optional(),
+    returning: z.array(zReturningItem).optional(),
+    params: z.record(z.string(), z.any()).optional(),
+}).passthrough()
+// Runtime: validates as discriminated union. Type: kept as Record<string, any> for DatabaseSettings compat.
+// The TS types for sql-mode queries (SelectQuery, UpdateQuery, etc.) are defined separately in sql/build/.
+// This schema catches invalid configs at parse time without needing to unify the Zod and TS type systems.
+export const zTypedSQLQuery: z.ZodType<Record<string, any>> = z.discriminatedUnion('type', [
+    zTypedSelectQuery,
+    zTypedUpdateQuery,
+    zTypedInsertQuery,
+    zTypedDeleteQuery,
+]) as any
 export const zTypedSQLStatement = selectStatementSchema.or(insertStatementSchema).or(updateStatementSchema).or(deleteStatementSchema)
-export const zSQLProcedure = z.object({
+
+const zActionParamType = z.enum(['string', 'number', 'boolean', 'integer'])
+const zSQLActionParamFull = z.object({
+    type: zActionParamType,
+    optional: z.boolean().optional(),
+    default: z.union([z.string(), z.number(), z.boolean(), z.null()]).optional(),
+    description: z.string().max(500).optional(),
+})
+const zSQLActionParam = zActionParamType.or(zSQLActionParamFull)
+
+export const zSQLAction = z.object({
     name: tableColumnNameSchema,
-    rule: z.boolean()/*.or(z.string())*/.default(true),
-    params: z.array(tableColumnNameSchema),
-    query: z.union([zTypedSQLQuery, z.array(zTypedSQLQuery)]).optional(),
-    statement: z.union([zTypedSQLStatement, z.array(zTypedSQLStatement)]).optional(),
+    description: z.string().max(1000).optional(),
+    guard: sqlExprSchema.optional(),
+    applyTableRules: z.boolean().default(true),
+    requireAuth: z.boolean().optional().default(false),
+    params: z.record(tableColumnNameSchema, zSQLActionParam).optional(),
+    sql: z.union([zTypedSQLQuery, z.array(zTypedSQLQuery)]).optional(),
+    steps: z.union([zTypedSQLStatement, z.array(zTypedSQLStatement)]).optional(),
+}).superRefine((data, ctx) => {
+    if (data.sql && data.steps) ctx.addIssue({code: 'custom', message: 'Cannot specify both sql and steps in the same action', path: ['steps']})
 })
 
 // not final, cant pass in query param

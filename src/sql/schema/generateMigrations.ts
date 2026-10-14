@@ -7,7 +7,24 @@ import { validateSettingsChange } from '../../types/config/validateSettingsChang
 import {z} from 'zod'
 import {formatZodError} from '../../utils/zod'
 
-export function generateMigrations(nextConfig: DatabaseSettings, lastConfig: Partial<DatabaseSettings> | undefined, index = 0) {
+// User migrations start at 10000. The 0–9999 band is reserved for infra migrations recorded
+// by $Database.setup (kv=00000, identities=00001, extension-owned=0000x). Sorting _db_migrations
+// by name therefore always puts infra before user migrations on replay.
+export const USER_MIGRATION_START = 10000
+
+// Compute the next user-band prefix from an existing migrations list. Assumes `migrations`
+// is in id-order (as returned by MigrationHelperRaw.list) so the last matching row is the
+// highest-numbered one. Rows outside the user band (infra, or non-NNNNN_ names) are ignored.
+export function nextUserIndex(migrations: { name: string }[]): number {
+    const userRows = migrations.filter(m => {
+        const n = parseInt(String(m.name).split('_')[0], 10)
+        return Number.isFinite(n) && n >= USER_MIGRATION_START
+    })
+    if (!userRows.length) return USER_MIGRATION_START
+    return parseInt(String(userRows[userRows.length - 1].name).split('_')[0], 10) + 1
+}
+
+export function generateMigrations(nextConfig: DatabaseSettings, lastConfig: Partial<DatabaseSettings> | undefined, index = USER_MIGRATION_START) {
     let res
 
     try {
@@ -20,8 +37,8 @@ export function generateMigrations(nextConfig: DatabaseSettings, lastConfig: Par
     }
 
     const {config, changes} = res
-    if (!changes) return {migrations: [], config: config}
-    const name = (op: string, table: TableData) => `${String(index++).padStart(4, '0')}_${op}_table_${table.name}.sql`
+    if (!changes) return {migrations: [], config: config, changes: null}
+    const name = (op: string, table: TableData) => `${String(index++).padStart(5, '0')}_${op}_table_${table.name}.sql`
     const others = (table: TableData) => config.tables.filter((t) => t.name !== table.name)
     const migrations = [
         ...changes.create.map(item => ({
@@ -54,5 +71,5 @@ export function generateMigrations(nextConfig: DatabaseSettings, lastConfig: Par
         }
     }
 
-    return {migrations, config, extraLogs}
+    return {migrations, config, extraLogs, changes}
 }

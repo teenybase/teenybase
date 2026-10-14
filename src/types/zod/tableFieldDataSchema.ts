@@ -11,10 +11,10 @@ export const tableFieldDataSchema = z.object({
     sqlType: z.string().transform(v => v.toLowerCase()).pipe(z.nativeEnum(TableFieldSqlDataType0).or(z.nativeEnum(TableFieldSqlDataType1))),
     type: z.nativeEnum(TableFieldDataType),
     usage: z.string().optional(),
-    primary: z.coerce.boolean().optional(),
-    autoIncrement: z.coerce.boolean().optional(),
-    unique: z.coerce.boolean().optional(),
-    notNull: z.coerce.boolean().optional(),
+    primary: z.boolean().optional(),
+    autoIncrement: z.boolean().optional(),
+    unique: z.boolean().optional(),
+    notNull: z.boolean().optional(),
     collate: z.string().optional(), // todo enum
     default: zSQLQueryOrLiteral.or(z.string()).optional(),
     check: zSQLQueryOrLiteral.or(z.string()).optional(),
@@ -25,9 +25,9 @@ export const tableFieldDataSchema = z.object({
         onDelete: zForeignKeyAction.optional(),
     }).optional(),
     // updateTriggers: z.array(zSQLTrigger.omit({updateOf: true, event: true})).optional(),
-    noUpdate: z.coerce.boolean().optional(),
-    noInsert: z.coerce.boolean().optional(),
-    noSelect: z.coerce.boolean().optional(),
+    noUpdate: z.boolean().optional(),
+    noInsert: z.boolean().optional(),
+    noSelect: z.boolean().optional(),
     lastName: z.string().optional(),
 }).superRefine((data, ctx) => {
     const sqlBase = sqlDataTypeAliases[data.sqlType as TableFieldSqlDataType]

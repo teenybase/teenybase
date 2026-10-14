@@ -20,13 +20,15 @@ export type UpdateQuery = {
 export const UPDATE_NEW_COL_ID = columnify('new')
 
 // https://www.sqlite.org/lang_update.html
-export function buildUpdateQuery(query: UpdateQuery, simplify = true, allowAllWhere = true/*, oldFields?: {q: string, as: string}[]*/): SQLQuery {
+/**
+ * @param redactColumns columns whose bound values must never be rendered by logSQLQuery - see
+ *   $Table.redactedFields. The value is still bound normally; only its rendering is suppressed.
+ */
+export function buildUpdateQuery(query: UpdateQuery, simplify = true, allowAllWhere = true,
+                                 redactColumns?: ReadonlySet<string>/*, oldFields?: {q: string, as: string}[]*/): SQLQuery {
     const p = { ...query.params }
-    let q = `UPDATE ${query.table} `
-
-    if(query.or) q += `OR ${query.or} `
-
-    q += 'SET '
+    // https://www.sqlite.org/lang_update.html - the conflict clause goes before the table name
+    let q = `UPDATE ${query.or ? `OR ${query.or} ` : ''}${query.table} SET `
 
     let where = ''
     if(query.where){
@@ -46,7 +48,7 @@ export function buildUpdateQuery(query: UpdateQuery, simplify = true, allowAllWh
     const setKeys = Object.keys(query.set)
     for (let i = 0; i < setKeys.length; i++) {
         const key = setKeys[i]
-        const set = literalToQuery(query.set[key])
+        const set = literalToQuery(query.set[key], true, redactColumns?.has(key))
         if(i > 0) q += ', '
 
         q += `${columnify(key)} = ${set.q}`

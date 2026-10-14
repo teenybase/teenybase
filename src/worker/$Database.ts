@@ -4,24 +4,24 @@ import {HTTPException} from 'hono/http-exception'
 import {decode} from '@tsndr/cloudflare-worker-jwt'
 import {ProcessError} from './util/error'
 import {AuthContext} from '../types/env'
-import {AllowedIssuer, DatabaseSettings} from '../types/config'
+import {AuthProvider, DatabaseSettings, hasIdentitiesExtension} from '../types/config'
 import {JWTTokenHelper} from '../security/JWTTokenHelper'
 import {EmailSendClient} from './email/send-email'
 import {InternalKV} from './internalKV'
 import {InternalIdentities} from './InternalIdentities'
-import {$Env} from './env'
+import {$Env, envBool} from './env'
 import {JWTPayloadOp} from '../types/jwt'
 import {TableAuthExtensionData} from '../types/tableExtensions'
 import {columnify, createJsepContext, honoToJsep, ident} from '../sql/parse/jsep'
 import {logSQLQuery, QueryType} from '../sql/build/query'
 import {D1Query, sqlQueryToD1Query} from '../sql/build/d1'
 import {z} from 'zod'
-import {MigrationHelper} from './migrationHelper'
+import {DBMigration, MigrationHelper} from './migrationHelper'
 import {LinearRouter} from 'hono/router/linear-router'
 import {parseRequestBody} from './util/parseRequestBody'
 import {HttpRoute, RawRouterHandlerFunction} from '../types/route'
 import {$DBExtension} from './$DBExtension'
-import {SQLQuery} from '../types/sql'
+import {SQLQuery, TableInsertParams} from '../types/sql'
 import {buildDeleteQuery, DeleteQuery} from '../sql/build/delete'
 import {buildInsertQuery, InsertQuery} from '../sql/build/insert'
 import {buildUpdateQuery, UpdateQuery} from '../sql/build/update'
@@ -35,6 +35,9 @@ import {databaseSettingsSchema} from '../types/zod/databaseSettingsSchema'
 import {zParseWithPath} from '../utils/zod'
 import {deleteCookie, getCookie} from 'hono/cookie'
 import {$DatabaseRawImpl} from './$DatabaseRawImpl'
+import {parseRuleQuery} from './extensions/tableRulesExtension'
+import {StorageAdapter} from './storage/StorageAdapter'
+import {DefaultDatabaseAdapter} from './storage/DefaultDatabaseAdapter'
 
 export class $Database<T extends $Env = $Env> extends $DatabaseRawImpl/*<T>*/{
     protected readonly tables: Record<string, $Table<T>> = {}
@@ -45,7 +48,7 @@ export class $Database<T extends $Env = $Env> extends $DatabaseRawImpl/*<T>*/{
     // readonly notify: NotifyClient
     readonly jwt: JWTTokenHelper
     readonly kv: InternalKV/*<T>*/
-    readonly identities: InternalIdentities<T> | null
+    readonly identities: InternalIdentities | null
     readonly extensions: $DBExtension<T>[] = []
 
     public readonly c: Context<T>
@@ -53,8 +56,14 @@ export class $Database<T extends $Env = $Env> extends $DatabaseRawImpl/*<T>*/{
 
     private readonly adminJwtSecret: ()=>Promise<string>
 
-    constructor(c: Context<T>, settings: z.infer<typeof databaseSettingsSchema>|DatabaseSettings|undefined, database: D1Database, storage?: R2Bucket) {
-        super(database)
+    // TODO: Remove D1Database acceptance once multiple adapters exist (for tree-shaking)
+    constructor(c: Context<T>, settings: z.infer<typeof databaseSettingsSchema>|DatabaseSettings|undefined, adapter?: StorageAdapter | D1Database, storage?: R2Bucket) {
+        super(adapter ?? new DefaultDatabaseAdapter(
+            // `settings` is validated below inside this constructor; until then, extract
+            // database config in a best-effort way — the same parse happens on the next line.
+            (typeof settings === 'object' && settings && 'database' in settings ? (settings as any).database : undefined),
+            c.env,
+        ))
         this.c = c
         if((c.env as any).IS_VITEST){
             const h = c.req.header('$DB_TEST_DATABASE_SETTINGS')
@@ -63,21 +72,24 @@ export class $Database<T extends $Env = $Env> extends $DatabaseRawImpl/*<T>*/{
         this.settings = databaseSettingsSchema.parse(settings ?? JSON.parse(c.env.DATABASE_SETTINGS||''))
         this.storage = storage
         this.kv = new InternalKV(this, this.settings._kvTableName)
-        const hasIdentities = this.settings.tables.some(t => t.extensions?.some((e: any) => e.name === 'auth' && e.saveIdentities))
-        this.identities = hasIdentities ? new InternalIdentities(this) : null
+        this.identities = hasIdentitiesExtension(this.settings) ? new InternalIdentities(this) : null
         this.extensions.push(new MigrationHelper(this, this.kv, undefined)) // todo migration table name is fixed
         this.secretResolver = new SecretResolver(()=>c.env, SecretResolver.DEFAULT_KEY_ENV)
 
-        // this can be set in the admin frontend to make sure we are working with the correct deployment of the worker
-        const sv = c.req.header('DDB_SETTINGS_VERSION') // todo set in frontend
+        // Admin frontend sets this to make sure we're talking to the correct deployment
+        // of the worker. Mismatch = frontend's view is ahead of this worker's bundle →
+        // frontend retries/warns. todo set in frontend
+        const sv = c.req.header('DDB_SETTINGS_VERSION')
         if (sv && parseInt(sv) !== this.settings.version) {
-            throw new HTTPException(500, {message: 'DDB_SETTINGS_VERSION_MISMATCH'}) // frontend needs to retry request. todo improve error
+            throw new HTTPException(500, {message: 'DDB_SETTINGS_VERSION_MISMATCH'})
         }
         c.set('settings', this.settings) // todo is this required? we are setting $db also
 
         if (this.c.get('auth')) this.auth = this.c.get('auth')!
         else c.set('auth', this.auth);
 
+        const cfEmailConfig = this.settings.email?.cloudflare
+        const cfEmailBindingName = cfEmailConfig?.binding || 'EMAIL'
         this.email = this.settings.email ? new EmailSendClient(this, {
             from: this.settings.email.from || undefined,
             variables: this.settings.email.variables,
@@ -90,68 +102,94 @@ export class $Database<T extends $Env = $Env> extends $DatabaseRawImpl/*<T>*/{
             ...this.settings.email.resend,
             RESEND_API_KEY: this.secretResolver.resolver(this.settings.email?.resend?.RESEND_API_KEY, false),
             RESEND_WEBHOOK_SECRET: this.secretResolver.resolver(this.settings.email?.resend?.RESEND_WEBHOOK_SECRET, false),
-        } : undefined) : null
+        } : undefined, cfEmailConfig ? {
+            ...cfEmailConfig,
+            binding: () => (c.env as Record<string, any>)[cfEmailBindingName],
+            bindingName: cfEmailBindingName,
+        } : undefined, this.settings.email.mock) : null
         if(this.email) this.extensions.push(this.email)
 
         // this.notify = new NotifyClient({}, this.email)
 
-        const jwtAllowedIssuers: AllowedIssuer[] = []
+        // if (!jwtSecret()?.length) throw new HTTPException(500, {message: 'Invalid configuration - jwt secret is required'})
+        this.adminJwtSecret = this.c.env.ADMIN_JWT_SECRET ? this.secretResolver.resolver('$ADMIN_JWT_SECRET', false) : async ()=>''
+
+        this.jwt = new JWTTokenHelper(this.settings.jwtSecret, this.settings.jwtIssuer, this.settings.jwtAlgorithm, this.resolveAuthProviders(), this.secretResolver)
+    }
+
+    /**
+     * Register a $DBExtension and fire its optional `init()` hook.
+     * Preferred over direct `db.extensions.push(ext)` — the extension may wire
+     * itself into the database (e.g., an adapter extension registering a
+     * delegate into DefaultDatabaseAdapter) during init.
+     *
+     * Returns the extension for convenient one-liner use.
+     */
+    async registerExtension<E extends $DBExtension<T>>(ext: E): Promise<E> {
+        this.extensions.push(ext)
+        await ext.init?.()
+        return ext
+    }
+
+    /** Merge authProviders with deprecated jwtAllowedIssuers into a single AuthProvider[] */
+    private resolveAuthProviders(): AuthProvider[] | undefined {
+        const providers: AuthProvider[] = [...(this.settings.authProviders ?? [])]
+
+        // Migrate deprecated jwtAllowedIssuers → AuthProvider[]
         if (this.settings.jwtAllowedIssuers) {
             for (const issuer of this.settings.jwtAllowedIssuers) {
                 if (typeof issuer === 'string') {
-                    jwtAllowedIssuers.push(issuer)
+                    providers.push({ issuer })
                 } else {
-                    // Resolve secret from environment if it starts with $
-                    let secret = issuer.secret
-                    if (secret && secret[0] === '$') {
-                        secret = (c.env as any)[secret.slice(1)] || ''
-                    }
-                    // Resolve clientId from environment if it starts with $
-                    let clientId = issuer.clientId
-                    if (clientId && clientId[0] === '$') {
-                        clientId = (c.env as any)[clientId.slice(1)] || ''
-                    }
-                    // For issuers that require secrets, skip if secret is not available
-                    // For Google OAuth, secret is not required but clientId should be provided
-                    if (issuer.secret && !secret) continue
-
-                    jwtAllowedIssuers.push({
-                        issuer: issuer.issuer,
-                        secret: secret,
-                        algorithm: issuer.algorithm,
-                        clientId: clientId
-                    })
+                    providers.push({ ...issuer })
                 }
             }
         }
 
-        const jwtSecret = this.secretResolver.resolver(this.settings.jwtSecret, true, 'JWT_SECRET for the database')
-        // if (!jwtSecret()?.length) throw new HTTPException(500, {message: 'Invalid configuration - jwt secret is required'})
-        this.adminJwtSecret = this.c.env.ADMIN_JWT_SECRET ? this.secretResolver.resolver('$ADMIN_JWT_SECRET', false) : async ()=>''
-
-        this.jwt = new JWTTokenHelper(jwtSecret, this.settings.jwtIssuer, this.settings.jwtAlgorithm, jwtAllowedIssuers)
+        return providers.length > 0 ? providers : undefined
     }
 
     // setup db etc
     async setup() {
         if(!this.auth.superadmin) throw new HTTPException(this.auth.uid ? 403 : 401, {message: 'Unauthorized, only superadmin can setup database'})
         const version = 0
-        if(version >= 0) {
-            //
-        }
-        await Promise.all([
-            this.kv.setup(version),
-            ...(this.identities ? [this.identities.setup(version)] : []),
-            ...this.extensions.map(e => e.setup && e.setup(version)),
-            ...this.settings.tables.map(t => this.table(t.name).setup(version))
+        // Thunk form so sync throws from a setup call land in the same catch as async rejections.
+        const tag = <V>(source: string, thunk: () => Promise<V> | V): Promise<V> =>
+            Promise.resolve().then(thunk).catch((e: unknown) => {
+                if (e instanceof HTTPException) {
+                    throw new HTTPException(e.status, {message: `[setup:${source}] ${e.message}`})
+                }
+                const msg = e instanceof Error ? e.message : String(e)
+                throw new HTTPException(500, {message: `[setup:${source}] ${msg}`})
+            })
+        const results = await Promise.all<Omit<DBMigration, 'id'> | null | void | $Table<T>>([
+            tag('kv', () => this.kv.setup(version)),
+            tag('identities', () => this.identities?.setup(version) ?? null),
+            ...this.extensions.map(e => tag(`extension:${e.constructor.name}`, () => e.setup ? e.setup(version) : null)),
+            ...this.settings.tables.map(t => tag(`table:${t.name}`, () => this.table(t.name).setup(version)))
         ])
+        const infraEntries = results.filter(
+            (r): r is Omit<DBMigration, 'id'> =>
+                !!r && typeof r === 'object' && 'name' in r && 'sql' in r
+        )
+        if (infraEntries.length) {
+            const helper = this.extensions.find(e => e instanceof MigrationHelper) as MigrationHelper | undefined
+            if (helper) {
+                try {
+                    await helper.apply(infraEntries)
+                } catch (e) {
+                    const msg = e instanceof Error ? e.message : String(e)
+                    throw new HTTPException(500, {message: `[setup:record-infra] Infra tables created but recording into _db_migrations failed: ${msg}. Retry Setup — idempotent.`})
+                }
+            }
+        }
         const settings = await this.kv.get('$settings')
         let message = 'Success'
         if(!settings) {
             message = 'Migrations not run yet - $settings not found - Run migrations to update $settings in the db'
-        }else {
+        } else {
             const settings2 = JSON.parse(settings)
-            if(settings2.version !== this.settings.version)
+            if (settings2.version !== this.settings.version)
                 message = `Settings version mismatch - ${settings2.version} !== ${this.settings.version} - deploy the worker again with the latest settings`
         }
         return message
@@ -196,7 +234,7 @@ export class $Database<T extends $Env = $Env> extends $DatabaseRawImpl/*<T>*/{
 
         // todo hack, remove
         const adminToken = await this.secretResolver.resolve('$ADMIN_SERVICE_TOKEN')
-        if (adminToken && tok === adminToken) {
+        if (adminToken && tok === adminToken) { // todo timingSafeEqual here? not really required
             tok = await this.generateAdminToken("superadmin", tok)
         }
         // console.log('init', tok)
@@ -208,6 +246,11 @@ export class $Database<T extends $Env = $Env> extends $DatabaseRawImpl/*<T>*/{
         }
         if (!payload) return
 
+        // Check bearerMode before verification — use original iss from unverified payload
+        // (some providers like Google rewrite iss during verification)
+        const originalIss = payload.iss
+        if (this.jwt.getBearerMode(originalIss) === 'login') return
+
         if (payload.cid) {
             const table = this.settings.tables.find(t => t.name === payload!.cid)
             if (!table) throw new HTTPException(400, {message: 'Invalid auth table'})
@@ -215,17 +258,15 @@ export class $Database<T extends $Env = $Env> extends $DatabaseRawImpl/*<T>*/{
             jwtSecret = this.secretResolver.resolver(auth.jwtSecret, true, `JWT_SECRET for ${table.name}`)
         }
 
-        const secret = await jwtSecret()
-        if (!secret?.length) throw new HTTPException(401, {message: 'Invalid jwt'})
-
         // console.log('init', payload, secret)
-        payload = await this.jwt.decodeAuth(tok!, secret, false, undefined, payload).catch(e => {
+        payload = await this.jwt.decodeAuth(tok!, await jwtSecret(), false, undefined, payload).catch(e => {
             console.error(e)
             return null
         })
         // console.log('init', payload)
 
         if (!payload) return
+
         const aud = Array.isArray(payload.aud) ? (payload.aud.length === 1 ? payload.aud[0] : payload.aud) : payload.aud
         this.auth = {
             uid: payload.id ?? null,
@@ -437,12 +478,12 @@ export class $Database<T extends $Env = $Env> extends $DatabaseRawImpl/*<T>*/{
             for (let i = 0; i < query.values.length; i += batchSize) {
                 const batch = query.values.slice(i, i + batchSize)
                 const insertQuery = {...query, values: batch, table: table.jc.tableName}
-                const sql = buildInsertQuery(insertQuery, table.jc.autoSimplifyExpr)
+                const sql = buildInsertQuery(insertQuery, table.jc.autoSimplifyExpr, true, table.redactedFields)
                 sqlQs.push([insertQuery, sql])
             }
         }else {
             const insertQuery = {...query, table: table.jc.tableName}
-            const sql = buildInsertQuery(insertQuery, table.jc.autoSimplifyExpr)
+            const sql = buildInsertQuery(insertQuery, table.jc.autoSimplifyExpr, true, table.redactedFields)
             sqlQs.push([insertQuery, sql])
         }
         // const sql = buildInsertQuery({...query, table: table.jc.tableName}, table.jc.autoSimplifyExpr)
@@ -521,7 +562,7 @@ export class $Database<T extends $Env = $Env> extends $DatabaseRawImpl/*<T>*/{
         const sqlSelect = oldReturning.length ? buildSelectQuery(selectQuery, table.jc.autoSimplifyExpr) : null
 
         const updateQuery = {...query, table: table.jc.tableName}
-        const sql = buildUpdateQuery(updateQuery, table.jc.autoSimplifyExpr, true/*, oldReturning*/)
+        const sql = buildUpdateQuery(updateQuery, table.jc.autoSimplifyExpr, true, table.redactedFields/*, oldReturning*/)
 
         const onRun = async ()=>{
             // todo - make beforeUpdate
@@ -630,80 +671,129 @@ export class $Database<T extends $Env = $Env> extends $DatabaseRawImpl/*<T>*/{
     //     return await this.rawSQLTransaction<T>(d1Expr, c).run()
     // }
 
-    // todo
-    private async _rawProcedure(name: string, body: Record<string, any>){
-        const procedure = this.settings.procedures?.find(p=>p.name === name)
-        if(!procedure) throw new ProcessError(`Procedure not found - ${name}`, 404)
-        if(this.dryRunMode || this.c.env.RESPOND_WITH_QUERY_LOG)
-            this.queryLog.push('PROCEDURE: ' + procedure.name)
+    /**
+     * Run a named action programmatically. Same as `POST /api/v1/action/{name}` but without an HTTP round-trip.
+     * @param name - Action name as defined in `actions` config
+     * @param body - Parameters matching the action's `params` definition
+     * @returns Array of result arrays (one per query in the action), or undefined in dry-run mode
+     */
+    async runAction<T = any>(name: string, body: Record<string, any>): Promise<T[][] | null | undefined> {
+        return (await this._runAction(name, body))?.run()
+    }
+    private async _runAction(name: string, body: Record<string, any>){
+        const action = this.settings.actions?.find(a=>a.name === name)
+        if(!action) throw new ProcessError(`Action not found - ${name}`, 404)
+
+        // Auth check
+        if(action.requireAuth && !this.auth.uid)
+            throw new ProcessError('Authentication required', 401)
+
+        if(this.dryRunMode || envBool(this.c.env.RESPOND_WITH_QUERY_LOG))
+            this.queryLog.push('ACTION: ' + action.name)
         if(this.dryRunMode) return
-        const statements = Array.isArray(procedure.statement) ? procedure.statement : procedure.statement ? [procedure.statement] : []
-        const queries = Array.isArray(procedure.query) ? procedure.query : procedure.query ? [procedure.query] : []
-        if(!statements.length && !queries.length) throw new ProcessError(`Invalid procedure ${procedure.name}, missing statements or queries`, 500)
-        if(statements.length && queries.length) throw new ProcessError(`Invalid procedure ${procedure.name}, cannot have both statements and queries`, 500)
-        const paramsBody = {} as Record<string, any>
-        const params = procedure.params ?? []
-        for (const param of params) {
-            if(!param) throw new ProcessError(`Invalid procedure ${procedure.name}, missing parameter`, 500)
-            const val = body[param]
-            if(val === undefined) throw new ProcessError(`Procedure ${procedure.name}, missing required parameter ${param}`, 400)
-            paramsBody[param] = val
+
+        // Build Zod schema from param definitions and validate
+        const paramDefs = action.params ?? {}
+        const shape: Record<string, z.ZodTypeAny> = {}
+        for (const [paramName, paramDef] of Object.entries(paramDefs)) {
+            const def = typeof paramDef === 'string' ? {type: paramDef} : paramDef
+            let base: z.ZodTypeAny
+            switch(def.type) {
+                case 'string': base = z.string(); break
+                case 'number': base = z.number(); break
+                case 'integer': base = z.number().int(); break
+                case 'boolean': base = z.boolean(); break
+            }
+            if(def.optional) {
+                base = def.default !== undefined ? base.optional().default(def.default as any) : base.optional()
+            }
+            shape[paramName] = base
         }
-        const rule = procedure.rule ?? true
+        const paramsSchema = z.object(shape).strict()
+        const paramsBody = zParseWithPath(paramsSchema, body, ['action', name, 'params']) as Record<string, any>
+
         const prepared: (D1PreparedQuery<any, any, QueryType>|D1PreparedTransaction<any, any, QueryType>)[] = []
-        if(queries.length){
-            if(rule) throw new ProcessError(`Invalid procedure ${procedure.name}, cannot have raw queries with rule`)
-            for (const query1 of queries) {
-                if(!query1) continue
-                const query = structuredClone(query1)
-                query.params = {
-                    ...query.params,
-                    ...paramsBody
-                }
+
+        // Guard check — evaluated once before any steps/sql
+        if(action.guard) {
+            const guardPrep = this._evaluateActionGuard(action.guard, paramsBody)
+            if(guardPrep) prepared.push(guardPrep)
+            // If guard was resolved via JS (Layer 1), guardPrep is undefined (method returned early)
+        }
+
+        const applyTableRules = action.applyTableRules ?? true
+        const sqlEntries = Array.isArray(action.sql) ? action.sql : action.sql ? [action.sql] : []
+        const steps = Array.isArray(action.steps) ? action.steps : action.steps ? [action.steps] : []
+
+        if(!sqlEntries.length && !steps.length) throw new ProcessError(`Action ${name}: must have sql or steps`, 500)
+        if(sqlEntries.length && steps.length) throw new ProcessError(`Action ${name}: cannot have both sql and steps`, 500)
+
+        // SQL mode (raw query objects) — always bypasses table rules (uses $Database.rawXxx, not $Table hooks)
+        if(sqlEntries.length){
+            for (const query1 of sqlEntries) {
+                if(!query1) throw new ProcessError(`Action ${name}: invalid null entry in sql array`, 500)
+                const query = structuredClone(query1) as any
+                query.params = {...query.params, ...paramsBody}
+
+                const tableName = query.table || query.from
+                if(!tableName) throw new ProcessError(`Action ${name}: missing table in sql entry`, 500)
+                const table = this.table(Array.isArray(tableName) ? tableName[0] : tableName)
+
+                // Sensitive field filtering: expand returning: ['*'] to exclude noSelect fields
+                if(query.returning) query.returning = this._expandReturningWildcard(table, Array.isArray(query.returning) ? query.returning : [query.returning])
+
                 let prep
                 if(query.type === 'SELECT'){
-                    if(Array.isArray(query.from)) throw new ProcessError(`Invalid procedure ${procedure.name}, cannot have multiple tables in select query`, 500)
-                    if(!query.from) throw new ProcessError(`Invalid procedure ${procedure.name}, missing from table in select query`, 500)
-                    prep = this.rawSelect(this.table(query.from), query)
+                    if(Array.isArray(query.from)) throw new ProcessError(`Action ${name}: cannot have multiple tables in select query`, 500)
+                    prep = this.rawSelect(table, query)
                 }else if(query.type === 'UPDATE'){
-                    prep = this.rawUpdate(this.table(query.table), query)
+                    prep = this.rawUpdate(table, query)
                 }else if(query.type === 'INSERT'){
-                    prep = this.rawInsert(this.table(query.table), query)
+                    prep = this.rawInsert(table, query)
                 }else if(query.type === 'DELETE'){
-                    prep = this.rawDelete(this.table(query.table), query)
+                    prep = this.rawDelete(table, query)
+                }else{
+                    throw new ProcessError(`Action ${name}: unsupported query type: ${(query as any).type}`, 500)
                 }
-                if(!prep) continue // todo throw error?
-                prepared.push(prep)
-            }
-        }
-        if(statements.length){
-            // todo handle when rule is false
-            if(!rule) throw new ProcessError(`Invalid procedure ${procedure.name}, cannot have statements without rule, not supported yet`, 500)
-            for (const statement of statements) {
-                if(!statement) continue
-                const table = this.table(statement.table)
-                const globals = table.jc.globals.params
-                table.jc.globals.params = {
-                    ...table.jc.globals.params,
-                    ...paramsBody
-                }
-                let prep
-                if(statement.type === 'SELECT'){
-                    prep = await table.rawSelect(statement)
-                }else if(statement.type === 'UPDATE'){
-                    prep = await table.rawUpdate(statement)
-                }else if(statement.type === 'INSERT'){
-                    prep = await table.rawInsert(statement)
-                }else if(statement.type === 'DELETE'){
-                    prep = await table.rawDelete(statement)
-                }
-                table.jc.globals.params = globals
-                if(!prep) continue // todo throw error?
+                if(!prep) throw new ProcessError(`Action ${name}: failed to prepare sql entry`, 500)
                 prepared.push(prep)
             }
         }
 
-        if(!prepared.length) return // todo throw error?
+        // Steps mode (expression-based statements)
+        if(steps.length){
+            const skipRules = !applyTableRules
+            for (const step of steps) {
+                if(!step) throw new ProcessError(`Action ${name}: invalid null entry in steps array`, 500)
+                const table = this.table(step.table)
+                const savedParams = table.jc.globals.params
+                table.jc.globals.params = {...table.jc.globals.params, ...paramsBody}
+                if(skipRules) table._skipRulesExtension = true
+
+                try {
+                    // todo why as typecase only required for one of them
+                    let prep
+                    if(step.type === 'SELECT'){
+                        prep = await table.rawSelect(step)
+                    }else if(step.type === 'UPDATE'){
+                        prep = await table.rawUpdate(step)
+                    }else if(step.type === 'INSERT'){
+                        prep = await table.rawInsert(step as TableInsertParams)
+                    }else if(step.type === 'DELETE'){
+                        prep = await table.rawDelete(step)
+                    }else{
+                        throw new ProcessError(`Action ${name}: unsupported step type: ${(step as any).type}`, 500)
+                    }
+                    if(!prep) throw new ProcessError(`Action ${name}: failed to prepare step`, 500)
+                    prepared.push(prep)
+                } finally {
+                    table._skipRulesExtension = false
+                    table.jc.globals.params = savedParams
+                }
+            }
+        }
+
+        if(!prepared.length) throw new ProcessError(`Action ${name}: no valid entries to execute`, 500)
 
         const res: D1PreparedTransaction<any, any[][], QueryType> = {
             prepared,
@@ -713,6 +803,55 @@ export class $Database<T extends $Env = $Env> extends $DatabaseRawImpl/*<T>*/{
         return res
     }
 
+    /**
+     * Evaluates an action guard expression. Two-layer approach:
+     * Layer 1 (JS): If expression fully simplifies to a literal (e.g., auth.uid != null), evaluate immediately.
+     * Layer 2 (SQL): If expression uses SQLite functions (e.g., unixepoch()), build a guard SQL statement
+     *   that is prepended to the D1 batch. Uses json('') trick to throw on failure.
+     * Column references are rejected — guard context has no table columns.
+     */
+    private _evaluateActionGuard(guard: string, params: Record<string, any>): D1PreparedQuery | undefined {
+        const globals = honoToJsep(this.c.req, this.auth)
+        globals.params = params
+        const jc = createJsepContext('_guard', this.settings.tables, globals, [])
+
+        const result = parseRuleQuery(jc, guard)
+
+        // Layer 1: JS evaluation — expression fully simplified to a literal
+        if('l' in result) {
+            if(!result.l) throw new ProcessError('Forbidden', 403)
+            return // guard passed, no SQL needed
+        }
+
+        // Layer 2: SQL guard — expression uses SQLite functions (unixepoch, etc.)
+        // json('1') succeeds, json('') throws "malformed JSON" → D1 batch aborts & rolls back
+        const guardSql = result as SQLQuery
+        const wrappedSql: SQLQuery = {
+            q: `SELECT json(CASE WHEN (${guardSql.q}) THEN '1' ELSE '' END)`,
+            p: guardSql.p,
+        }
+        const d1Query = sqlQueryToD1Query(wrappedSql)
+        return this._prepareD1Query(d1Query, true, {
+            type: 'select' as const,
+            table: undefined as any,
+            crudQuery: undefined as any,
+            query: wrappedSql,
+            errorMessage: 'Forbidden',
+            onError: async () => { throw new ProcessError('Forbidden', 403) },
+        })
+    }
+
+    /** Expands returning: ['*'] to explicit field names excluding noSelect fields (like password) */
+    private _expandReturningWildcard(table: $Table, returning: string[]): string[] {
+        const isAdmin = !!this.auth.admin
+        return returning.flatMap(r => {
+            if(r !== '*') return [r]
+            return Object.entries(table.fields)
+                .filter(([_, f]) => isAdmin || !f.noSelect)
+                .map(([name]) => name)
+        })
+    }
+
     // endregion sql
 
     // region r2/s3 helpers, todo make private?
@@ -720,7 +859,7 @@ export class $Database<T extends $Env = $Env> extends $DatabaseRawImpl/*<T>*/{
     private _fsStats: Record<string, string|null> = {} // key is the uploaded file name, value is the source file name if uploaded or null if deleted
 
     async headFileObject(key: string){
-        if(this.dryRunMode || this.c.env.RESPOND_WITH_QUERY_LOG)
+        if(this.dryRunMode || envBool(this.c.env.RESPOND_WITH_QUERY_LOG))
             this.queryLog.push('STORAGE: headFileObject: ' + key)
         if(this.dryRunMode) throw new Error('headFile not supported in dry run mode')
         // this._fsStats.push(['head', key])
@@ -732,7 +871,7 @@ export class $Database<T extends $Env = $Env> extends $DatabaseRawImpl/*<T>*/{
     async getFileObject(key: string, options?: R2GetOptions & {
         onlyIf: R2Conditional | Headers;
     }): Promise<R2ObjectBody | R2Object | null>{
-        if(this.dryRunMode || this.c.env.RESPOND_WITH_QUERY_LOG)
+        if(this.dryRunMode || envBool(this.c.env.RESPOND_WITH_QUERY_LOG))
             this.queryLog.push('STORAGE: getFileObject: ' + key)
         if(this.dryRunMode) throw new Error('getFile not supported in dry run mode')
         return this.bucket.get(key, options)
@@ -745,7 +884,7 @@ export class $Database<T extends $Env = $Env> extends $DatabaseRawImpl/*<T>*/{
             onlyIf?: R2Conditional | Headers;
         },
     ): Promise<R2Object | null | {dummy: true}>{
-        if(this.dryRunMode || this.c.env.RESPOND_WITH_QUERY_LOG)
+        if(this.dryRunMode || envBool(this.c.env.RESPOND_WITH_QUERY_LOG))
             this.queryLog.push('STORAGE: putFileObject: ' + key) // todo add data about file?
         if(this.dryRunMode) return {dummy: true}
         if(this.readOnlyMode) throw new Error('putFile not allowed in read only mode')
@@ -762,7 +901,7 @@ export class $Database<T extends $Env = $Env> extends $DatabaseRawImpl/*<T>*/{
     }
 
     private async deleteFileObject(keys: string | string[]){
-        if(this.dryRunMode || this.c.env.RESPOND_WITH_QUERY_LOG)
+        if(this.dryRunMode || envBool(this.c.env.RESPOND_WITH_QUERY_LOG))
             this.queryLog.push('STORAGE: deleteFileObject: ' + keys)
         if(this.dryRunMode) return
         if(this.readOnlyMode) throw new Error('deleteFile not allowed in read only mode')
@@ -785,7 +924,7 @@ export class $Database<T extends $Env = $Env> extends $DatabaseRawImpl/*<T>*/{
     private prepare<T, TRet = T[], TC extends QueryType = QueryType>(c: SQLRunContext<T, TRet, TC>) {
         const q = c.query
         // console.log(logSQLQuery(q))
-        if (this.dryRunMode || this.c.env.RESPOND_WITH_QUERY_LOG) {
+        if (this.dryRunMode || envBool(this.c.env.RESPOND_WITH_QUERY_LOG)) {
             this.queryLog.push(logSQLQuery(q))
         }
         const d1Expr = sqlQueryToD1Query(q)
@@ -796,7 +935,7 @@ export class $Database<T extends $Env = $Env> extends $DatabaseRawImpl/*<T>*/{
     private transaction<T, TRet = T[][], TC extends QueryType = QueryType>(c: SQLRunTransactionContext<T, TRet, TC>) {
         const q = c.query
         // console.log(q.map(q1 => logSQLQuery(q1)).join(';\n'))
-        if (this.dryRunMode || this.c.env.RESPOND_WITH_QUERY_LOG) {
+        if (this.dryRunMode || envBool(this.c.env.RESPOND_WITH_QUERY_LOG)) {
             this.queryLog.push(q.map(q1 => logSQLQuery(q1)).join(';\n'))
         }
         const d1Expr = q.map(sqlQueryToD1Query)
@@ -973,6 +1112,7 @@ export class $Database<T extends $Env = $Env> extends $DatabaseRawImpl/*<T>*/{
                 status: 'ok',
                 timestamp: Date.now(),
                 version: this.settings.version,
+                appName: this.settings.appName,
             }
         },
         zod: ()=>({
@@ -985,7 +1125,8 @@ export class $Database<T extends $Env = $Env> extends $DatabaseRawImpl/*<T>*/{
                         schema: z.object({
                             status: z.literal('ok'),
                             timestamp: z.number(),
-                            version: z.number(),
+                            version: z.number().optional(),
+                            appName: z.string().optional(),
                         }),
                     }},
                 }
@@ -1018,7 +1159,7 @@ export class $Database<T extends $Env = $Env> extends $DatabaseRawImpl/*<T>*/{
         handler: async()=>{
             if (!this.auth.admin) throw new HTTPException(this.auth.uid ? 403 : 401, {message: 'Unauthorized'})
             const isRaw = this.c.req.query('raw')
-            if(isRaw !== undefined && (isRaw===''||z.coerce.boolean().parse(isRaw)))
+            if(isRaw !== undefined && (isRaw === '' || isRaw === 'true' || isRaw === '1'))
                 return {tables: await getSQLiteSchema(this), jwtSecret: this.settings.jwtSecret, appUrl: this.settings.appUrl, version: 1} as DatabaseSettings
             return this.settings
         },
@@ -1065,29 +1206,30 @@ export class $Database<T extends $Env = $Env> extends $DatabaseRawImpl/*<T>*/{
             },
         }),
     }, {
-        path: '/rpc/:fn_name',
+        path: '/action/:name',
         method: 'post',
         handler: async(body, params)=>{
             if(!body || typeof body !== 'object' || Array.isArray(body)) throw new HTTPException(400, {message: 'Invalid request body'})
-            const fn_name = zParseWithPath(z.string().min(1).max(255).describe('Name of the stored procedure'), params.fn_name, ['fn_name'])
-            const res = await (await this._rawProcedure(fn_name, body))?.run()
+            const name = zParseWithPath(z.string().min(1).max(255).describe('Action name'), params.name, ['name'])
+            const res = await (await this._runAction(name, body))?.run()
             return res ?? []
         },
         zod: ()=>({
-            description: 'Run a stored procedure',
+            description: 'Run a named action',
             request: {
-                params: z.object({fn_name: z.string().min(1).max(255).describe('Function name')}),
+                params: z.object({name: z.string().min(1).max(255).describe('Action name')}),
                 headers: z.object({authorization: z.string().min(1).max(255).optional()}).describe('Auth token'),
                 body: {
-                    description: 'Function parameters',
-                    content: {'application/json': {schema: z.record(z.string(), z.any()).describe('Function parameters')}},
+                    description: 'Action parameters',
+                    content: {'application/json': {schema: z.record(z.string(), z.any()).describe('Action parameters')}},
                     required: false,
                 },
             },
             responses: {
                 '200': {description: 'Success'},
-                '404': {description: 'Not found'},
-                '400': {description: 'Invalid Arguments/Bad request'},
+                '401': {description: 'Authentication required'},
+                '404': {description: 'Action not found'},
+                '400': {description: 'Invalid parameters'},
             },
         }),
     }, {
@@ -1095,7 +1237,7 @@ export class $Database<T extends $Env = $Env> extends $DatabaseRawImpl/*<T>*/{
         path: '/explain/*',
         handler: {
             raw: async (_params, path) => {
-                if (!this.auth.admin || !this.c.env.RESPOND_WITH_QUERY_LOG) throw new HTTPException(this.auth.uid ? 403 : 401, {message: 'Forbidden'})
+                if (!this.auth.admin || !envBool(this.c.env.RESPOND_WITH_QUERY_LOG)) throw new HTTPException(this.auth.uid ? 403 : 401, {message: 'Forbidden'})
                 this.dryRunMode = true
                 // todo this wont work with diff base route.
                 path = path.replace('/explain', '')

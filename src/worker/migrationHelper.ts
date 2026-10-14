@@ -45,20 +45,40 @@ export class MigrationHelperRaw<T extends $DatabaseRaw = $DatabaseRaw>{
         }
     }
 
-    async dbSettings(){
+    // Batched read: $settings (config JSON) + $settings_version (monotonic counter)
+    // returned from a single D1 batch. Callers compute the `lastVersion` CAS token
+    // they later pass to apply() from the `version` field here.
+    async dbSettings(): Promise<{settings: DatabaseSettings | undefined, version: number | null}> {
         if (!this.db.auth.superadmin) throw new HTTPException(403, {message: 'Forbidden'})
-        const settings = await this.kv.get('$settings')
-        return settings ? JSON.parse(settings) as DatabaseSettings : undefined
+        const res = await this.db.rawSQLTransaction<{value: string}>([
+            this.kv.getQuery('$settings'),
+            this.kv.getQuery('$settings_version'),
+        ]).run() ?? [[], []]
+        let settings: DatabaseSettings | undefined
+        let version: number | null = null
+        const sv = res[0]?.[0]?.value
+        if (sv) { try { settings = JSON.parse(sv) as DatabaseSettings } catch {} }
+        const vv = res[1]?.[0]?.value
+        if (vv) { const n = parseInt(vv, 10); if (Number.isFinite(n)) version = n }
+        return {settings, version}
     }
 
     async list() {
         if (!this.db.auth.superadmin) throw new HTTPException(403, {message: 'Forbidden'})
         const q = `SELECT id, name, sql, sql_revert FROM ${this.tableName}`
-        // const res = await this.db.database.prepare(q).run<DBMigration>()
         return await this.db.rawSQL<DBMigration>({q, v: []}).run() || []
     }
 
-    async apply(migrations: Omit<DBMigration, 'id'>[], settings: DatabaseSettings) {
+    // settings optional: when omitted, apply only records migration rows (used by $Database.setup
+    // to register infra migrations). When provided, `lastVersion` is the caller-supplied CAS
+    // token fetched from dbSettings().version — null means "fresh DB, $settings_version doesn't
+    // exist yet". Apply prepends a CAS statement that aborts the whole batch via SQLite's
+    // malformed-JSON error if another apply already advanced the counter.
+    async apply(
+        migrations: Omit<DBMigration, 'id'>[],
+        settings?: DatabaseSettings,
+        lastVersion?: number | null,
+    ) {
         if (!this.db.auth.superadmin) throw new HTTPException(403, {message: 'Forbidden'})
         const last = await this.list()
         const names: string[] = []
@@ -66,12 +86,12 @@ export class MigrationHelperRaw<T extends $DatabaseRaw = $DatabaseRaw>{
             let last1 = last.find(r=>r.name === m.name)
             if(last1) {
                 if (last1.sql !== m.sql) throw new Error(`Migration ${m.name} already applied but sql mismatch`)
-                if ((last1.sql_revert||null) !== (m.sql_revert||null)) throw new Error(`Migration ${m.name} already applied but sql_revert mismatch`)
+                // Skip sql_revert check — revert SQL may not survive round-trip through file system
+                // (readMigrationsFolder only reads sql, not sql_revert from files).
                 return undefined
             }
             if(names.includes(m.name)) throw new Error(`Duplicate migration name ${m.name}`)
             names.push(m.name)
-            // console.log(m.sql)
             const qs = splitSqlQuery(m.sql).map(sql => sql ? {q:sql, v:[]} : undefined).filter(q=>!!q) as D1Query[]
             if(!qs.length) throw new Error(`Empty migration ${m.name}`)
             return [
@@ -81,10 +101,25 @@ export class MigrationHelperRaw<T extends $DatabaseRaw = $DatabaseRaw>{
                 }
             ]
         }).filter(q=>!!q) as D1Query[]
-        const settings1 = JSON.stringify(settings)
-        prepared.push(this.kv.setQuery('$settings', settings1))
-        prepared.push(this.kv.setQuery('$settings_'+Date.now(), settings1))
-        prepared.push(this.kv.setQuery('$settings_version', settings.version?.toString() ?? '0'))
+        if (settings) {
+            if (lastVersion === undefined) throw new Error('apply: lastVersion is required when settings is provided (pass null for fresh DB)')
+            const expectedVersion = (lastVersion ?? -1) + 1
+            // Caller (CLI/route handler) is expected to stamp `version` so the deployed
+            // worker bundle and the stored `$settings` blob carry the same value.
+            if (settings.version !== expectedVersion) {
+                throw new Error(`apply: settings.version must be ${expectedVersion} (= lastVersion + 1) but got ${settings.version}`)
+            }
+            const settings1 = JSON.stringify(settings)
+            // CAS: first statement in the batch. If $settings_version has advanced since
+            // the caller read it, the verify query raises "malformed JSON" and SQLite
+            // aborts the whole batch — nothing commits.
+            prepared.splice(0, 0,
+                this.kv.casVerifyQuery('$settings_version', lastVersion),
+                this.kv.setQuery('$settings', settings1),
+            )
+            prepared.push(this.kv.setQuery('$settings_'+Date.now(), settings1))
+            prepared.push(this.kv.setQuery('$settings_version', String(settings.version)))
+        }
 
         if(!prepared.length) return []
         try {
@@ -109,8 +144,8 @@ export class MigrationHelper<T extends $Env = $Env> extends MigrationHelperRaw<$
         method: 'get',
         handler: async () => {
             const migrations = await this.list()
-            const settings = await this.dbSettings()
-            return {migrations, settings: settings||this.db.settings}
+            const {settings, version} = await this.dbSettings()
+            return {migrations, settings: settings||this.db.settings, version}
         },
         zod: () => (<HttpRouteZod>{
             description: 'List all migrations',
@@ -123,6 +158,7 @@ export class MigrationHelper<T extends $Env = $Env> extends MigrationHelperRaw<$
                             schema: z.object({
                                 settings: databaseSettingsSchema,
                                 migrations: z.array(zDBMigration),
+                                version: z.number().nullable(),
                             }),
                         }
                     },
@@ -133,24 +169,25 @@ export class MigrationHelper<T extends $Env = $Env> extends MigrationHelperRaw<$
         path: '/migrations',
         method: 'post',
         handler: async (data) => {
-            // if(this.db.settings.version && data.settings.version !== this.db.settings.version){
-            //     throw new HTTPException(400, {message: 'Settings version mismatch'})
-            // }
-            const migrations = await this.apply(data.migrations, data.settings)
-            if (!migrations) throw new HTTPException(500, {message: 'Unable to apply migrations'})
-            return {applied: migrations}
+            // Server stamps version so HTTP callers don't have to know the formula.
+            const lastVersion = data.lastVersion ?? null
+            const settings: DatabaseSettings = {...data.settings, version: (lastVersion ?? -1) + 1}
+            const applied = await this.apply(data.migrations, settings, lastVersion)
+            if (!applied) throw new HTTPException(500, {message: 'Unable to apply migrations'})
+            return {applied}
         },
         zod: () => (<HttpRouteZod>{
             description: 'Apply migrations',
             request: {
                 headers: z.object({authorization: z.string().min(1).max(255)}).describe('Admin Auth token with superadmin role'),
                 body: {
-                    description: 'All migrations and new DB settings. New migrations will be applied and old migrations will be checked for db match',
+                    description: 'All migrations, new DB settings, and the lastVersion CAS token (from GET /migrations). The batch aborts if $settings_version has advanced since the caller read it.',
                     content: {
                         'application/json': {
                             schema: z.object({
                                 settings: databaseSettingsSchema,
                                 migrations: z.array(zDBMigration),
+                                lastVersion: z.number().nullable(),
                             }),
                         }
                     },

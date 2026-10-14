@@ -8,7 +8,7 @@ import type {BodyData, ParseBodyOptions} from 'hono/dist/types/utils/body'
 const MultipartJsonKey: string = "@jsonPayload"
 const MultipartFilesKey: string = "@filePayload"
 export async function parseRequestBody<T = Record<string, any>>(req: Context['req']) {
-    return (req.bodyCache.parsedBody ??= await _parseRequestBody(req)) ?? null
+    return ((req.bodyCache as any).parsedBody ??= await _parseRequestBody(req)) ?? null
 }
 export async function _parseRequestBody<T = Record<string, any>>(req: Context['req']) {
     if (req.method === 'GET') return req.query() as T

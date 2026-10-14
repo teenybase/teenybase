@@ -41,34 +41,34 @@ export function validateFieldChange(field: TableFieldData | undefined, lastField
 
     if (lastField && jsonStringify(field) === jsonStringify(lastField)) return {}
 
-    // @ts-ignore todo is this required if we are validating with zod
-    field.sqlType = field.sqlType.toLowerCase()
-    if (!field.type && !field.sqlType) {
-        addIssue(`type or sqlType is required`, ...fieldPath)
+    if (!field.sqlType && !field.type) {
+        addIssue(`type or sqlType is required`)
+        if (issues.length) throw new z.ZodError(issues)
     }
+    if (field.sqlType) field.sqlType = field.sqlType.toLowerCase() as typeof field.sqlType
     if (field.sqlType && !field.type) {
         field.type = sqlDataTypeToDataTypeDefaults[field.sqlType as TableFieldSqlDataType];
-        if (!field.type) addIssue(`Unable to determine type. Unknown type for sqlType - ${field.sqlType}`, ...fieldPath, 'sqlType')
+        if (!field.type) addIssue(`Unable to determine type. Unknown type for sqlType - ${field.sqlType}`, 'sqlType')
     }
     if (field.type && !field.sqlType) {
         field.sqlType = dataTypeToSqlDataType[field.type as TableFieldDataType]
-        if (!field.sqlType) addIssue(`Unable to determine sqlType. Unknown sqlType for type - ${field.type}`, ...fieldPath, 'type')
+        if (!field.sqlType) addIssue(`Unable to determine sqlType. Unknown sqlType for type - ${field.type}`, 'type')
     }
 
     const sqlBase = sqlDataTypeAliases[field.sqlType as TableFieldSqlDataType]
-    if (!sqlBase) addIssue(`Unknown sqlType - ${field.sqlType}`, ...fieldPath, 'sqlType')
+    if (!sqlBase) addIssue(`Unknown sqlType - ${field.sqlType}`, 'sqlType')
 
     const supportedTypes = supportedTypesForSql[sqlBase]
     if (!supportedTypes.includes(field.type as TableFieldDataType)) {
-        addIssue(`Invalid type for type - ${field.type} not in [${supportedTypes.join(', ')}]`, ...fieldPath, 'type')
+        addIssue(`Invalid type for type - ${field.type} not in [${supportedTypes.join(', ')}]`, 'type')
     }
     if (field.foreignKey && settings) {
         // check if the other table and column etc exists. it needs to be done everytime so we find issues with this before generting migrations
         const table2 = settings.tables.find(t => t.name === field.foreignKey!.table)
         const field2 = table2?.fields.find(f => f.name === field.foreignKey!.column)
-        if (!field2) addIssue(`Foreign key field not found - ${field.foreignKey!.table}.${field.foreignKey!.column}`, ...fieldPath, 'foreignKey')
+        if (!field2) addIssue(`Foreign key field not found - ${field.foreignKey!.table}.${field.foreignKey!.column}`, 'foreignKey')
         else {
-            if (field2.sqlType !== field.sqlType) addIssue(`Foreign key field sqlType mismatch - ${field.sqlType} !== ${field2.sqlType}`, ...fieldPath, 'foreignKey')
+            if (field2.sqlType !== field.sqlType) addIssue(`Foreign key field sqlType mismatch - ${field.sqlType} !== ${field2.sqlType}`, 'foreignKey')
         }
     }
 

@@ -13,8 +13,17 @@ export interface QueryTypes{
 
 export type QueryType = keyof QueryTypes
 
+/** Bound-parameter names carrying this prefix are never rendered by logSQLQuery. */
+export const REDACTED_PARAM_PREFIX = 'redacted_'
+/** What a redacted literal renders as. Deliberately not a valid value. */
+export const REDACTED_RENDER = `'***'`
+export function isRedactedParam(key: string){ return key.startsWith(REDACTED_PARAM_PREFIX) }
+
 /**
  * Warning - use only for logging, not for building queries.
+ * (Not strictly true: schema/migration builders render DDL through this. Redaction is opt-in per
+ * parameter, so those call sites are unaffected.)
+ * TODO - see and use something like replaceSqlPlaceholders
  * @param query
  */
 export function logSQLQuery(query: SQLQuery): string{
@@ -23,6 +32,12 @@ export function logSQLQuery(query: SQLQuery): string{
     let q = query.q.trim()
     if(params?.length) {
         for (const [k, val] of params) {
+            // Secret values (password hashes, salts) are bound normally but never rendered - this
+            // string ends up in D1Error.input, the query log and error responses.
+            if(isRedactedParam(k)) {
+                q = q.replaceAll('{:' + k + '}', REDACTED_RENDER)
+                continue
+            }
             let v = val
 
             // for d1. todo, should this be moved to literalToQuery
@@ -30,7 +45,8 @@ export function logSQLQuery(query: SQLQuery): string{
                 v = JSON.stringify(v)
             }
 
-            q = q.replaceAll('{:' + k + '}', JSON.stringify(v))
+            // todo dont replace inside quotes. see splitter.ts
+            q = q.replaceAll('{:' + k + '}', JSON.stringify(v)) // todo should be single quotes, not double, as per sqlite
         }
     }
     return q
@@ -69,7 +85,11 @@ const literalMapping = {
     NULL: 'NULL',
 } as any
 
-export function literalToQuery(l: SQLLiteral | SQLQuery | string, wrap = true): SQLQuery{
+/**
+ * @param redact force-mark the bound value as secret (never rendered by logSQLQuery). A
+ *   SQLLiteral can also carry `redact: true` itself; either is enough.
+ */
+export function literalToQuery(l: SQLLiteral | SQLQuery | string, wrap = true, redact = false): SQLQuery{
     let l1 = (l as SQLLiteral).l
     const isLiteral = l1 !== undefined
     const q = (l as SQLQuery).q
@@ -88,7 +108,11 @@ export function literalToQuery(l: SQLLiteral | SQLQuery | string, wrap = true): 
     if(lm !== undefined) // apparently both m[true] and m['true'] resolves to 1 in js.
         return {q: lm, _readOnly: true}
     if(l1 === null || l1 === undefined) return {q: 'NULL', _readOnly: true}
-    const rnd = 'f'+Math.random().toString(36).substring(7)
+    const secret = redact || (isLiteral && typeof l === 'object' && (l as SQLLiteral).redact === true)
+    // substring(2, 10): a fixed 8-char window. substring(7) yielded a variable-length tail that
+    // measured as short as 1 char (and '' for Math.random() === 0.5), so two literals in one
+    // statement could draw the same key and silently bind one value twice.
+    const rnd = (secret ? REDACTED_PARAM_PREFIX : 'f') + Math.random().toString(36).substring(2, 10)
     return {
         q: '{:'+rnd+'}',
         p: { [rnd]: l1 }, // todo is object check required? right now it's done in sqlQueryToD1Query

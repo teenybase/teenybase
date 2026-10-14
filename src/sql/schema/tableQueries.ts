@@ -1,9 +1,9 @@
 import {TableFieldData} from '../../types/field'
 import {TableData} from '../../types/table'
-import {TableFieldUsageRecord} from '../../worker/usages'
 import {randomString} from '../../security/random'
 import {literalToQuery, logSQLQuery} from '../build/query'
 import {SQLIndex, SQLLiteral, SQLQuery, SQLTrigger} from '../../types/sql'
+import {TABLE_REF_TOKEN} from '../../scaffolds/fields'
 
 // todo
 function buildSql(q?: SQLLiteral|SQLQuery|string){
@@ -55,7 +55,7 @@ export function dropIndexQuery(table: TableData, index: SQLIndex){
     return `DROP INDEX IF EXISTS idx_${table.name}_${name}`
 }
 export function createTriggerQuery(table: TableData, trigger: SQLTrigger){
-    const body= (Array.isArray(trigger.body) ? trigger.body : [trigger.body]).map(b=>buildSql(b)?.trim().replace(/;+$/g, '')).filter(b=>b).join(';\n') + ';'
+    const body= (Array.isArray(trigger.body) ? trigger.body : [trigger.body]).map(b=>buildSql(b)?.trim().replace(/;+$/g, '').replaceAll(TABLE_REF_TOKEN, table.name)).filter(b=>b).join(';\n') + ';'
     const seq= trigger.seq ? (trigger.seq+' ') : ''
     const when= trigger.when ? `WHEN ${buildSql(trigger.when)} ` : ''
     const updateOf = trigger.updateOf ? `OF ${Array.isArray(trigger.updateOf) ? trigger.updateOf.join(', ') : trigger.updateOf} ` : ''

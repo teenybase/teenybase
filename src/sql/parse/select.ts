@@ -6,12 +6,14 @@ import {selectSchema} from '../../types/zod/sqlSchemas';
 
 export function parseSelectQuery(q: SelectParams, jc: JsepContext){
     const selectData = selectSchema.parse(q)
+    // sort is an alias for order (PocketBase/PocketUI convention)
+    const order = selectData.order || selectData.sort
     const select: SelectQuery = {
         selects: selectData.select ? parseColumnList(selectData.select, jc, true, true, true) : undefined,
         from: jc.tableName,
         where: selectData.where ? queryToSqlQuery(selectData.where, jc) : undefined,
         groupBy: selectData.group ? parseColumnList(selectData.group, jc, false, false) : undefined,
-        orderBy: selectData.order ? parseColumnListOrder(selectData.order, jc) : undefined,
+        orderBy: order ? parseColumnListOrder(order, jc) : undefined,
         limit: selectData.limit,
         offset: selectData.offset,
         distinct: selectData.distinct,

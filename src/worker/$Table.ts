@@ -4,6 +4,7 @@ import {extensions, ExtensionsKeys, TableExtensions} from './extensions'
 import {
     appendJoin,
     appendOrderBy,
+    buildSelectQuery,
     getSubSelectQueries,
     SelectQuery,
     SelectQueryJoin,
@@ -20,8 +21,9 @@ import {z} from 'zod'
 import {TableFieldUsage} from './usages'
 import {generateUid} from '../security/random'
 import {$Database} from './$Database'
-import {D1Error, D1ColumnError, ProcessError, D1ErrorData} from './util/error'
+import {D1Error, D1ColumnError, ProcessError, D1ErrorData, parseD1ErrorMessage} from './util/error'
 import {TableCrudExtension} from './extensions/tableCrudExtention'
+import {TableRulesExtension} from './extensions/tableRulesExtension'
 import {TableFieldData} from '../types/field'
 import {TableData} from '../types/table'
 import {columnify, ident, JsepContext, uncolumnify} from '../sql/parse/jsep'
@@ -41,11 +43,14 @@ import {HttpRoute, RawRouterHandlerFunction} from '../types/route'
 import {normalizeFileName} from './util/string'
 import {fts5TableName} from '../sql/schema/tableQueries'
 import {D1PreparedQuery} from './util/sql'
+import {sqlQueryToD1Query} from '../sql/build/d1'
 import {sqlValSchemaFile2, sqlValSchemaFile3, sqlValSchemaRecord} from '../types/zod/sqlSchemas';
 import {tableFieldTypeToZod} from '../types/zod/dataTypesSchemas'
 
 export class $Table<T extends $Env = any>{
     extensions: TableExtension[] = []
+    /** When true, the rules extension is skipped and noInsert/noUpdate field restrictions are bypassed. Used by actions with applyTableRules: false. */
+    _skipRulesExtension = false
 
     readonly fileFields?: string[]
     // jsonFields?: string[]
@@ -53,6 +58,11 @@ export class $Table<T extends $Env = any>{
 
     readonly mapping
     readonly fields: Record<string, TableFieldData>
+    /**
+     * Columns whose bound values must never be rendered into a logged or echoed statement:
+     * password hashes, salts, and anything the config marks as not selectable.
+     */
+    readonly redactedFields: ReadonlySet<string>
     /**
      * Maps usage strings to field name/array of field names(for multiple)
      */
@@ -63,9 +73,15 @@ export class $Table<T extends $Env = any>{
     readonly allowWildcard: boolean // this is allow direct wildcard in select/returning instead of expanding it automatically. todo maybe this should be renamed
 
     extension<T extends ExtensionsKeys>(key: T): TableExtensions[T]{
-        const ext = this.extensions.find(e=>e.name === key)
+        const ext = this.findExtension(key)
         if(!ext) throw new ProcessError('Extension not found', 500)
-        return ext as any
+        return ext
+    }
+
+    /** Like {@link extension}, but returns undefined when the extension isn't present
+     * instead of throwing. Use when the extension is optional. */
+    findExtension<T extends ExtensionsKeys>(key: T): TableExtensions[T] | undefined {
+        return this.extensions.find(e => e.name === key) as TableExtensions[T] | undefined
     }
 
     get name(){
@@ -98,6 +114,11 @@ export class $Table<T extends $Env = any>{
 
         this.fields = Object.fromEntries(this.data.fields.map(f => [f.name, f]))
 
+        this.redactedFields = new Set(this.data.fields
+            .filter(f => f.noSelect || f.type === 'password'
+                || f.usage === 'auth_password' || f.usage === 'auth_password_salt')
+            .map(f => f.name))
+
         this.fileFields = this.data.fields.filter(f=>f.type==='file').map(f=>f.name)
 
         this.extensions.push(new TableCrudExtension({name: 'crud'}, this, jc))
@@ -107,6 +128,16 @@ export class $Table<T extends $Env = any>{
             if (extClass) this.extensions.push(new extClass(ext as any, this, jc, $db.c))
             else throw new ProcessError('Invalid extension ' + ext.name + ' for table ' + data.name + ' - ' + JSON.stringify(ext), 500)
         }
+
+        // Default-deny: a table without a rules extension behaves exactly like one whose rules are all
+        // null - every list/view/insert/update/delete is rejected with 403 unless the request is admin
+        // (TableRulesExtension skips admins, and _skipRulesExtension still applies to actions with
+        // applyTableRules: false). `public: true` is the explicit opt-out that leaves the table open.
+        if (!this.data.public && !this.extensions.some(e => e.name === TableRulesExtension.name))
+            this.extensions.push(new TableRulesExtension({
+                name: TableRulesExtension.name,
+                listRule: null, viewRule: null, createRule: null, updateRule: null, deleteRule: null,
+            }, this, jc))
 
         if(this.data.idInR2 && (!this.mapping.uid || !this.fields[this.mapping.uid].noUpdate)) throw new ProcessError('Invalid Configuration for idInR2 - uid field must be present and set to noUpdate', 500)
 
@@ -149,9 +180,12 @@ export class $Table<T extends $Env = any>{
             await (await this.rawSelect(data, countTotal))?.run() :
             await (await this.rawSelect(data, countTotal))?.run()
     }
+
+    // todo add routes and tests for this
     async selectCount(data: Pick<TableSelectParams, 'where'|'select'>) {
         return await (await this.rawSelectCount(data))?.run()
     }
+    // todo add routes and tests for this
     async selectRaise(data: Pick<TableSelectParams, 'where'> & {
         message: string,
         code?: 'ROLLBACK'|'ABORT'|'FAIL',
@@ -193,10 +227,7 @@ export class $Table<T extends $Env = any>{
         const values = Array.isArray(data.values) ? data.values : data.values ? [data.values] : undefined
         let filesToUpload = {} as Record<string, File>
         let filesToRef: string[] = []
-        const data2 = {
-            ...data,
-            values: [] as z.infer<typeof sqlValSchemaRecord>[]
-        } as const
+        const processedValues = [] as z.infer<typeof sqlValSchemaRecord>[]
 
         // todo - make beforeInsertParse
 
@@ -206,15 +237,19 @@ export class $Table<T extends $Env = any>{
                 this.checkNewRecordValues(setValues)
 
                 const {values: _values} = this.filesToUpload(setValues, filesToUpload, filesToRef)
-                data2.values.push(_values)
+                processedValues.push(_values)
             }
         }
+        const data2 = {
+            ...data,
+            ...(values ? {values: processedValues} : {}),
+        } as const
 
         let query: InsertQuery
         try {
             query = parseInsertQuery(data2, this.jc)
         }catch (e){
-            throw new ProcessError('Error parsing INSERT data', 400, data, e)
+            throw new ProcessError('Error parsing INSERT data', 400, this.redactParams(data), e)
         }
 
         await this.onInsertParse(query)
@@ -248,7 +283,7 @@ export class $Table<T extends $Env = any>{
         try {
             updateQuery = parseUpdateQuery(data2, this.jc)
         }catch (e){
-            throw new ProcessError('Error parsing UPDATE data', 400, data, e)
+            throw new ProcessError('Error parsing UPDATE data', 400, this.redactParams(data), e)
         }
 
         await this.onUpdateParse(updateQuery)
@@ -355,9 +390,12 @@ export class $Table<T extends $Env = any>{
             message: z.string(),
             code: z.enum(['ROLLBACK', 'ABORT', 'FAIL']).optional().default('FAIL'),
         }).parse(data)
+        // RAISE() only works inside triggers. Instead, use the json trick:
+        // json('') throws "malformed JSON" → D1 batch aborts & rolls back.
+        // If rows match the WHERE condition, json('') fires; otherwise json('1') succeeds.
         const data2 = {
             ...data,
-            select: `RAISE(${code}, ${JSON.stringify(message)})`,
+            select: '1',
         } as TableSelectParams
 
         let query
@@ -369,11 +407,20 @@ export class $Table<T extends $Env = any>{
 
         await this.onSelectParse(query)
 
-        const res = this.$db.rawSelect(this, query, r=>{
-            if(r.length) throw new ProcessError(message, 409, {code: code})
-            return null
+        // todo why not using rawSelect here?
+        const selectSql = buildSelectQuery(query, this.jc.autoSimplifyExpr)
+        const d1Expr = sqlQueryToD1Query({
+            q: `SELECT json(CASE WHEN EXISTS(${selectSql.q}) THEN '' ELSE '1' END)`,
+            p: selectSql.p,
         })
-        return res
+        return this.$db.rawSQL(d1Expr, {
+            type: 'select' as const,
+            table: this,
+            crudQuery: query,
+            query: selectSql,
+            errorMessage: message,
+            onError: async () => { throw new ProcessError(message, 409, {code: code}) },
+        })
     }
 
     // hooks
@@ -387,13 +434,32 @@ export class $Table<T extends $Env = any>{
                 // if (!field) throw new ProcessError: 'Invalid field ' + key}) // this check is moved below.
                 if (!field) continue
                 // if (field.usage && noInsertSetUsages.includes(field.usage)) throw new ProcessError('Cannot insert ' + key + ' field')
-                if (field.noInsert) throw new ProcessError('Cannot insert ' + key + ' field', this.jc.globals.auth?.uid ? 403 : 401)
+                if (!this._skipRulesExtension && field.noInsert) throw new ProcessError('Cannot insert ' + key + ' field', this.jc.globals.auth?.uid ? 403 : 401)
             }
             if (this.mapping.uid && this.data.autoSetUid) {
                 for (const val of v) {
                     if (!val[this.mapping.uid]) val[this.mapping.uid] = {l: generateUid()}
                 }
             }
+
+            // todo this makes some responses change in test, think about this properly
+            // Apply schema-defined defaults (or NULL) for missing columns so they're
+            // available in the CTE for createRule expressions.
+            // Without this, rules like `role == 'guest'` reference [new].[role] which
+            // doesn't exist in the CTE → "no such column" error.
+            // for (const field of this.data.fields) {
+            //     if (field.noInsert) continue
+            //     // Skip auth-managed fields — auth extension sets these itself in onInsertParse
+            //     if (field.usage === 'auth_email_verified' || field.usage === 'auth_password_salt') continue
+            //     if (v[0][field.name] != null) continue
+            //     if (field.default != null) {
+            //         const defaultVal = typeof field.default === 'string'
+            //             ? {q: field.default} : {...field.default}
+            //         for (const val of v) val[field.name] = defaultVal
+            //     } else {
+            //         for (const val of v) val[field.name] = {l: null}
+            //     }
+            // }
         }
 
         // todo notNull check
@@ -401,6 +467,7 @@ export class $Table<T extends $Env = any>{
         if(query.returning) query.returning = this.checkColsWildcard(Array.isArray(query.returning) ? query.returning : [query.returning])
 
         for (const ext of this.extensions) {
+            if(this._skipRulesExtension && ext.name === 'rules') continue
             ext.onInsertParse && await ext.onInsertParse(query)
         }
 
@@ -420,6 +487,7 @@ export class $Table<T extends $Env = any>{
         if(query.returning) query.returning = this.checkColsWildcard(Array.isArray(query.returning) ? query.returning : [query.returning])
 
         for (const ext of this.extensions) {
+            if(this._skipRulesExtension && ext.name === 'rules') continue
             ext.onDeleteParse && await ext.onDeleteParse(query, this.jc.globals.auth?.admin??false)
         }
     }
@@ -430,7 +498,7 @@ export class $Table<T extends $Env = any>{
             const field = this.fields[key]
             if(!field) continue
             // if(field.usage && noUpdateSetUsages.includes(field.usage)) throw new ProcessError('Cannot update ' + key + ' field')
-            if(field.noUpdate) throw new ProcessError('Cannot update ' + key + ' field', this.jc.globals.auth?.uid ? 403 : 401)
+            if(!this._skipRulesExtension && field.noUpdate) throw new ProcessError('Cannot update ' + key + ' field', this.jc.globals.auth?.uid ? 403 : 401)
         }
         // todo notNull check
 
@@ -440,6 +508,7 @@ export class $Table<T extends $Env = any>{
         if(query.returning) query.returning = this.checkColsWildcard(Array.isArray(query.returning) ? query.returning : [query.returning])
 
         for (const ext of this.extensions) {
+            if(this._skipRulesExtension && ext.name === 'rules') continue
             ext.onUpdateParse && await ext.onUpdateParse(query)
         }
 
@@ -463,6 +532,7 @@ export class $Table<T extends $Env = any>{
 
         // extensions
         for (const ext of this.extensions) {
+            if(this._skipRulesExtension && ext.name === 'rules') continue
             ext.onSelectParse && await ext.onSelectParse(query)
         }
         await this.handleSelectSubQueries(query, allowSubqueries)
@@ -560,42 +630,52 @@ export class $Table<T extends $Env = any>{
         }
     }
 
+    /**
+     * Blank out values of redacted columns in a raw request-params object before it goes into an
+     * error (and therefore into the response and console.error). These are PRE-hash values: the
+     * INSERT parse error fires before onInsertParse hashes the password, so without this the
+     * cleartext password submitted to /auth/sign-up is echoed straight back to the caller.
+     */
+    private redactParams<T extends Record<string, any>>(data: T): T {
+        if(!this.redactedFields.size) return data
+        const isRedacted = (k: string) => this.redactedFields.has(k)
+            // the password-confirm sibling is not a column, so it is not in redactedFields
+            || [...this.redactedFields].some(f => k.startsWith(f) && k !== f)
+        const scrub = (rec: any) => rec && typeof rec === 'object' && !Array.isArray(rec)
+            ? Object.fromEntries(Object.entries(rec).map(([k, v]) => [k, isRedacted(k) ? '***' : v]))
+            : rec
+        const out: any = {...data}
+        if('values' in out) out.values = Array.isArray(out.values) ? out.values.map(scrub) : scrub(out.values)
+        if('set' in out) out.set = scrub(out.set)
+        if('setValues' in out) out.setValues = scrub(out.setValues)
+        return out as T
+    }
+
     // D1 Helpers
 
+    /**
+     * Turn a D1Error's raw SQLite message into per-column error data on `e.data`.
+     * Message shapes are documented on parseD1ErrorMessage(), which does the parsing so that it
+     * can be unit-tested against every real format without a worker runtime.
+     */
     parseD1Error(e: D1Error){
         const msg: string = e?.errorMessage
-        // todo check for other error types (other than constraints also)
-        // todo handle multiple column errors at once
-        // NOT NULL constraint failed: files.config: SQLITE_CONSTRAINT
-        // FOREIGN KEY constraint failed: SQLITE_CONSTRAINT
-        // UNIQUE constraint failed: users.email: SQLITE_CONSTRAINT
-        const errorMap = {
-            'UNIQUE constraint failed': 'A record with this value already exists.',
-            'NOT NULL constraint failed': 'This field cannot be NULL.',
-            // 'FOREIGN KEY constraint failed': 'Unable to find related record (Foreign Key).',
-            'FOREIGN KEY constraint failed': 'Foreign Key constraint failed.', // todo add test for this
-        } as Record<string, string>
-        const parts = msg.split(':').map(p=>p.trim())
-        const column = parts.find(p=>{
-            const c = p.split('.').pop()
-            return c && this.fields[c]
-        })?.split('.').pop()
-        const mess = parts[0]
-        if(column){
-            const code = parts.pop()
-            const ci = mess.indexOf('constraint failed')
-            const constraint = ci !== -1 ? mess.substring(0, ci-1) : undefined
-            const dat = {
-                code,
-                message: errorMap[mess] ?? mess,
-                errorMessage: msg,
-            } as D1ColumnError
-            if(constraint?.length) dat.constraint = constraint
-            e.data = {
-                [column]: dat
-            } as D1ErrorData
-        }else if(errorMap[mess]){
-            e.message += ' - ' + errorMap[mess]
+        const p = parseD1ErrorMessage(msg, (n) => !!this.fields[n])
+        if(p.columns.length){
+            const data: D1ErrorData = {}
+            for (const column of p.columns) {
+                const dat = {
+                    code: p.code,
+                    message: p.mapped ?? p.head,
+                    errorMessage: msg, // verbatim, suffixes included
+                } as D1ColumnError
+                if(p.extendedCode) dat.extendedCode = p.extendedCode
+                if(p.constraint?.length) dat.constraint = p.constraint
+                data[column] = dat
+            }
+            e.data = data
+        }else if(p.mapped){
+            e.message += ' - ' + p.mapped
         }
         return e
     }

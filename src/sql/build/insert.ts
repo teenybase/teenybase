@@ -18,7 +18,12 @@ export type InsertQuery = {
 }
 
 // https://www.sqlite.org/lang_insert.html
-export function buildInsertQuery(query: InsertQuery, simplify = true, allowAllWhere = true): SQLQuery {
+/**
+ * @param redactColumns columns whose bound values must never be rendered by logSQLQuery - see
+ *   $Table.redactedFields. The value is still bound normally; only its rendering is suppressed.
+ */
+export function buildInsertQuery(query: InsertQuery, simplify = true, allowAllWhere = true,
+                                 redactColumns?: ReadonlySet<string>): SQLQuery {
     const p = { ...query.params }
     let q = 'INSERT'
 
@@ -39,7 +44,7 @@ export function buildInsertQuery(query: InsertQuery, simplify = true, allowAllWh
         for (let i = 0; i < keys.length; i++){
             const key = keys[i]
             if(setKeys[i] !== key) throw new Error('All values must have the same keys')
-            const set = literalToQuery(value[key])
+            const set = literalToQuery(value[key], true, redactColumns?.has(key))
             vals.push(set.q)
             Object.assign(p, set.p)
         }

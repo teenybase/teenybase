@@ -7,11 +7,11 @@ import {zParseWithPath, zCustomError} from '../../utils/zod'
 
 export function validateSettingsChange(nextConfig: DatabaseSettings, lastConfig: Partial<DatabaseSettings> | undefined) {
     nextConfig = zParseWithPath(databaseSettingsSchema, nextConfig, ['settings'])
-    if (nextConfig.version !== undefined) throw zCustomError(`Database settings version should not be set manually`, 'settings', 'version')
-    // if(nextConfig.version !== undefined && nextConfig.version !== lastConfig?.version) throw zCustomError(`Database version mismatch - ${nextConfig.version} !== ${lastConfig?.version}`, 'settings', 'version')
 
     {
-        // not using destructuring to override properties as its not changing the order in nodejs
+        // Strip `version` before equality — CLI stamps it on every deploy so it changes
+        // even when no real settings changed. Authoritative counter is `$settings_version`
+        // KV row; `settings.version` is just the deploy-time mirror.
         const n = {...nextConfig}
         delete n.version
         delete n['//']
@@ -22,9 +22,6 @@ export function validateSettingsChange(nextConfig: DatabaseSettings, lastConfig:
     }
 
     // todo make sure table name fields like _kvTableName(used in cli-utils) etc cannot be changed.
-
-    // diff
-    nextConfig.version = (nextConfig?.version ?? -1) + 1
 
     const issues: z.core.$ZodIssue[] = []
     const res: AlterSettings = {create: [], drop: [], alter: []}
