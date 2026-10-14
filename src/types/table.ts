@@ -58,6 +58,21 @@ export interface TableData<TF extends TableFieldData=TableFieldData, TE extends 
 
     extensions: TE[]
 
+    /**
+     * Opt this table out of default-deny access.
+     *
+     * A table without a `rules` extension denies list/view/insert/update/delete to anonymous and
+     * signed-in users (only admin and service-token requests get through), and `teeny generate` /
+     * `teeny deploy` refuse to run until the table either gets a `rules` extension or sets
+     * `public: true`.
+     *
+     * `public: true` makes every CRUD operation on this table open to everyone, including
+     * unauthenticated requests. It cannot be combined with a `rules` extension.
+     *
+     * default - false
+     */
+    public?: boolean
+
     fullTextSearch?: {
         enabled?: boolean // default true
         fields: string[]

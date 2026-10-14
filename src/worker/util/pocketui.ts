@@ -5,7 +5,7 @@ import {$DBExtension} from '../$DBExtension'
 import {deleteCookie, getSignedCookie, setCookie, setSignedCookie} from 'hono/cookie'
 import {ContentfulStatusCode, StatusCode} from 'hono/utils/http-status'
 import {decode} from '@tsndr/cloudflare-worker-jwt'
-import {$Env} from '../env'
+import {$Env, envBool} from '../env'
 
 const cookieName = 'teeny-pocket-ui-access-token'
 const cookieNameRec = 'teeny-pocket-ui-user-data'
@@ -111,7 +111,7 @@ export class PocketUIExtension<T extends PocketUiEnv = PocketUiEnv> implements $
                         await this.db.initAuth(password)
                         token = await this.db.generateAdminToken(username || 'viewer')
                     }catch (e: any){
-                        if (this.db.c.env.RESPOND_WITH_ERRORS && e?.message) err = 'Unable to login - ' + e.message
+                        if (envBool(this.db.c.env.RESPOND_WITH_ERRORS) && e?.message) err = 'Unable to login - ' + e.message
                         token = null
                     }
                     if (!token) return this.loginPage(err, 400, iframe)
@@ -169,6 +169,8 @@ export class PocketUIExtension<T extends PocketUiEnv = PocketUiEnv> implements $
                 raw: async (_params, path) => {
                     // await this._initAuth()
                     // if(!this.db.auth.uid) return this.db.c.redirect('login') // this is done in frontend.
+                    // Redirect /pocket to /pocket/ so relative asset paths (./assets/) resolve correctly
+                    if (path === '/pocket') return this.db.c.redirect(this.db.apiBase + '/pocket/')
                     const base = (this.baseUrl||'').replace(/POCKET_UI_VERSION/g, this.uiVersion)
                     path = path.replace('/pocket/', '').replace('/pocket', '') || 'index.html'
                     const res = await fetch(base + path)

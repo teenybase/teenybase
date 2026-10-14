@@ -22,7 +22,8 @@ export async function aesGcmEncrypt<T extends string|Uint8Array>(content: T, pas
     const pwUtf8 = typeof password === 'string' ? new TextEncoder().encode(password) : password // encode password as UTF-8
     const pwHash = await crypto.subtle.digest('SHA-256', pwUtf8) // hash the password
 
-    const iv = crypto.getRandomValues(new Uint8Array(ivLen)) // get 96-bit random iv
+    // todo: default ivLen=5 is 40 bits. NIST recommends 96-bit (12 bytes) for AES-GCM. Change default to 12 and migrate existing tokens.
+    const iv = crypto.getRandomValues(new Uint8Array(ivLen))
     const ivStr = Array.from(iv).map(b => String.fromCharCode(b)).join('') // iv as utf-8 string
 
     const alg = {name: 'AES-GCM', iv: iv} // specify algorithm to use
@@ -80,4 +81,15 @@ export async function aesGcmDecrypt<T extends string|Uint8Array>(ciphertext: T, 
     } catch (e) {
         throw new Error('Decrypt failed')
     }
+}
+
+/** Constant-time string comparison. Returns true if both strings are equal. */
+export function timingSafeEqual(a: string, b: string): boolean {
+    const encoder = new TextEncoder()
+    const aBytes = encoder.encode(a)
+    const bBytes = encoder.encode(b)
+    const lengthsMatch = aBytes.byteLength === bBytes.byteLength
+    return lengthsMatch
+        ? crypto.subtle.timingSafeEqual(aBytes, bBytes)
+        : !crypto.subtle.timingSafeEqual(aBytes, aBytes)
 }

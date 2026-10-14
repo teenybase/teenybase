@@ -12,21 +12,26 @@ import {appendWhere, SelectQuery} from '../../sql/build/select'
 import {recordToSqlValues} from '../../sql/parse/parse'
 import {JWTPayload, JWTPayload2} from '../../types/jwt'
 import {generateUid, randomString} from '../../security/random'
+import {timingSafeEqual} from '../../security/encryption'
 import {InsertParams, SQLLiteral, SQLQuery} from '../../types/sql'
 import {passwordProcessors} from '../util/passwordProcessors'
 import {Context} from 'hono'
 import {normalizeEmail} from '../util/normalizeEmail'
+import {checkBlocklist} from '../email/block-list'
 import {sqlValSchema} from '../../types/zod/sqlSchemas'
 import {tableAuthDataSchema} from '../../types/zod/tableExtensionsSchema'
 import {decode} from '@tsndr/cloudflare-worker-jwt'
 import {defaultSchema, jwtTokenSchema, uidTokenSchema} from './tableAuthExtension.schema'
 import {setupTableAuthExtensionRoutes} from './tableAuthExtension.routes'
-import {D1Error} from '../util/error'
+import {isUniqueViolationOn} from '../util/sqlConstraintError'
+import {FieldError} from '../util/error'
+import {sha256Hex} from '../util/hash'
 import {zParseWithPath} from '../../utils/zod'
 import {deleteCookie, getCookie, setCookie} from 'hono/cookie'
-import {OAuthExchangeResult, OAuthProviderConfig} from '../../types/config'
+import {AuthProvider, OAuthExchangeResult} from '../../types/config'
+import {envBool} from '../env'
 
-type OAuthPreset = Pick<OAuthProviderConfig, 'authorizeUrl' | 'tokenUrl' | 'userinfoUrl' | 'scopes' | 'mapping' | 'authorizeParams' | 'userinfoHeaders' | 'userinfoField'>
+type OAuthPreset = Pick<AuthProvider, 'authorizeUrl' | 'tokenUrl' | 'userinfoUrl' | 'scopes' | 'mapping' | 'authorizeParams' | 'userinfoHeaders' | 'userinfoField' | 'trustEmailVerified'>
 
 const OAUTH_PRESETS: Record<string, OAuthPreset> = {
     google: {
@@ -35,6 +40,8 @@ const OAUTH_PRESETS: Record<string, OAuthPreset> = {
         scopes: ['openid', 'email', 'profile'],
         mapping: {avatar: 'picture'},
         authorizeParams: {include_granted_scopes: 'true'},
+        // Google ID token always carries email_verified: true for OAuth flows; trust as fallback.
+        trustEmailVerified: true,
     },
     github: {
         authorizeUrl: 'https://github.com/login/oauth/authorize',
@@ -43,6 +50,9 @@ const OAUTH_PRESETS: Record<string, OAuthPreset> = {
         scopes: ['user:email', 'read:user'],
         mapping: {avatar: 'avatar_url', username: 'login'},
         userinfoHeaders: {'User-Agent': 'Teenybase'},
+        // GitHub uses a custom exchange handler that filters /user/emails by `verified: true`
+        // and returns verified=true explicitly. trustEmailVerified is only used by the generic
+        // path, which GitHub doesn't take.
     },
     discord: {
         authorizeUrl: 'https://discord.com/oauth2/authorize',
@@ -50,6 +60,8 @@ const OAUTH_PRESETS: Record<string, OAuthPreset> = {
         userinfoUrl: 'https://discord.com/api/oauth2/@me',
         scopes: ['identify', 'email'],
         userinfoField: 'user',
+        // Discord's user object has `verified: boolean` (email verification). Map it.
+        mapping: {verified: 'verified'},
     },
     linkedin: {
         authorizeUrl: 'https://www.linkedin.com/oauth/v2/authorization',
@@ -57,6 +69,8 @@ const OAUTH_PRESETS: Record<string, OAuthPreset> = {
         userinfoUrl: 'https://api.linkedin.com/v2/userinfo',
         scopes: ['openid', 'email', 'profile'],
         mapping: {avatar: 'picture', verified: 'email_verified'},
+        // LinkedIn requires email verification at account creation; trust as fallback.
+        trustEmailVerified: true,
     },
 }
 
@@ -68,7 +82,7 @@ export type OAuthExchangeHandler = (ctx: {
     callbackUrl: string,
     clientId: string,
     clientSecret: string,
-    provider: OAuthProviderConfig & {scopes: string[]},
+    provider: AuthProvider & {name: string, clientId: string, clientSecret: string, scopes: string[]},
 }) => Promise<OAuthExchangeResult>
 
 type UserFields = {
@@ -132,7 +146,10 @@ export class TableAuthExtension extends TableExtension<TableAuthExtensionData> {
     }
 
     readonly mapping
-    private jwtSecret: ()=>Promise<string>
+    /** Resolves the auth extension's JWT secret. Public so callers (e.g. platform
+     * gateways verifying tokens externally) can sign/verify auth JWTs without
+     * going through `_loginWithToken`. */
+    jwtSecret: ()=>Promise<string>
 
     // todo remove c from here
     constructor(data: TableAuthExtensionData, table: $Table, jc: JsepContext, private c: Context) {
@@ -161,7 +178,14 @@ export class TableAuthExtension extends TableExtension<TableAuthExtensionData> {
         setupTableAuthExtensionRoutes.call(this)
     }
 
+    /** OR REPLACE deletes the conflicting user row (e.g. on email), which onDeleteParse forbids for non-admins. */
+    private _rejectReplace(query: {or?: string}) {
+        if(!this.jc.globals.auth?.admin && query.or?.trim().toUpperCase() === 'REPLACE')
+            throw new HTTPException(403, {message: `OR REPLACE is not allowed on the auth table "${this.table.name}"`})
+    }
+
     async onInsertParse(query: InsertQuery) {
+        this._rejectReplace(query)
         const v = query.values
         const records = Array.isArray(v) ? v : [v]
 
@@ -187,6 +211,7 @@ export class TableAuthExtension extends TableExtension<TableAuthExtensionData> {
     }
 
     async onUpdateParse(query: UpdateQuery) {
+        this._rejectReplace(query)
         const record = query.set
         await this._parsePasswordFieldUpdate(record as any, query)
     }
@@ -320,22 +345,19 @@ export class TableAuthExtension extends TableExtension<TableAuthExtensionData> {
             record['identity'] ? zParseWithPath(defaultSchema.identity, record['identity'].l, ["identity"]) :
             this._parseUsername(record)
 
-        const invalid = async()=>{
-            await new Promise((r)=>setTimeout(r, Math.random()*200)) // todo
-            return new HTTPException(400, {message: 'Invalid username or password'})
-        }
+        const invalid = ()=> new HTTPException(400, {message: 'Invalid username or password'})
         const user = username ? await this.findUser(username, false, true) : null
 
-        if(!user) throw await invalid()
-
-        const salt = user.passwordSalt || ''
+        const salt = user?.passwordSalt || ''
 
         const password = await this._parsePasswordFieldsLogin(record as any, salt).catch(e=>{
-            console.error(e)
+            if (envBool(this.c.env?.RESPOND_WITH_ERRORS)) throw e
+            if (e instanceof HTTPException && e.status >= 500) throw e
+            if (!(e instanceof HTTPException) && !(e instanceof z.ZodError)) throw e
             return null
         })
-        // console.log(password, res)
-        if(!password || password !== user.password) throw await invalid()
+
+        if(!user || !password || !user.password || !timingSafeEqual(password, user.password)) throw invalid()
 
         // todo
         // if(this.mapping.emailVerified && !user.emailVerified) throw new HTTPException(400, {message: 'Email not verified'})
@@ -350,7 +372,6 @@ export class TableAuthExtension extends TableExtension<TableAuthExtensionData> {
             record: this._userToFields(user),
         }
         if(this.mapping.emailVerified && !user.emailVerified) ret.verified = false
-        // return this.c.json(ret)
         return ret
     }
 
@@ -404,9 +425,33 @@ export class TableAuthExtension extends TableExtension<TableAuthExtensionData> {
     }
 
     private async _loginWithExternalUser(email: string, issData: any, provider?: string) {
+        // Normalize email from external provider (OAuth, JWT) — same rules as password sign-up
+        if (this.data.normalizeEmail !== false) {
+            try { email = normalizeEmail(email) } catch { /* non-fatal */ }
+        }
+        // Check disposable email domains (same as password sign-up)
+        try {
+            checkBlocklist(email, this.table.$db.c.env?.EMAIL_BLOCKLIST)
+        } catch (e: any) {
+            if (e instanceof HTTPException) throw e
+        }
         let res = await this.findUser(email, true)
         // todo make a setting in this.data to control whether a new user should be created on new token or should it be explicit
-        if(!res) res = await this._createUserToken(email, true, issData, undefined, undefined, provider)
+        if(!res) {
+            try {
+                res = await this._createUserToken(email, true, issData, undefined, undefined, provider)
+            } catch (e: any) {
+                // Concurrent first login: another in-flight request for this same new email won the INSERT
+                // between our findUser() and ours. _createUserToken deliberately does not retry an email
+                // collision (a fresh username cannot resolve it), so it lands here. The request's intent -
+                // "log this identity in" - is already satisfied by the row the other request wrote, and this
+                // path has already verified the external token's email, so adopting that row is safe.
+                // Re-read once; if the row still isn't there, the collision was not ours - rethrow.
+                if(!isUniqueViolationOn(e, this.mapping.email)) throw e
+                res = await this.findUser(email, true)
+                if(!res) throw e
+            }
+        }
 
         if(!res) throw new HTTPException(401, {message: 'Unauthorized'})
         if(res.email !== email) throw new HTTPException(400, {message: 'Invalid email'})
@@ -430,12 +475,19 @@ export class TableAuthExtension extends TableExtension<TableAuthExtensionData> {
     // region OAuth
 
     private _getOAuthProvider(name: string) {
-        const config = this.table.$db.settings.oauthProviders?.find(p => p.name === name)
-        if (!config) throw new HTTPException(404, {message: `OAuth provider not found: ${name}`})
+        const config = this.table.$db.settings.authProviders?.find(p => p.name === name && p.clientSecret)
+        if (!config || !config.name || !config.clientId || !config.clientSecret) {
+            throw new HTTPException(404, {message: `OAuth provider not found: ${name}`})
+        }
         const preset = OAUTH_PRESETS[name]
+        // For OAuth, use the first clientId if an array is provided (array is for JWT audience validation across platforms)
+        const clientId = Array.isArray(config.clientId) ? config.clientId[0] : config.clientId
         return {
             ...preset,
             ...config,
+            name: config.name,
+            clientId,
+            clientSecret: config.clientSecret,
             scopes: config.scopes ?? preset?.scopes ?? [],
             mapping: {...preset?.mapping, ...config.mapping},
             authorizeUrl: config.authorizeUrl ?? preset?.authorizeUrl,
@@ -534,7 +586,7 @@ export class TableAuthExtension extends TableExtension<TableAuthExtensionData> {
         const ret = await this._loginWithExternalUser(result.email, result, providerName)
         this._setAuthCookie(ret.token)
 
-        const redirectUrl = state.r || provider.redirectUrl || this.table.$db.settings.appUrl
+        const redirectUrl = this._validateRedirectUrl(state.r) || provider.redirectUrl || this.table.$db.settings.appUrl
         return this.c.redirect(redirectUrl)
     }
 
@@ -577,6 +629,17 @@ export class TableAuthExtension extends TableExtension<TableAuthExtensionData> {
 
         // Extract fields using mapping
         const mapping = {email: 'email', name: 'name', verified: 'email_verified', ...provider.mapping}
+        // Email verification: default false. Only mark verified when the provider explicitly
+        // returned a truthy value, OR when the provider is opted in via trustEmailVerified
+        // (e.g., Google, Apple, LinkedIn — providers that verify email at account creation).
+        // Never default-true: that enables pre-account-takeover via providers that don't validate
+        // email. See docs/security.md and Supabase auth (internal/api/external.go) for the same pattern.
+        const rawVerified = mapping.verified ? userInfo[mapping.verified] : undefined
+        const verified = (rawVerified === true || rawVerified === 1 || rawVerified === 'true')
+            ? true
+            : (rawVerified === false || rawVerified === 0 || rawVerified === 'false')
+                ? false
+                : (provider.trustEmailVerified === true)
         return {
             provider: provider.name,
             providerId: (userInfo.sub ?? userInfo.id) ? String(userInfo.sub ?? userInfo.id) : undefined,
@@ -584,7 +647,7 @@ export class TableAuthExtension extends TableExtension<TableAuthExtensionData> {
             name: mapping.name ? userInfo[mapping.name] : undefined,
             avatar: mapping.avatar ? userInfo[mapping.avatar] : undefined,
             username: mapping.username ? userInfo[mapping.username] : undefined,
-            verified: mapping.verified ? (userInfo[mapping.verified] ?? true) : true,
+            verified,
             rawData: userInfo,
         }
     }
@@ -629,8 +692,9 @@ export class TableAuthExtension extends TableExtension<TableAuthExtensionData> {
 
         const email = this.jc.globals.auth?.email
         if(!this.jc.globals.auth?.uid || !email) throw new HTTPException(401, {message: 'Unauthorized'})
+        if(!this.mapping.password) throw new HTTPException(500, {message: 'Invalid Configuration - password field required'})
         const data = await this.c.req.json()
-        if (!data) throw new HTTPException(400, {message: 'Usage: POST /auth/change-password {data} in JSON'})
+        if (!data || typeof data !== 'object' || Array.isArray(data)) throw new HTTPException(400, {message: 'Usage: POST /auth/change-password {data} in JSON'})
 
         const record = recordToSqlValues(data)
         const res = await this.findUser(email, false, true)
@@ -646,11 +710,17 @@ export class TableAuthExtension extends TableExtension<TableAuthExtensionData> {
         const password = await this._parsePasswordFieldsInsert(record)
         if(!password) throw new HTTPException(400, {message: 'Invalid password'})
 
-        const res2 = await this.updateUser(res.id, record)
+        // updateUser uses rawUpdate (no table rules, no noUpdate checks), so the SET is built from the hashed
+        // password and new salt only, like _confirmPasswordReset. Other body keys (role, email, email_verified, ...)
+        // are ignored and never written.
+        const set: Record<string, SQLLiteral> = {[this.mapping.password]: password}
+        if(this.mapping.passwordSalt) set[this.mapping.passwordSalt] = record[this.mapping.passwordSalt] as SQLLiteral
+
+        const res2 = await this.updateUser(res.id, set)
         if(!res2 || res2.id !== res.id) throw new HTTPException(500, {message: 'Failed to update password'})
 
-        // Invalidate all sessions after password change for security
-        const _token = await this._invalidateAllUserSessions(res.id) // return token
+        // Invalidate all other sessions after password change, keep current session active
+        await this._invalidateAllUserSessions(res.id, this.jc.globals.auth?.sid ?? undefined)
 
         return this.c.json({success: true})
     }
@@ -829,7 +899,27 @@ export class TableAuthExtension extends TableExtension<TableAuthExtensionData> {
     }
 
     private async _createUser(data: Required<InsertParams>['values']) {
-        const res = await this.table.insert({values: data, returning: this._userFields(false)}) ?? []
+        // todo revert and do properly
+        let res: any[]
+        try {
+            res = await this.table.insert({values: data, returning: this._userFields(false)}) ?? []
+        } catch (e: any) {
+            // D1Error.message is only the label ('Failed to run insert query'); the SQL text lives in
+            // data.error / errorMessage, which is what isUniqueViolationOn reads. Keyed on the
+            // CONFIGURED column names and anchored, so `email` does not also match `users.email_verified`
+            // and `username` does not match `users.username_lower`.
+            // FieldError: returned as data.<field> regardless of RESPOND_WITH_ERRORS, so a sign-up form
+            // can show the message on the right input; the SQL never reaches the response.
+            if (isUniqueViolationOn(e, this.mapping.email)) {
+                const message = 'An account with this email already exists'
+                throw new FieldError(message, {[this.mapping.email!]: message}, e)
+            }
+            if (isUniqueViolationOn(e, this.mapping.username)) {
+                const message = 'This username is already taken'
+                throw new FieldError(message, {[this.mapping.username!]: message}, e)
+            }
+            throw e
+        }
         const user = res ? this._fieldsToUser(res[0]) : null
         if (!user) throw new HTTPException(400, {message: 'Unable to create user'}) // todo maybe tell user it can be because of rules?
         return user
@@ -849,8 +939,7 @@ export class TableAuthExtension extends TableExtension<TableAuthExtensionData> {
             values[this.mapping.email] = {l: email}
         if(this.mapping.emailVerified)
             values[this.mapping.emailVerified] = {l: verified}
-        if(this.mapping.username)
-            values[this.mapping.username] = {l: externalData.username || email?.split('@')[0].toLowerCase().replace(/[^a-z0-9_]/g, '') || ''}
+        // username is set inside the insert/retry loop below - it changes per attempt
         if(this.mapping.name)
             values[this.mapping.name] = {l: externalData.name || 'User'}
 
@@ -860,11 +949,24 @@ export class TableAuthExtension extends TableExtension<TableAuthExtensionData> {
             let pass = generateUid()
             const salt = this.mapping.passwordSalt ? randomString(SALT_LENGTH) : ''
             pass = await this._hashPassword(pass, salt)
-            values[this.mapping.password] = {l: pass}
-            if(this.mapping.passwordSalt) values[this.mapping.passwordSalt] = {l: salt}
+            values[this.mapping.password] = {l: pass, redact: true}
+            if(this.mapping.passwordSalt) values[this.mapping.passwordSalt] = {l: salt, redact: true}
         }
 
-        const baseUsername = externalData.username || email?.split('@')[0].toLowerCase().replace(/[^a-z0-9_]/g, '')||''
+        // Derived from the email local part when the provider supplies no username. The ASCII strip
+        // can empty it out entirely (fully non-Latin local parts, e.g. गुजरात@gmail.com) and this path
+        // does NOT run _parseUsername, so '' would be written straight through - NOT NULL passes on an
+        // empty string - and every later non-Latin sign-up would collide on it and retry into a bare
+        // `_<rand>` handle. See issues/open/i18n-auto-generated-username-from-a-non-latin-email-local-part-co.md
+        let baseUsername: string = String(externalData?.username ?? '').trim()
+            || (email ? email.split('@')[0].toLowerCase().replace(/[^a-z0-9_]/g, '') : '')
+        if(!baseUsername) {
+            // Deterministic, non-empty, ASCII-safe fallback derived from the identity itself, so a repeat
+            // sign-up for the same email derives the same base and any retry suffix appends to a real
+            // prefix. Starts with a letter, satisfying defaultSchema.username; 'user_' + 12 hex = 17 chars,
+            // 22 with the retry suffix, inside max(32).
+            baseUsername = 'user_' + (email ? (await sha256Hex(email)).slice(0, 12) : randomString(12).toLowerCase())
+        }
         const maxRetries = 5
         let lastError: any = null
         let isConstraintError: boolean = false
@@ -888,35 +990,20 @@ export class TableAuthExtension extends TableExtension<TableAuthExtensionData> {
                     const providerId = externalData?.providerId ?? externalData?.sub ?? externalData?.id
                     const rawData = externalData?.rawData ?? externalData
                     this.c.executionCtx.waitUntil(
+                        // todo batch this with the previous query, or use triggers?
                         this.table.$db.identities.insert(user.id, provider, providerId ? String(providerId) : undefined, rawData)
                     )
                 }
                 return user
             } catch (error: any) {
                 lastError = error
-                if(error instanceof D1Error){
-                    // edata structure for reference:
-                    //  {
-                    //   "error": "UNIQUE constraint failed: users.username: SQLITE_CONSTRAINT",
-                    //   "username": {
-                    //     "code": "SQLITE_CONSTRAINT",
-                    //     "message": "UNIQUE constraint failed"
-                    //   }
-                    //  }
-                    const edata = error.data
-                    // Check if it's a username constraint violation specifically
-
-                    // const errStr = edata?.error || error.message || ''
-                    // const isUniqueConstraint = errStr.toLowerCase().includes('unique constraint failed')
-
-                    const col = this.mapping.username && edata ? edata[this.mapping.username] : undefined
-                    isConstraintError = col && col.code?.toUpperCase() === 'SQLITE_CONSTRAINT' && (
-                        col.errorMessage?.toLowerCase().includes('unique constraint failed') ||
-                        col.constraint?.toUpperCase() === 'UNIQUE'
-                    )
-                    // console.error(`Attempt ${attempt + 1} failed with error:`, errStr)
-                    // console.error(JSON.stringify(edata, null, 2), isConstraintError)
-                }
+                // Retry ONLY a username collision: a fresh username cannot resolve an email collision,
+                // so that one must surface - _loginWithExternalUser recovers from it by re-reading.
+                // Matched on the message text, never on the parsed `code`: since workerd 2026-03-19 D1
+                // appends " (extended: SQLITE_CONSTRAINT_UNIQUE)", which parseD1Error's split(':').pop()
+                // turns into "SQLITE_CONSTRAINT_UNIQUE)" - the equality that used to gate this retry was
+                // therefore always false in production and the loop never ran once (IJ-331).
+                isConstraintError = isUniqueViolationOn(error, this.mapping.username)
             }
             if(isConstraintError && attempt < maxRetries - 1) {
                 // Retry with a different username
@@ -926,6 +1013,10 @@ export class TableAuthExtension extends TableExtension<TableAuthExtensionData> {
             break
         }
 
+        // NOTE: _loginWithExternalUser classifies this error with isUniqueViolationOn() to recover from a
+        // concurrent first login. If this throw is ever wrapped (e.g. to stop leaking the SQL -
+        // issues/resolved/error-response-leaks-sql-with-password-hash.md), the wrapper MUST pass the original
+        // error as `cause`, which is what the helper's bounded cause-walk relies on.
         throw lastError || new HTTPException(500, {message: 'Failed to create user after multiple attempts'})
     }
 
@@ -973,18 +1064,50 @@ export class TableAuthExtension extends TableExtension<TableAuthExtensionData> {
         return !identifier ? f : f.map(v => ident(v, jc))
     }
 
+    /** Validates a user-supplied redirect URL after OAuth login.
+     *  - Relative paths (e.g., '/dashboard') are resolved against appUrl.
+     *  - If allowedRedirectUrls is configured, checks exact match against that list only.
+     *  - If not configured, allows URLs matching appUrl hostname.
+     *  Returns the validated absolute URL, or undefined if rejected. */
+    private _validateRedirectUrl(url?: string): string | undefined {
+        if (!url) return undefined
+
+        const appUrl = this.table.$db.settings.appUrl
+
+        // Resolve relative paths against appUrl (e.g., '/dashboard' → 'https://myapp.com/dashboard')
+        let resolved: string
+        try {
+            resolved = new URL(url, appUrl).href
+        } catch { return undefined }
+
+        const allowed = this.table.$db.settings.allowedRedirectUrls
+        if (allowed && allowed.length > 0) {
+            return allowed.includes(resolved) ? resolved : undefined
+        }
+
+        // No allowlist configured — allow appUrl hostname only
+        try {
+            if (new URL(resolved).hostname === new URL(appUrl).hostname) return resolved
+        } catch { /* invalid URL */ }
+
+        return undefined
+    }
+
     private _kvVerificationSentKey = (user: UserFields)=> '@email_verification_sent_at_' + this.table.name + user.id
     private _kvTokenKey = (token: string)=> '@token_' + token // + this.table.name + user.id
     private _kvSessionKey = (user: {id: string}, id: string)=> '@session_' + this.table.name + user.id + '_' + id // + this.table.name + user.id
     private _kvPasswordResetSentKey = (user: UserFields)=> '@password_reset_sent_at_' + this.table.name + user.id
 
-    private async _invalidateAllUserSessions(userId: string) {
-        // todo get all keys with prefix and delete them
+    // todo: not transactional with the password update — if this fails, old sessions survive until JWT expiry
+    private async _invalidateAllUserSessions(userId: string, exceptSessionId?: string) {
+        const prefix = '@session_' + this.table.name + userId + '_'
+        const exceptKey = exceptSessionId ? this._kvSessionKey({id: userId}, exceptSessionId) : undefined
+        await this.table.$db.kv.removeByPrefix(prefix, exceptKey)
     }
 
     private _getEmailVars(){
         return {
-            APP_NAME: this.table.$db.settings.appName || 'Dollar App',
+            APP_NAME: this.table.$db.settings.appName || 'Teeny App',
             APP_URL: this.table.$db.settings.appUrl,
             // todo add RECORD:* for record specific data(username, name, email, role etc) like in pocketbase
         }
@@ -1035,7 +1158,7 @@ export class TableAuthExtension extends TableExtension<TableAuthExtensionData> {
                 TOKEN: token,
                 ...this._getEmailVars(),
             }
-        })
+        }, {html: template.layoutHtml, text: template.layoutText})
 
         const verificationTokenKey = this._kvTokenKey(token)
         const emailVerifyTokenDuration = this.data.emailVerifyTokenDuration || 1 * 60 * 60 // 1 hour
@@ -1043,7 +1166,7 @@ export class TableAuthExtension extends TableExtension<TableAuthExtensionData> {
         // await this.table.$db.kv.setSql(verificationKey, 'CURRENT_TIMESTAMP')
         await this.table.$db.kv.setMultiple({
             [verificationKey]: {sql: 'CURRENT_TIMESTAMP'},
-            [verificationTokenKey + token]: JSON.stringify({id: user.id, sub: user.email, typ: 'verify_email', cid: this.table.name,}),
+            [verificationTokenKey]: JSON.stringify({id: user.id, sub: user.email, typ: 'verify_email', cid: this.table.name,}),
         }, emailVerifyTokenDuration)
         // no need to save token as the user is verified when the token is used, or the token expires.
     }
@@ -1052,7 +1175,7 @@ export class TableAuthExtension extends TableExtension<TableAuthExtensionData> {
         if(!this.mapping.emailVerified) throw new HTTPException(500, {message: 'Invalid Configuration - emailVerified field required'})
 
         const {id, sub} = await this._useToken(token, 'verify_email')
-        if(uid && uid !== id) throw new Error('User mismatch')
+        if(uid && uid !== id) throw new HTTPException(403, {message: 'User mismatch'})
 
         const user = await this.findUser(sub, true)
         if(!user || user.id !== id) throw new HTTPException(400, {message: 'Invalid user'})
@@ -1075,7 +1198,7 @@ export class TableAuthExtension extends TableExtension<TableAuthExtensionData> {
         // every email will generate and send a new token but previous ones will still keep working
         const res = await this.table.$db.kv.get<number>(resetKey, '(unixepoch(CURRENT_TIMESTAMP) - unixepoch(value))')
         if(res !== null && res < passwordResetEmailDuration-1){
-            throw new Error('Password reset email already sent') // todo better error for frontend
+            throw new HTTPException(400, {message: 'Password reset email already sent'})
         }
 
         // const token = await this.table.$db.jwt.createJwtToken<{typ: string, cid: string}>({
@@ -1104,14 +1227,14 @@ export class TableAuthExtension extends TableExtension<TableAuthExtensionData> {
                 TOKEN: token,
                 ...this._getEmailVars(),
             }
-        })
+        }, {html: template.layoutHtml, text: template.layoutText})
 
         const resetTokenKey = this._kvTokenKey(token)
         const passwordResetTokenDuration = this.data.passwordResetTokenDuration || 60 * 60 // 1 hour
 
         await this.table.$db.kv.setMultiple({
             [resetKey]: {sql: 'CURRENT_TIMESTAMP'},
-            [resetTokenKey + token]: JSON.stringify({id: user.id, sub: user.email, typ: 'reset_password', cid: this.table.name}),
+            [resetTokenKey]: JSON.stringify({id: user.id, sub: user.email, typ: 'reset_password', cid: this.table.name}),
         }, passwordResetTokenDuration)
     }
 
@@ -1144,8 +1267,8 @@ export class TableAuthExtension extends TableExtension<TableAuthExtensionData> {
         const user2 = await this.updateUser(user.id, data)
         if(!user2) throw new HTTPException(500, {message: 'Failed to verify email'})
 
-        // Invalidate all sessions after password reset for security
-        const _token = await this._invalidateAllUserSessions(user.id) // todo return token
+        // Invalidate all sessions after password reset (caller creates a fresh session after)
+        await this._invalidateAllUserSessions(user.id)
 
         // await this.table.$db.kv.remove(resetTokenKey)
 
@@ -1195,7 +1318,12 @@ export class TableAuthExtension extends TableExtension<TableAuthExtensionData> {
                 throw new HTTPException(400, {message: `Invalid ${this.mapping.email} format`});
             }
         }
-        // todo check domain blocklists
+        // Check disposable/throwaway email domains
+        try {
+            checkBlocklist(val, this.table.$db.c.env?.EMAIL_BLOCKLIST)
+        } catch (e: any) {
+            if (e instanceof HTTPException) throw e
+        }
         record[this.mapping.email] = {l: val}
         return val
     }
@@ -1222,7 +1350,7 @@ export class TableAuthExtension extends TableExtension<TableAuthExtensionData> {
         if (this.data.passwordCurrentSuffix && !isAdmin) {
             if (!this.mapping.passwordSalt || salt) { // todo get the current salt from the db
                 let current = await this._parseCurrentPasswordField(record, salt || '')
-                const currentQ = literalToQuery(current)
+                const currentQ = literalToQuery({l: current, redact: true})
                 const where = {
                     q: `${ident(this.mapping.password, this.jc)} = ${currentQ.q}`,
                     p: currentQ.p
@@ -1246,23 +1374,18 @@ export class TableAuthExtension extends TableExtension<TableAuthExtensionData> {
             val = zParseWithPath(defaultSchema.password, val, [field])
 
             if (this.data.passwordConfirmSuffix) {
-                const confirmVal = (record[field + this.data.passwordConfirmSuffix] as SQLLiteral)?.l
-                // zod match so we get proper errors
-                // https://github.com/colinhacks/zod/discussions/1525
-                zParseWithPath(z.coerce.boolean().refine(bool => bool == true, {
-                    // todo better error message
-                    message: `${field} and ${field + this.data.passwordConfirmSuffix} do not match`
-                }), confirmVal, [field + this.data.passwordConfirmSuffix])
-
-                if (val !== confirmVal) throw new HTTPException(400, {message: 'unknown zod error'})
-                delete record[field + this.data.passwordConfirmSuffix]
+                const confirmField = field + this.data.passwordConfirmSuffix
+                const confirmVal = (record[confirmField] as SQLLiteral)?.l
+                zParseWithPath(z.string({message: `${confirmField} is required`}).min(1), confirmVal, [confirmField])
+                zParseWithPath(z.literal(val, {message: `${field} and ${confirmField} do not match`}), confirmVal, [confirmField])
+                delete record[confirmField]
             }
 
             const salt = this.mapping.passwordSalt ? randomString(SALT_LENGTH) : ''
             val = await this._hashPassword(val, salt)
 
-            record[field] = {l: val}
-            if (this.mapping.passwordSalt) record[this.mapping.passwordSalt] = {l: salt}
+            record[field] = {l: val, redact: true}
+            if (this.mapping.passwordSalt) record[this.mapping.passwordSalt] = {l: salt, redact: true}
             return record[field] as SQLLiteral<string>
         } else if (this.mapping.password) {
             throw new HTTPException(500, {message: 'Invalid Configuration'})
@@ -1277,7 +1400,7 @@ export class TableAuthExtension extends TableExtension<TableAuthExtensionData> {
         if (typeof val !== 'string') throw new HTTPException(400, {message: `${field} must be a value, expressions not support in password`})
         val = zParseWithPath(defaultSchema.password, val, [field])
         val = await this._hashPassword(val, salt)
-        record[field] = {l: val}
+        record[field] = {l: val, redact: true}
         return val
     }
 

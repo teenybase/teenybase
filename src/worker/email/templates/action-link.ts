@@ -9,4 +9,13 @@ export const actionLinkTemplate = `
         </tr>
     </table>
 </a>
+<table width="100%" border="0" cellspacing="0" cellpadding="0">
+    <tr><td height="10" style="height:10px; font-size:0px; line-height:0px;">&nbsp;</td></tr>
+    <tr>
+        <td align="left" style="font-family:-apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Helvetica Neue', Ubuntu, sans-serif; font-size: 12px; line-height: 18px; color: #666666; word-break: break-all;">
+            If the button above doesn't work, copy and paste this link into your browser:<br/>
+            <a href="{{action_link}}" style="color: #0074d4; text-decoration: underline;">{{action_link}}</a>
+        </td>
+    </tr>
+</table>
 `

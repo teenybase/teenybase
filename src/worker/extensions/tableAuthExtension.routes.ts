@@ -24,9 +24,9 @@ export function setupTableAuthExtensionRoutes(this: TableAuthExtension){
             description: 'Refresh login token',
             request: {headers: z.object({Authorization: z.string().min(10)}), body: {
                     required: true,
-                    content: {'application/json': {schema: {
+                    content: {'application/json': {schema: z.object({
                                 refresh_token: uidTokenSchema.describe('Refresh token provided with the token on login/refresh'),
-                            }}},
+                            })}},
                 }},
             responses: {
                 '200': {
@@ -144,18 +144,20 @@ export function setupTableAuthExtensionRoutes(this: TableAuthExtension){
                     required: true,
                     content: {'application/json': {schema: z.object({
                                 token: uidTokenSchema,
-                            }).and(z.record(z.string(), z.unknown()))}}, // todo password fields
+                            }).or(z.record(z.string(), z.unknown()))}}, // todo password fields
                     description: 'token and new password and new password confirm',
                 }
             },
             responses: {
                 '200': {
                     description: 'Success',
-                    schema: z.object({
-                        token: jwtTokenSchema,
-                        refresh_token: uidTokenSchema,
-                        record: this.table.zodSchema, // todo we can pick the fields here based on user fields mapping
-                    }),
+                    content: {'application/json': {
+                            schema: z.object({
+                                token: jwtTokenSchema,
+                                refresh_token: uidTokenSchema,
+                                record: this.table.zodSchema, // todo we can pick the fields here based on user fields mapping
+                            }),
+                        }},
                 },
             }
         }),
@@ -185,11 +187,13 @@ export function setupTableAuthExtensionRoutes(this: TableAuthExtension){
             responses: {
                 '200': {
                     description: 'Success',
-                    schema: z.object({
-                        token: jwtTokenSchema.optional(),
-                        refresh_token: uidTokenSchema.optional(),
-                        record: this.table.zodSchema, // todo we can pick the fields here based on user fields mapping
-                    }),
+                    content: {'application/json': {
+                            schema: z.object({
+                                token: jwtTokenSchema.optional(),
+                                refresh_token: uidTokenSchema.optional(),
+                                record: this.table.zodSchema, // todo we can pick the fields here based on user fields mapping
+                            }),
+                        }},
                 },
             }
         }),
@@ -204,9 +208,7 @@ export function setupTableAuthExtensionRoutes(this: TableAuthExtension){
                                 select_by: z.string().optional().describe('How the credential was selected'),
                             })}},
                 },
-                cookies: z.object({
-                    g_csrf_token: z.string().min(1).describe('CSRF token set by Google'),
-                }),
+                // cookies: z.object({ g_csrf_token: z.string() }), // todo model as cookie parameter in OpenAPI
             },
             responses: {
                 '200': {
@@ -239,9 +241,7 @@ export function setupTableAuthExtensionRoutes(this: TableAuthExtension){
                     code: z.string().min(1).describe('Authorization code from provider'),
                     state: z.string().min(1).describe('State parameter for CSRF verification'),
                 }),
-                cookies: z.object({
-                    oauth_state: z.string().min(1).describe('CSRF token set during authorize'),
-                }),
+                // cookies: z.object({ oauth_state: z.string() }), // todo model as cookie parameter in OpenAPI
             },
             responses: {
                 '302': {description: 'Redirect to frontend after successful login'},

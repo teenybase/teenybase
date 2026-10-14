@@ -7,7 +7,7 @@ export const defaultSchema = {
     email: z.string().min(1).max(255).email(),
     identity: z.string().min(1).max(255).email().or(z.string().min(1).max(32).regex(/^[a-zA-Z][a-zA-Z0-9_]*$/)), // email or username
     name: z.string().min(1).max(255).optional(),
-    emailVerified: z.coerce.boolean().optional(),
+    emailVerified: z.boolean().optional(),
 }
 
 /*.jwt()*/ // todo use jwt

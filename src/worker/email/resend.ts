@@ -11,6 +11,7 @@ export type ResendSendEmailProps = {
     to: string[]|string;
     subject: string;
     html: string;
+    text?: string;
     tags?: { name: string; value: string }[];
 };
 
@@ -34,11 +35,12 @@ export class ResendHelper {
         // }
     }
 
-    async sendEmail({ from, to, subject, html, tags }: ResendSendEmailProps) {
+    async sendEmail({ from, to, subject, html, text, tags }: ResendSendEmailProps) {
         to = Array.isArray(to) ? to : [to];
         to.forEach((recipient) => checkBlocklist(recipient, this.bindings.EMAIL_BLOCKLIST));
 
         const payload: any = { from, to, subject, html };
+        if (text) payload.text = text;
         if (tags) payload.tags = tags;
 
         const _key = this.bindings.RESEND_API_KEY

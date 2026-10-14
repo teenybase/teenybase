@@ -11,10 +11,9 @@ export type MGSendEmailProps = {
     from: string, to: string,
     subject: string,
     html: string,
+    text?: string,
     tags: string[]
 }
-const emailBlockList = 'yopmail.com,mailinator.com,guerrillamail.com,sharklasers.com,maildrop.cc'
-
 export interface MailgunProps extends Omit<MailgunBindings, 'MAILGUN_API_KEY' | 'MAILGUN_WEBHOOK_SIGNING_KEY'>{
     MAILGUN_API_KEY: string | (()=>Promise<string>)
     MAILGUN_WEBHOOK_SIGNING_KEY?: string | (()=>Promise<string>)
@@ -30,7 +29,7 @@ export class MailgunHelper{
         if(!this.bindings.MAILGUN_API_SERVER) throw new HTTPException(400, {message: 'Invalid mailgun configuration - missing MAILGUN_API_SERVER or MAILGUN_API_KEY'})
     }
 
-    async sendEmail({from, to, subject, html, tags}: MGSendEmailProps){
+    async sendEmail({from, to, subject, html, text, tags}: MGSendEmailProps){
         checkBlocklist(to, this.bindings.EMAIL_BLOCKLIST)
 
         const form = new FormData();
@@ -38,6 +37,7 @@ export class MailgunHelper{
         form.append('to', to)
         form.append('subject', subject)
         form.append('html', html)
+        if (text) form.append('text', text)
         // form.append('h:X-Mailgun-Variables', JSON.stringify(variables))
         tags.forEach(tag => form.append('o:tag', tag))
 
