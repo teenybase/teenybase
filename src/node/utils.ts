@@ -75,6 +75,12 @@ export function escapeReplacement(string: string) {
     return string.replace(/\$/g, '$$$$');
 }
 
+/** Extract a readable error message from any thrown value. Never returns "undefined" or "[object Object]". */
+export function getErrorMessage(e: any): string {
+    if (typeof e === 'string') return e
+    return e?.message || e?.stderr || e?.stdout || e?.output || (typeof e === 'object' ? JSON.stringify(e) : String(e)) || 'unknown error'
+}
+
 export function safeJSONParse(json?: string, logger?: Logger): any {
     try {
         return json ? JSON.parse(json) : null;

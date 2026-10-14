@@ -1,7 +1,8 @@
 import makeBinding, {ResultsFormat} from '../cloudflare/d1-api';
 import {URL} from 'url';
 import {replaceSqlPlaceholders} from './replaceSqlPlaceholders';
-import {execFileSync} from 'node:child_process';
+import fs from 'node:fs';
+import path from 'node:path';
 import {CliContext} from '../cli-utils';
 
 export function makeD1Binding(c: CliContext) {
@@ -12,9 +13,6 @@ export function makeD1Binding(c: CliContext) {
                 input: string | URL | Request,
                 init?: RequestInit,
             ): Promise<Response> {
-                c.logger.debug(JSON.stringify(input))
-                c.logger.debug(JSON.stringify(init || {}))
-
                 const body = typeof init?.body === 'string' ? JSON.parse(init.body) : undefined
                 if (!body) throw new Error('Request body is required to execute SQL command')
                 const url1 = typeof input === 'string' ? input : input instanceof URL ? input.toString() : input.url
@@ -29,8 +27,14 @@ export function makeD1Binding(c: CliContext) {
                     ? replaceSqlPlaceholders(body.sql, body.params)
                     : body.sql
 
+                // Log the SQL being executed — truncate long queries
+                const sqlPreview = body.sql.length > 200 ? body.sql.slice(0, 200) + '...' : body.sql
+                const paramsPreview = body.params?.length ? ` [${body.params.length} params]` : ''
+                c.logger.debug(`SQL: ${sqlPreview}${paramsPreview}`)
+
                 const args = [
-                    'wrangler', 'd1', 'execute',
+                    'd1', 'execute',
+                    `--config=${c.wranglerConfig.config.path}`,
                     c.wranglerConfig.db.binding,
                     ...(c.isLocal
                         ? [`--persist-to=${c.localPersistPath}`, '--local']
@@ -44,18 +48,28 @@ export function makeD1Binding(c: CliContext) {
                 let result
 
                 try {
-                    c.logger.debug('Executing command: npx ' + args.join(' '))
-                    const cdRes = execFileSync('npx', args, {
-                        cwd: c.root,
-                        stdio: ['inherit', 'pipe', 'pipe'],
-                        shell: true
-                    }).toString()
-                    c.logger.debug('Command output: ' + cdRes)
+                    c.logger.debug('Executing: wrangler d1 execute ' + (c.isLocal ? '--local' : '--remote'))
+                    const cdRes = (await c.runWrangler(args, {echo: false})).stdout
+                    if (cdRes.length > 500) {
+                        const tmpPath = path.join(c.root, '.teeny', 'd1-debug.log')
+                        fs.mkdirSync(path.dirname(tmpPath), {recursive: true})
+                        fs.appendFileSync(tmpPath, `\n--- ${new Date().toISOString()} SQL: ${sqlPreview} ---\n${cdRes}\n`)
+                        c.logger.debug(`Command output appended to file://${tmpPath} (${cdRes.length} chars)`)
+                    } else {
+                        c.logger.debug('Command output: ' + cdRes)
+                    }
                     result = JSON.parse(cdRes)
                 } catch (e: any) {
                     const cdRes = e?.stdout?.toString() || ''
                     c.logger.debug('Command exit status: ' + e?.status)
-                    c.logger.debug('Command output: ' + cdRes)
+                    if (cdRes.length > 500) {
+                        const tmpPath = path.join(c.root, '.teeny', 'd1-debug.log')
+                        fs.mkdirSync(path.dirname(tmpPath), {recursive: true})
+                        fs.appendFileSync(tmpPath, `\n--- ${new Date().toISOString()} ERROR SQL: ${sqlPreview} ---\n${cdRes}\n`)
+                        c.logger.debug(`Command error output appended to file://${tmpPath} (${cdRes.length} chars)`)
+                    } else {
+                        c.logger.debug('Command output: ' + cdRes)
+                    }
 
                     try {
                         result = JSON.parse(cdRes)
@@ -63,8 +77,8 @@ export function makeD1Binding(c: CliContext) {
                             throw new Error('UNSUPPORTED_ERROR_FORMAT')
                         }
                     } catch (e1) {
-                        const err = '' + e?.stderr + '' + e?.stdout
-                        c.logger.error(`Error executing D1 command, status - ${e.status}\n${err}`)
+                        const err = [e?.stderr, e?.stdout].filter(Boolean).join('\n') || e?.message || 'unknown error'
+                        c.logger.debug(`Error executing D1 command, status - ${e.status}. ${err}`)
                         throw new Error(`Error executing D1 command: ${err}`)
                     }
                     // {

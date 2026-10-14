@@ -4,6 +4,15 @@ import readline from 'readline'
 import colors from 'picocolors'
 import type { RollupError } from 'rollup'
 
+// Unicode symbols with ASCII fallbacks for non-TTY/piped output
+const isTTY = process.stdout.isTTY && colors.isColorSupported
+export const symbols = {
+    success: isTTY ? '✔' : '+',
+    error: isTTY ? '✘' : 'x',
+    warning: isTTY ? '⚠' : '!',
+    section: isTTY ? '◆' : '*',
+}
+
 export type LogType = 'error' | 'warn' | 'info' | 'debug'
 export type LogLevel = LogType | 'silent'
 export interface Logger {
@@ -15,6 +24,11 @@ export interface Logger {
     clearScreen(type: LogType): void
     hasErrorLogged(error: Error | RollupError): boolean
     hasWarned: boolean
+    level: LogLevel
+    // CLI output helpers (info-level, no-op when level < info)
+    section?(title: string): void
+    success?(msg: string): void
+    done?(msg?: string): void
 }
 
 export interface LogOptions {
@@ -97,6 +111,12 @@ export function createLogger(
             }
             const environment = options.environment ? options.environment + ' ' : ''
             return `${colors.dim(getTimeFormatter().format(new Date()))} ${tag} ${environment}${msg}`
+        } else if (type === 'debug') {
+            return colors.dim(`[debug] ${msg}`)
+        } else if (type === 'error') {
+            return `${colors.red(symbols.error)} ${msg}`
+        } else if (type === 'warn') {
+            return `${colors.yellow(symbols.warning)} ${msg}`
         } else {
             return msg
         }
@@ -104,7 +124,7 @@ export function createLogger(
 
     function output(type: LogType, msg: string, options: LogErrorOptions = {}) {
         if (thresh >= LogLevels[type]) {
-            const method = type === 'info' || type==='debug' ? 'log' : type
+            const method = type === 'info' || type === 'debug' ? 'log' : type
 
             if (options.error) {
                 loggedErrors.add(options.error)
@@ -136,6 +156,7 @@ export function createLogger(
 
     const logger: Logger = {
         hasWarned: false,
+        level: level,
         debug(msg, opts) {
             output('debug', msg, opts)
         },
@@ -163,6 +184,21 @@ export function createLogger(
         },
         hasErrorLogged(error) {
             return loggedErrors.has(error)
+        },
+        section(title) {
+            if (thresh >= LogLevels['info']) {
+                console.log(`\n${colors.cyan(symbols.section)} ${colors.bold(title)}\n`)
+            }
+        },
+        success(msg) {
+            if (thresh >= LogLevels['info']) {
+                console.log(`  ${colors.green(symbols.success)} ${msg}`)
+            }
+        },
+        done(msg) {
+            if (thresh >= LogLevels['info']) {
+                console.log(`\n${colors.green(symbols.success)} ${colors.bold(msg || 'Done')}\n`)
+            }
         },
     }
 
