@@ -28,32 +28,3 @@ export async function ask<T = any>(question: Omit<PromptObject<'value'>, 'name'>
     if (cancelled) throw new Error('Cancelled')
     return res.value as T
 }
-
-export async function promptEmail(initial?: string): Promise<string> {
-    if (initial) return initial
-    const value = await ask<string>({
-        type: 'text', message: 'Email:',
-        validate: (v: string) => v.includes('@') || 'Please enter a valid email',
-    }, 'Pass --email.')
-    if (!value) throw new Error('Email is required. Pass --email or run in an interactive terminal.')
-    return value
-}
-
-export async function promptPassword(initial?: string, opts?: {confirm?: boolean, minLength?: number}): Promise<string> {
-    const minLen = opts?.minLength ?? 0
-    if (initial != null) {
-        const val = String(initial)
-        if (minLen && val.length < minLen) throw new Error(`Password must be at least ${minLen} characters`)
-        return val
-    }
-    const password = await ask<string>({
-        type: 'password', message: 'Password:',
-        validate: minLen ? ((v: string) => v.length >= minLen || `Password must be at least ${minLen} characters`) : undefined,
-    }, 'Pass --password.')
-    if (!password) throw new Error('Password is required. Pass --password or run in an interactive terminal.')
-    if (opts?.confirm) {
-        const confirmed = await ask<string>({type: 'password', message: 'Confirm password:'}, 'Pass --password.')
-        if (confirmed !== password) throw new Error('Passwords do not match')
-    }
-    return password
-}

@@ -33,9 +33,12 @@ Release 0.1.0. The last version on npm is 0.0.14; 0.0.15 and 0.0.16 were never p
 - `teeny dev` reloads the worker when `deploy --local` applies new migrations; no restart needed.
 - `create` / `init --no-install`. Scaffolds pin `teenybase` to the exact CLI version that generated them and use `@cloudflare/workers-types` ^5.
 
+### Removed
+
+- Removed the hosted-platform commands (`register`, `login`, `logout`, `whoami`, `list`, `status`, `delete`) and the Teenybase Cloud deploy choice; deploys go to your own Cloudflare account only (or a `--temporary` one). Use `npx wrangler whoami` to check your Cloudflare login, and `npx wrangler delete` / `npx wrangler d1 delete` to remove a deployed worker or database.
+
 ### Changed
 
-- `register` / `login` have no built-in server: pass `--server <url>` or set `TEENYBASE_URL`. `deploy --remote --yes` never picks a deploy target; it needs `account_id` or `CLOUDFLARE_ACCOUNT_ID`.
 - `$Database` no longer requires an adapter argument; it falls back to the configured `database` (default: the `PRIMARY_DB` D1 binding).
 - File-name normalisation uses a Unicode-aware snake_case conversion.
 - `dist/` is cleaned before every build, so packed tarballs contain no stale files.
@@ -51,10 +54,9 @@ Release 0.1.0. The last version on npm is 0.0.14; 0.0.15 and 0.0.16 were never p
 - `zod`, `esbuild`, `miniflare` and `undici` are declared dependencies; `@cloudflare/workers-types` ^5 is accepted.
 - Applying migrations no longer fails when only the stored `sql_revert` differs from the local file.
 - Wrangler warnings on stderr no longer break the CLI's parsing of wrangler's JSON output.
-- A bug in the managed-deploy credential cache.
 - Broken documentation links (self-hosting anchor, JWT library link).
 
 ### Docs
 
-- Docs and skills describe deploying to your own Cloudflare account only. The platform-login commands (`register`, `login`, `logout`, `whoami`, `list`, `status`, `delete`) are summarised in the CLI reference.
+- Docs and skills describe deploying to your own Cloudflare account only.
 - `CONTRIBUTING.md`, `SECURITY.md` and this changelog.

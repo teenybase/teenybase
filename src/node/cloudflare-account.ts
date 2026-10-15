@@ -1,6 +1,5 @@
 import {ask} from './prompts'
 import {readableRelative} from './utils'
-import {applyManagedMode} from './credentials'
 import {CliContext, writeAccountIdToWranglerConfig} from './cli-utils'
 import {resolveWranglerPackage} from './utils/wrangler-bin'
 import {
@@ -67,46 +66,16 @@ export async function listLoginAccounts(c: CliContext): Promise<WhoamiAccount[]>
  * The Cloudflare account `teeny deploy --remote` deploys to (own-account path; `--temporary` uses
  * prepareTemporaryAccount instead):
  * 1. `account_id` in the wrangler config, else the CLOUDFLARE_ACCOUNT_ID env variable;
- * 2. else, interactively and only when a Teenybase Cloud login exists, ask Teenybase Cloud or own account;
- * 3. else the account of the wrangler login (`npx wrangler login` or CLOUDFLARE_API_TOKEN): used
+ * 2. else the account of the wrangler login (`npx wrangler login` or CLOUDFLARE_API_TOKEN): used
  *    directly when there is one, chosen interactively when there are several (with --yes: an error
  *    that lists them). The id is then saved as account_id in the wrangler config.
- * A deploy target is never picked on the user's behalf beyond (3).
+ * A deploy target is never picked on the user's behalf beyond (2).
  */
 export async function resolveDeployAccountId(c: CliContext, skipConfirmation: boolean): Promise<string> {
     const configFile = readableRelative(c.wranglerConfig.config.path)
     const configured = c.wranglerConfig.config.config.account_id
-    let accountId = (typeof configured === 'string' ? configured.trim() : '') || (process.env.CLOUDFLARE_ACCOUNT_ID || '').trim()
-
-    if (accountId) {
-        if (accountId.startsWith('tb-') && !process.env.CLOUDFLARE_API_BASE_URL) {
-            // applyManagedMode ran in initContext but found no credentials
-            throw new Error(`account_id "${accountId}" requires Teenybase credentials. Run \`teeny login\` first.`)
-        }
-        return accountId
-    }
-
-    if (!skipConfirmation && c.credentials) {
-        const target = await ask<string>({
-            type: 'select',
-            message: 'Where do you want to deploy?',
-            choices: [
-                {title: 'Teenybase Cloud', value: 'managed'},
-                {title: 'Your own Cloudflare account', value: 'self-hosted'},
-            ],
-        }, `Set account_id in ${configFile} or the CLOUDFLARE_ACCOUNT_ID environment variable.`)
-        if (target === 'managed') {
-            const creds = c.credentials
-            if (!creds.userId) throw new Error('Credentials missing userId. Run `teeny login` again.')
-            accountId = `tb-${creds.userId}`
-            writeAccountIdToWranglerConfig(c.wranglerConfig.config.path, accountId)
-            c.logger.info(`Set account_id = "${accountId}" in ${configFile}.`)
-            const refreshed = await applyManagedMode(accountId, c.logger)
-            if (refreshed) c.setCredentials(refreshed)
-            return accountId
-        }
-        if (target !== 'self-hosted') throw new Error('Cancelled')
-    }
+    const accountId = (typeof configured === 'string' ? configured.trim() : '') || (process.env.CLOUDFLARE_ACCOUNT_ID || '').trim()
+    if (accountId) return accountId
 
     const accounts = await listLoginAccounts(c)
     let account: WhoamiAccount | undefined

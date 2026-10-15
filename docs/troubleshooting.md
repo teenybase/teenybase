@@ -10,12 +10,6 @@ Common issues and solutions when using Teenybase.
 
 ---
 
-## Platform commands
-
-**`No Teenybase server set`** — `register` / `login` have no built-in server. Pass `--server <url>` or set `TEENYBASE_URL`. Later logins reuse the saved server. You don't need these commands to deploy to your own Cloudflare account.
-
----
-
 ## Email Verification
 
 **`Email not verified` (400) on OAuth callback** — Different error. The OAuth provider didn't confirm email verification. For custom providers, either map a verification field (`mapping.verified`) or set `trustEmailVerified: true` if you trust the provider. See [OAuth Guide → Email Verification Trust](oauth-guide.md#email-verification-trust).

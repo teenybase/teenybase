@@ -124,7 +124,6 @@ beforeEach(() => {
     tempDirs.push(home)
     process.env.HOME = home
     process.env.XDG_CONFIG_HOME = path.join(home, '.config')
-    process.env.TEENYBASE_CREDENTIALS = path.join(home, 'no-teeny-credentials.json')
     for (const k of ['CLOUDFLARE_API_TOKEN', 'CF_API_TOKEN', 'CLOUDFLARE_API_KEY', 'CF_API_KEY', 'CLOUDFLARE_EMAIL', 'CF_EMAIL', 'CLOUDFLARE_ACCOUNT_ID', 'WRANGLER_API_ENVIRONMENT']) delete process.env[k]
 })
 afterEach(() => {

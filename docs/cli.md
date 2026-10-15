@@ -99,8 +99,6 @@ teeny deploy --temporary --yes    # deploy to a temporary Cloudflare account (no
 2. the `CLOUDFLARE_ACCOUNT_ID` environment variable;
 3. the account of your wrangler login (`npx wrangler login`, or `CLOUDFLARE_API_TOKEN`), read with `wrangler whoami --json` (wrangler 4.65.0+). One account: used, and saved as `account_id` in the wrangler config. Several: you pick one; with `--yes` the command fails and lists them. Not logged in: the command fails and tells you to run `npx wrangler login` (or to use `--temporary`).
 
-Interactively, if you are also logged in to a teenybase platform server (`teeny login --server <url>`), it first asks whether to deploy there or to your own account. `--yes` never picks the platform server.
-
 **First-time remote deploy** automatically:
 1. Creates the D1 database for `"database_id": "TEENY_AUTO_CREATE"` and writes its id to the wrangler config
 2. Generates missing secrets into `.prod.vars`
@@ -128,7 +126,7 @@ Deploys to a Cloudflare [temporary account](https://developers.cloudflare.com/wo
 - **Unclaimed** accounts are deleted with the Worker, the database and all data. The URL first fails with a TLS error, then stops resolving. The next `--temporary` run notices the account changed, resets `database_id` to `TEENY_AUTO_CREATE` and the saved URL, and deploys fresh (new URL, empty database).
 - **Limits:** one D1 database (100 MB), no R2, workers.dev only. teeny refuses configs with `r2_buckets`, `routes`/custom domains, more than one D1 database, or other bindings Cloudflare doesn't list for temporary accounts (Vectorize, AI, Browser Rendering, Images, Analytics Engine, Email, Workflows, Pipelines, Secrets Store, dispatch namespaces, Containers) before any account is created. If the temporary account already has a database with the configured `database_name`, it is reused; a database with another name (e.g. from another project deployed with `--temporary` in the same hour) is an error.
 - **Terms:** creating the account accepts Cloudflare's Terms of Service and Privacy Policy. teeny prints this and asks before a new account is created; `--yes` accepts.
-- **Requirements:** wrangler 4.102.0 or newer (tested with 4.150.0), and no Cloudflare login: with `CLOUDFLARE_API_TOKEN`/`CLOUDFLARE_API_KEY` set or after `wrangler login`, `--temporary` fails; use `--remote`. Can't be combined with `--local`. `teeny logs`, `status`, `list` and `delete` don't support it.
+- **Requirements:** wrangler 4.102.0 or newer (tested with 4.150.0), and no Cloudflare login: with `CLOUDFLARE_API_TOKEN`/`CLOUDFLARE_API_KEY` set or after `wrangler login`, `--temporary` fails; use `--remote`. Can't be combined with `--local`. `teeny logs` doesn't support it.
 - Right after Cloudflare creates the account its API can reject requests for a few seconds (`Authentication error [code: 10000]`); teeny retries those for up to about 40 seconds.
 - wrangler stores the account in your user's config directory, so run every `--temporary` command as the same user with the same `HOME`.
 
@@ -236,12 +234,6 @@ Local mode doesn't need secret uploads — `.dev.vars` is read automatically by 
 
 ---
 
-## Platform commands
-
-`register`, `login`, `logout`, `whoami`, `list`, `status` and `delete` talk to a teenybase platform server that you name with `--server <url>` or `TEENYBASE_URL` (later commands reuse the server saved at login); there is no built-in default. Deploying to your own Cloudflare account doesn't use them. Run `teeny <command> --help` for their options.
-
----
-
 ## Observability
 
 ### `logs [name]`
@@ -263,11 +255,8 @@ teeny logs --limit 50                 # stop after 50 events (for CI)
 | `--interval <duration>` | `8s` | Polling interval |
 | `--overlap <duration>` | `1m` | Overlap window to catch delayed events |
 | `--limit <n>` | — | Stop after N events (for CI/scripting) |
-| `--server <url>` | — | Platform server URL (only with `teeny login`) |
 
-**Self-hosted:** Requires `CLOUDFLARE_API_TOKEN` environment variable with Workers:Read permission. Create one at [dash.cloudflare.com/profile/api-tokens](https://dash.cloudflare.com/profile/api-tokens).
-
-**Platform server:** if you deploy through `teeny login`, `logs` uses the saved login instead.
+**Credentials:** Requires `CLOUDFLARE_API_TOKEN` environment variable with Workers:Read permission. Create one at [dash.cloudflare.com/profile/api-tokens](https://dash.cloudflare.com/profile/api-tokens).
 
 > **Note:** Cloudflare has a ~1-2 minute ingestion delay. Logs from recent requests may take a moment to appear.
 
@@ -354,8 +343,6 @@ teeny deploy --local --yes
 |----------|-------------|
 | `TEENY_DEV_PORT` | Override dev server port (default: 8787) |
 | `TEENY_INSPECTOR_PORT` | Override inspector port (default: 9229) |
-| `TEENYBASE_URL` | Teenybase server URL for `register` / `login` when `--server` isn't passed |
-| `TEENYBASE_CREDENTIALS` | Custom credentials file path (useful for CI) |
 | `CLOUDFLARE_ACCOUNT_ID` | Cloudflare account for `--remote` when `account_id` isn't in the wrangler config |
 | `CLOUDFLARE_API_TOKEN` | Cloudflare API token for wrangler instead of `wrangler login` (CI). Can't be combined with `--temporary` |
 

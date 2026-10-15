@@ -3,8 +3,7 @@ import {randomUUID} from 'node:crypto'
 import {CliContext} from './cli-utils'
 import {getAuthFromEnv, ApiCredentials} from './wrangler/users/users'
 import {getCloudflareAccountIdFromEnv} from './wrangler/users/auth-variables'
-import {safeFetch, managedFetch, NOT_LOGGED_IN_ERROR} from './credentials'
-import {getErrorMessage} from './utils'
+import {getErrorMessage, safeFetch} from './utils'
 
 export interface LogsOptions {
     json?: boolean
@@ -12,7 +11,6 @@ export interface LogsOptions {
     interval?: string | number
     overlap?: string | number
     limit?: string | number
-    server?: string
 }
 
 /**
@@ -48,18 +46,7 @@ export async function runLogs(
     const sinceMs = parseDuration(options.since || '5m')
     const limit = options.limit ? Number(options.limit) : 0
 
-    let queryFn: QueryFn
-
-    if (accountId.startsWith('tb-')) {
-        // Managed mode — proxy through platform backend
-        // todo: token expires after 1hr with no auto-refresh; CLI exits and user must re-run
-        const result = await setupManagedMode(scriptName, logger)
-        queryFn = result.queryFn
-    } else {
-        // Self-hosted — hit CF API directly
-        const result = setupSelfHostedMode(accountId, scriptName, logger)
-        queryFn = result.queryFn
-    }
+    const {queryFn} = setupQuery(accountId, scriptName, logger)
 
     logger.info(colors.dim(`Streaming logs for ${colors.bold(scriptName)}... (Ctrl+C to stop)`))
     logger.info(colors.dim(`  Note: logs may appear with ~1-2 min delay (Cloudflare ingestion)\n`))
@@ -67,9 +54,9 @@ export async function runLogs(
     await pollLoop({queryFn, sinceMs, interval, overlap, json: options.json ?? false, limit})
 }
 
-// ── Mode setup ────────────────────────────────────────────────
+// ── Query setup ───────────────────────────────────────────────
 
-function setupSelfHostedMode(
+function setupQuery(
     accountId: string,
     scriptName: string,
     logger: any,
@@ -99,55 +86,6 @@ function setupSelfHostedMode(
         bodyTemplate.timeframe.from = from
         bodyTemplate.timeframe.to = to
         return safeFetch(url, {
-            method: 'POST',
-            headers,
-            body: JSON.stringify(bodyTemplate),
-            signal: AbortSignal.timeout(15000),
-        })
-    }
-
-    return {queryFn}
-}
-
-async function setupManagedMode(
-    workerName: string,
-    logger: any,
-): Promise<{queryFn: QueryFn}> {
-    const serverUrl = process.env.TEENYBASE_SERVER_URL
-    const apiToken = process.env.CLOUDFLARE_API_TOKEN
-    if (!serverUrl || !apiToken) throw new Error(NOT_LOGGED_IN_ERROR)
-
-    // Get a temp logs token from the platform backend
-    logger.info(colors.dim('  Requesting logs access...'))
-    let logsToken: string
-    let cfScriptName: string
-    try {
-        const data = await managedFetch('/client/v4/managed/logs/token', {
-            method: 'POST',
-            headers: {'Content-Type': 'application/json'},
-            body: JSON.stringify({workerName}),
-            signal: AbortSignal.timeout(15000),
-        })
-        logsToken = data.result.token
-        cfScriptName = data.result.scriptName
-    } catch (e: any) {
-        logger.error(colors.red(`Failed to get logs access: ${getErrorMessage(e)}`))
-        process.exit(1)
-    }
-
-    const queryUrl = `${serverUrl}/client/v4/managed/logs/query`
-    const headers: Record<string, string> = {
-        'Content-Type': 'application/json',
-        'Authorization': `Bearer ${apiToken}`,
-        'X-Logs-Token': logsToken,
-    }
-    const bodyTemplate = makeBodyTemplate(cfScriptName)
-
-    const queryFn: QueryFn = async (from, to) => {
-        bodyTemplate.queryId = randomUUID()
-        bodyTemplate.timeframe.from = from
-        bodyTemplate.timeframe.to = to
-        return safeFetch(queryUrl, {
             method: 'POST',
             headers,
             body: JSON.stringify(bodyTemplate),

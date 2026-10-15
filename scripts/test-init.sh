@@ -35,7 +35,7 @@ fail() { echo -e "  ${RED}✗${RESET} $1"; FAIL=$((FAIL + 1)); }
 skip() { echo -e "  ${DIM}○${RESET} $1 (skipped)"; }
 section() { echo; echo -e "${YELLOW}━━━ $1 ━━━${RESET}"; }
 
-# Run teeny CLI without managed mode interfering
+# Run teeny CLI without the caller's Cloudflare API settings (base URL, token) leaking in
 run_teeny() {
     CLOUDFLARE_API_BASE_URL="" CLOUDFLARE_API_TOKEN="" \
         node "$TEENY_BIN" "$@"

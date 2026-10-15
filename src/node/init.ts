@@ -5,7 +5,6 @@ import colors from 'picocolors'
 import {ask} from './prompts'
 import {getErrorMessage} from './utils'
 import {DEFAULT_CONFIG_FILES, DEFAULT_WRANGLER_CONFIG_FILES} from './constants'
-import {loadCredentials} from './credentials'
 import {readTeenybasePackageVersion} from './utils/package-root'
 import {modify as jsoncModify, applyEdits as jsoncApplyEdits} from 'jsonc-parser'
 
@@ -23,7 +22,6 @@ interface ProjectState {
     hasMigrationsDir: boolean
     hasClaudeSettings: boolean
     packageManager: 'npm' | 'pnpm' | 'yarn' | 'bun'
-    isManaged: boolean
     projectName: string
 }
 
@@ -41,13 +39,6 @@ function detectProjectState(root: string): ProjectState {
     const hasMigrationsDir = exists('migrations')
     const hasClaudeSettings = exists('.claude/settings.json')
     const packageManager = detectPackageManager(root)
-
-    let isManaged = false
-    try {
-        isManaged = loadCredentials() !== null
-    } catch {
-        // ignore — credentials module may fail in edge cases
-    }
 
     let projectName = path.basename(root)
     if (hasPackageJson) {
@@ -71,7 +62,6 @@ function detectProjectState(root: string): ProjectState {
         hasMigrationsDir,
         hasClaudeSettings,
         packageManager,
-        isManaged,
         projectName,
     }
 }
@@ -311,9 +301,6 @@ export async function runInit(root: string, options: InitOptions): Promise<void>
     check(state.hasDevVars, '.dev.vars')
     check(state.hasGitignore, '.gitignore')
     check(state.hasMigrationsDir, 'migrations/')
-    if (state.isManaged) {
-        console.log(`  ${colors.blue('☁')} Teenybase credentials found`)
-    }
     console.log()
 
     // Determine template variant
@@ -337,40 +324,21 @@ export async function runInit(root: string, options: InitOptions): Promise<void>
     }
 
     // Determine deploy target
-    let deployTarget: 'managed' | 'self-hosted' | undefined
-    if (state.hasWranglerConfig) {
-        // Detect from existing wrangler config
-        try {
-            const wranglerPath = DEFAULT_WRANGLER_CONFIG_FILES
-                .map(f => path.join(root, f))
-                .find(f => fs.existsSync(f))
-            if (wranglerPath) {
-                const raw = fs.readFileSync(wranglerPath, 'utf8')
-                const accountMatch = raw.match(/"account_id"\s*:\s*"([^"]*)"/)
-                if (accountMatch?.[1]?.startsWith('tb-')) deployTarget = 'managed'
-                else if (accountMatch?.[1]) deployTarget = 'self-hosted'
-            }
-        } catch { /* ignore parse errors */ }
-    } else {
-        // New project — ask where to deploy
-        if (options.yes) {
-            // --yes never picks a deploy target (in particular not a hosted Teenybase server just
-            // because a login exists); `deploy --remote` asks or reads account_id later.
-            deployTarget = undefined
-        } else {
-            const target = await ask<string>({
-                type: 'select',
-                message: 'Where do you want to deploy?',
-                choices: [
-                    {title: 'Teenybase Cloud', value: 'managed'},
-                    {title: 'Your own Cloudflare account', value: 'self-hosted'},
-                    {title: 'Decide later', value: 'later'},
-                ],
-                initial: state.isManaged ? 0 : 2,
-            }, NON_INTERACTIVE_HINT)
-            if (target === 'managed') deployTarget = 'managed'
-            else if (target === 'self-hosted') deployTarget = 'self-hosted'
-        }
+    // New project: ask whether it will deploy to the user's own Cloudflare account, which only adds an
+    // empty account_id line (filled in by the first `deploy --remote`). --yes never picks a target;
+    // `deploy --remote` reads account_id or the wrangler login later.
+    let deployToOwnAccount = false
+    if (!state.hasWranglerConfig && !options.yes) {
+        const target = await ask<string>({
+            type: 'select',
+            message: 'Where do you want to deploy?',
+            choices: [
+                {title: 'Your own Cloudflare account', value: 'self-hosted'},
+                {title: 'Decide later', value: 'later'},
+            ],
+            initial: 1,
+        }, NON_INTERACTIVE_HINT)
+        deployToOwnAccount = target === 'self-hosted'
     }
 
     // Determine project name — sanitize auto-detected name when --yes skips the prompt
@@ -415,15 +383,7 @@ export async function runInit(root: string, options: InitOptions): Promise<void>
 
     if (!state.hasWranglerConfig) {
         let wranglerContent = generateWranglerJsonc(projectName)
-        if (deployTarget === 'managed') {
-            const creds = loadCredentials()
-            if (!creds?.userId) throw new Error('Credentials missing userId. Run `teeny login` again.')
-            const accountId = `tb-${creds.userId}`
-            wranglerContent = wranglerContent.replace(
-                '"main": "src/index.ts"',
-                `"account_id": "${accountId}",\n    "main": "src/index.ts"`
-            )
-        } else if (deployTarget === 'self-hosted') {
+        if (deployToOwnAccount) {
             wranglerContent = wranglerContent.replace(
                 '"main": "src/index.ts"',
                 '"account_id": "",  // Your Cloudflare account ID. Filled in from your wrangler login by the first "teeny deploy --remote"\n    "main": "src/index.ts"'
@@ -503,20 +463,10 @@ export async function runInit(root: string, options: InitOptions): Promise<void>
     if (installSkipped) steps.push(`${colors.cyan(`${pm} install`)}                 — install dependencies`)
     steps.push(`${colors.cyan('npx teenybase deploy --local')}  — generate and apply migrations to the local database`)
     steps.push(`${colors.cyan('npx teenybase dev')}             — start local dev server`)
-    if (deployTarget === 'managed') {
-        steps.push(`${colors.cyan('npx teenybase login')}           — log in to Teenybase Cloud`)
-        steps.push(`${colors.cyan('npx teenybase deploy --remote')} — deploy to Teenybase Cloud`)
-    } else if (deployTarget === 'self-hosted') {
-        steps.push(`${colors.cyan('npx wrangler login')}            — authenticate with Cloudflare`)
-        steps.push(`${colors.cyan('npx teenybase deploy --remote')} — deploy to your CF account`)
-    } else {
-        steps.push(`${colors.cyan('npx wrangler login')}            — authenticate with Cloudflare`)
-        steps.push(`${colors.cyan('npx teenybase deploy --remote')} — deploy to your CF account`)
-    }
+    steps.push(`${colors.cyan('npx wrangler login')}            — authenticate with Cloudflare`)
+    steps.push(`${colors.cyan('npx teenybase deploy --remote')} — deploy to your CF account`)
     steps.forEach((s, i) => console.log(`  ${i + 1}. ${s}`))
-    if (deployTarget !== 'managed') {
-        console.log(`\n  No Cloudflare account yet? ${colors.cyan('npx teenybase deploy --temporary')} deploys to a temporary one (no login; claim it within 60 minutes to keep it).`)
-    }
+    console.log(`\n  No Cloudflare account yet? ${colors.cyan('npx teenybase deploy --temporary')} deploys to a temporary one (no login; claim it within 60 minutes to keep it).`)
     console.log()
 }
 

@@ -89,3 +89,16 @@ export function safeJSONParse(json?: string, logger?: Logger): any {
         return null;
     }
 }
+
+/**
+ * Fetch with user-friendly error messages for network/timeout failures.
+ * Wraps native fetch so callers don't see raw "fetch failed" errors.
+ */
+export async function safeFetch(url: string, init?: RequestInit): Promise<Response> {
+    try {
+        return await fetch(url, init)
+    } catch (e: any) {
+        if (e?.name === 'TimeoutError') throw new Error(`Request timed out (${url})`)
+        throw new Error(`Could not connect to ${url}: ${e?.cause?.message || e?.message || e}`)
+    }
+}

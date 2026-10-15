@@ -36,6 +36,19 @@ describe('CLI utility commands', () => {
         expect(plain).toMatch(/skills\s+check available Teeny skills before doing complex workflows/)
     })
 
+    it('has no hosted-platform commands', () => {
+        const res = runTeeny(['--help'])
+        expect(res.status).toBe(0)
+        const plain = res.stdout.replace(/\u001b\[\d+m/g, '')
+        const commands = [...plain.matchAll(/^ {2}(\S+)/gm)].map(m => m[1])
+        expect(commands).toContain('deploy')
+        expect(commands).toContain('logs')
+        for (const removed of ['register', 'login', 'logout', 'whoami', 'list', 'status', 'delete']) {
+            expect(commands).not.toContain(removed)
+        }
+        expect(plain).not.toMatch(/Teenybase Cloud|--server/)
+    })
+
     it('prints simple skill summaries from SKILL.md', () => {
         const res = runTeeny(['skills'])
         expect(res.status).toBe(0)

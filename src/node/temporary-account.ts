@@ -254,8 +254,8 @@ function formatExpiry(expiresAt: string): string {
 /**
  * Everything `--temporary` needs before the command touches config or data. Runs before any other
  * Cloudflare call:
- * 1. checks (no API call): wrangler ≥ 4.102, no env credentials, no hosted (`tb-`) or foreign
- *    account_id, no unsupported bindings;
+ * 1. checks (no API call): wrangler ≥ 4.102, no env credentials, no foreign account_id, no
+ *    unsupported bindings;
  * 2. Cloudflare's terms: printed, and confirmed interactively unless `--yes`, when a new account will be created;
  * 3. `wrangler d1 list --json --temporary` creates or reuses the account and lists its databases;
  * 4. config: a database_id the account doesn't have (the previous temporary account expired, or
@@ -281,9 +281,6 @@ export async function prepareTemporaryAccount(c: CliContext): Promise<TemporaryA
 
     const config = c.wranglerConfig.config.config
     const configAccountId = typeof config.account_id === 'string' ? config.account_id.trim() : ''
-    if (configAccountId.startsWith('tb-')) {
-        throw new Error(`${configFile} has account_id "${configAccountId}" (Teenybase Cloud). Remove it to deploy with --temporary.`)
-    }
     const problems = findTemporaryAccountConfigProblems(config)
     if (problems.length) {
         throw new Error(`This project can't be deployed to a temporary Cloudflare account:\n  - ${problems.join('\n  - ')}\nRemove these from ${configFile}, or log in ("npx wrangler login") and deploy to your own account with "npx teenybase deploy --remote".`)

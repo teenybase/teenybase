@@ -23,7 +23,6 @@ import {$DatabaseNode} from './$DatabaseNode'
 import {parseJSONC} from './workers-utils'
 import {D1Error} from '../worker'
 import {makeD1Binding} from './utils/make-d1-binding'
-import {Credentials, loadCredentials} from './credentials'
 import {resolveWranglerPackage} from './utils/wrangler-bin'
 import {
     runWrangler,
@@ -224,7 +223,6 @@ export function replacePlaceholderInConfig(content: string, key: string, placeho
  * replace placeholder with the resource ID, re-parse config, repeat.
  */
 export async function autoCreateResources(c: CliContext, skipConfirmation: boolean): Promise<void> {
-    const isManaged = !!process.env.CLOUDFLARE_API_BASE_URL
     const isToml = c.wranglerConfig.config.path.endsWith('.toml')
 
     for (let iteration = 0; iteration < MAX_PLACEHOLDER_ITERATIONS; iteration++) {
@@ -258,7 +256,6 @@ export async function autoCreateResources(c: CliContext, skipConfirmation: boole
                 type: 'd1',
                 name: parsed.name || d1Match.database_name,
                 region: parsed.region,
-                isManaged,
                 skipConfirmation,
             })
             content = replacePlaceholderInConfig(content, 'database_id', placeholder, replacement, isToml)
@@ -270,7 +267,6 @@ export async function autoCreateResources(c: CliContext, skipConfirmation: boole
                 type: 'r2',
                 name: parsed.name,
                 region: parsed.region,
-                isManaged,
                 skipConfirmation,
             })
             content = replacePlaceholderInConfig(content, 'bucket_name', placeholder, replacement, isToml)
@@ -294,12 +290,11 @@ interface CreateResourceOpts {
     type: 'd1' | 'r2'
     name?: string
     region?: string
-    isManaged: boolean
     skipConfirmation: boolean
 }
 
 async function createResource(c: CliContext, opts: CreateResourceOpts): Promise<string> {
-    const { type, isManaged, skipConfirmation } = opts
+    const { type, skipConfirmation } = opts
     const typeLabel = type === 'd1' ? 'D1 database' : 'R2 bucket'
     const createArgs = type === 'd1' ? ['d1', 'create'] : ['r2', 'bucket', 'create']
 
@@ -360,12 +355,9 @@ async function createResource(c: CliContext, opts: CreateResourceOpts): Promise<
         try {
             // A minimal config (name + account_id): the real one may still hold TEENY_AUTO_CREATE
             // placeholders that fail wrangler's validation.
-            const createName = isManaged ? `${crypto.randomBytes(6).toString('hex')}-${name}` : name! // managed: 12-char hex prefix
             const {stdout} = await withMinimalWranglerConfig(realConfig, configPath => c.runWrangler(
-                [...createArgs, createName, ...(region ? ['--location', region] : []), `--config=${configPath}`],
-                {echo: !isManaged}, // managed: silent, we handle errors ourselves
+                [...createArgs, name!, ...(region ? ['--location', region] : []), `--config=${configPath}`],
             ))
-            if (isManaged) return createName
             if (type === 'd1') {
                 const match = stdout.match(UUID_OUTPUT_RE)
                 if (!match) throw new Error('Could not parse database_id from wrangler d1 create output')
@@ -374,12 +366,6 @@ async function createResource(c: CliContext, opts: CreateResourceOpts): Promise<
             return name!
         } catch (e: any) {
             const err = e instanceof WranglerCommandError ? `${e.message}\n${e.output}` : getErrorMessage(e)
-
-            // UUID conflict (managed only) — retry silently with new UUID
-            if (err.includes('conflict') || err.includes('409')) {
-                c.logger.debug('Resource ID conflict, retrying with new UUID...')
-                continue
-            }
 
             // Name already taken on CF
             if (err.includes('already exists') || err.includes('already been used')) {
@@ -421,25 +407,11 @@ export class CliContext{
     readonly devServerLogLevel: Unstable_DevOptions['logLevel']
     devServerPort: number
 
-    /** Cached credentials — avoids repeated disk reads within the same command. undefined = not loaded yet. */
-    private _credentials: Credentials | null | undefined = undefined
-    get credentials(): Credentials | null {
-        if (this._credentials === undefined) {
-            this._credentials = loadCredentials()
-        }
-        return this._credentials
-    }
-    /** Replace cached credentials (e.g. after token refresh or saveCredentials). */
-    setCredentials(creds: Credentials | null): void {
-        this._credentials = creds
-    }
-
-    constructor(root: string|undefined, public options: GlobalCLIOptions, public wranglerConfig: WranglerConfigRet, logger: Logger, devServerLogLevel: Unstable_DevOptions['logLevel'] = "none", credentials?: Credentials | null) {
+    constructor(root: string|undefined, public options: GlobalCLIOptions, public wranglerConfig: WranglerConfigRet, logger: Logger, devServerLogLevel: Unstable_DevOptions['logLevel'] = "none") {
         this.logger = logger
         this.root = normalizePath(root ? path.resolve(root) : process.cwd())
         this.migrationsPath = path.join(this.root, wranglerConfig.migrations)
         this.devServerLogLevel = devServerLogLevel
-        if (credentials) this._credentials = credentials
         this.devServerPort = parseInt(process.env.TEENY_DEV_PORT || wranglerConfig.config.config.dev?.port || '8787')
         if(isNaN(this.devServerPort) || this.devServerPort <= 0 || this.devServerPort >= 65536){
             throw new Error(`Invalid port number specified in TEENY_DEV_PORT environment variable: ${process.env.TEENY_DEV_PORT}`)
@@ -840,26 +812,11 @@ export async function fetchWorker(c: CliContext, fPath: string, reqOptions?: Req
     } else {
         apiRoute = await c.getApiRoute()
     }
-    const extraHeaders: Record<string, string> = {}
-    // When deploying via Teenybase, include the user API token for worker-proxy authentication.
-    // When using the gateway, no extra auth header needed — gateway is public.
-    const creds = c.credentials
-    let isGatewayRoute = false
-    if (creds?.gatewayDomain && apiRoute) {
-        try {
-            const routeHost = new URL(apiRoute).hostname.toLowerCase()
-            isGatewayRoute = routeHost.endsWith('.' + creds.gatewayDomain.toLowerCase())
-        } catch { /* invalid URL, not a gateway route */ }
-    }
-    if (!isGatewayRoute && process.env.CLOUDFLARE_API_BASE_URL && process.env.CLOUDFLARE_API_TOKEN) {
-        extraHeaders['X-Platform-Token'] = process.env.CLOUDFLARE_API_TOKEN
-    }
     const fOptions = {
         method: reqOptions?.method ?? 'GET',
         ...reqOptions,
         headers: {
             'Authorization': `Bearer ${adminToken}`,
-            ...extraHeaders,
             ...reqOptions?.headers,
         } as any,
         signal: reqOptions?.signal ?? AbortSignal.timeout(5000) // 5 second timeout
@@ -1203,13 +1160,12 @@ export async function generateMigrationsDir(c: CliContext, clean = false, write 
 export async function wranglerDeploy(c: CliContext, config: DatabaseSettings, first = false, secretsFile?: string): Promise<string | undefined> {
     if(c.isLocal) throw new Error('Cannot deploy with --local')
 
-    const echo = !(!!c.credentials && c.logger.level !== 'debug') // silent for Teenybase Cloud deploys
     try {
         // todo switch to spawn so cleanup (removeCustomTsconfig) runs even if process is killed
         const {stdout: resB} = await c.runWrangler([
             'deploy', c.wranglerConfigFlag, `--tsconfig=${c.createCustomTsconfigForWorker(config, 'deploy')}`,
             ...(secretsFile ? [`--secrets-file=${secretsFile}`] : []),
-        ], {echo})
+        ])
 
         if (!first) return undefined
 
@@ -1221,34 +1177,12 @@ export async function wranglerDeploy(c: CliContext, config: DatabaseSettings, fi
         let route = cleanOutput.match(/https:\/\/[a-zA-Z0-9-.]+\.workers\.dev\r?\n.*Current Version ID:/gm)?.[0].split('\n')[0]
         // if(!route) route = resB.match(/\n[a-zA-Z0-9-.]+ (custom domain)\n*Current Version ID:/gm)?.[0].split('\n').map(r=>'https://'+r)[0]
 
-        // When deploying via Teenybase, use the gateway domain for user-facing URLs.
-        const apiBase = process.env.CLOUDFLARE_API_BASE_URL
-        const creds = c.credentials
-        if (apiBase && route && creds) {
-            const workerName = c.wranglerConfig.config.config.name
-            if (workerName && creds?.gatewayDomain && creds?.username) {
-                // Gateway domain can be path-based (sandbox: "host/_gateway") or subdomain-based (production: "apps.teenybase.work")
-                if (creds.gatewayDomain.includes('/')) {
-                    // Path-based: https://{gatewayDomain}/{username}/{workerName}
-                    route = `https://${creds.gatewayDomain}/${creds.username}/${workerName}`
-                } else {
-                    // Subdomain-based: https://{workerName}--{username}.{gatewayDomain}
-                    // Uses -- separator (single-level subdomain for SSL wildcard compatibility)
-                    route = `https://${workerName}--${creds.username}.${creds.gatewayDomain}`
-                }
-            } else if (workerName) {
-                // Fallback to worker-proxy if no gateway domain configured
-                const baseUrl = apiBase.replace(/\/client\/v4\/?$/, '')
-                route = `${baseUrl}/worker-proxy/${workerName}`
-            }
-        }
-
         return route
     }catch (e: any) {
         const err = e instanceof WranglerCommandError ? e.output : (e.message || String(e))
 
-        // wrangler's output was already shown unless the deploy ran silently
-        if (!echo || !(e instanceof WranglerCommandError)) c.logger.error(err)
+        // wrangler's output was already shown for a WranglerCommandError
+        if (!(e instanceof WranglerCommandError)) c.logger.error(err)
         const bucketNotFound = err.includes('workers.api.error.bucket_not_found [code: 10085]')
         if(bucketNotFound) {
             c.logger.error('Bucket specified in wrangler config is not found. Create a bucket in cloudflare using wrangler and set it in wrangler config')

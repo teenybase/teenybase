@@ -9,7 +9,7 @@ import path from 'path'
 import {getErrorMessage, readableRelative} from './utils'
 import {spawn} from 'node:child_process'
 import {exportLocal} from './wrangler/d1/export'
-import {loadConfigFromFile, loadWranglerConfigFromFile} from './config'
+import {loadConfigFromFile} from './config'
 import {
     applyTargetMode,
     AUTO_CREATE,
@@ -32,19 +32,8 @@ import {
     watchLocalPersistConfig,
 } from './cli-utils'
 import {TEENYBASE_VERSION} from '../index'
-import {
-    applyManagedMode,
-    authFlow,
-    Credentials,
-    deleteCredentials,
-    ensureEmailVerified,
-    loadCredentials,
-    managedFetch,
-    NOT_LOGGED_IN_ERROR,
-    resolveServerUrl,
-} from './credentials'
 import {runCreate, runInit} from './init'
-import {ask, promptEmail, promptPassword} from './prompts'
+import {ask} from './prompts'
 import {findTeenybasePackageRoot} from './utils/package-root'
 import {prepareTemporaryAccount, printTemporaryDeployment} from './temporary-account'
 import {resolveDeployAccountId} from './cloudflare-account'
@@ -85,10 +74,7 @@ function writeInfoToStderr(message: string, logLevel?: LogLevel) {
 
 async function initContext(options: GlobalCLIOptions, logger: Logger, ctx?: ActionContext) {
     const wranglerConfig = await parseWrangler(options.root, options, logger)
-    const creds = options.remote && !options.temporary
-        ? await applyManagedMode(wranglerConfig?.config?.config?.account_id, logger)
-        : null
-    const c = new CliContext(options.root, options, wranglerConfig, logger, undefined, creds)
+    const c = new CliContext(options.root, options, wranglerConfig, logger)
     if (ctx) ctx.c = c
     // --temporary: create/reuse the temporary account and fix up config before anything reads it
     if (options.temporary) await prepareTemporaryAccount(c)
@@ -141,42 +127,6 @@ function wrapAction<TArgs extends any[]>(
 interface ActionContext {
     logger: Logger
     c: CliContext | undefined
-}
-
-/**
- * Load credentials with optional wrangler config validation.
- * Tries to load wrangler config from the project root — if found and the account_id
- * is a tb- managed ID, calls applyManagedMode which validates that the logged-in user
- * matches the account_id (throws on mismatch). Falls back to loadCredentials() if no
- * wrangler config is present (e.g. running from outside a project directory).
- * Returns credentials + optional worker name from config.
- */
-async function loadValidatedCredentials(options: GlobalCLIOptions, logger: Logger): Promise<{creds: Credentials, workerName: string | null}> {
-    let workerName: string | null = null
-    let creds: Credentials | null = null
-    // Load wrangler config (optional — may not be in a project dir)
-    let accountId: string | undefined
-    try {
-        const root = options.root || process.cwd()
-        const wranglerConfig = await loadWranglerConfigFromFile(root, options.wrangler)
-        workerName = wranglerConfig.config.name || null
-        accountId = wranglerConfig.config.account_id
-    } catch { /* no wrangler config — fine for platform-level commands */ }
-    // applyManagedMode validates creds match account_id, sets env vars
-    // Errors here (mismatch, network) must propagate — not swallowed
-    if (accountId) {
-        creds = await applyManagedMode(accountId, logger)
-    }
-    if (!creds) {
-        creds = loadCredentials()
-        if (!creds) throw new Error(NOT_LOGGED_IN_ERROR)
-
-        const token = await ensureEmailVerified(creds.apiToken, creds, creds.serverUrl, logger)
-        if (token !== creds.apiToken) creds = {...creds, apiToken: token}
-    }
-    process.env.TEENYBASE_SERVER_URL = creds.serverUrl
-    if (!process.env.CLOUDFLARE_API_TOKEN) process.env.CLOUDFLARE_API_TOKEN = creds.apiToken
-    return {creds, workerName}
 }
 
 cli
@@ -599,219 +549,6 @@ cli
                 console.log(res)
             }
         },
-    ))
-
-// register
-cli
-    .command('register', 'create a Teenybase account')
-    .option('--server <url>', `[string] server URL (default: TEENYBASE_URL env, else the saved login's server)`)
-    .option('--email <email>', `[string] email address`)
-    .option('--username <username>', `[string] username (default: derived from email)`)
-    .option('--password <password>', `[string] password (min 8 characters)`)
-    .action(wrapAction(
-        async (ctx, options: GlobalCLIOptions & { server?: string, email?: string, username?: string, password?: string }) => {
-            const serverUrl = resolveServerUrl(options.server)
-            const emailVal = await promptEmail(options.email)
-            const defaultUsername = emailVal.split('@')[0].replace(/[^a-zA-Z0-9_-]/g, '_')
-            let usernameVal: string = options.username || ''
-            if (!usernameVal) {
-                const value = await ask<string>({
-                    type: 'text', message: 'Username:',
-                    initial: defaultUsername,
-                    validate: (v: string) => v.length >= 1 || 'Username is required',
-                }, 'Pass --username.')
-                if (!value) throw new Error('Username is required. Pass --username or run in an interactive terminal.')
-                usernameVal = value
-            }
-            const passVal = await promptPassword(options.password, {confirm: true, minLength: 8})
-            await authFlow({
-                serverUrl, logger: ctx.logger, username: usernameVal,
-                authPath: '/api/v1/table/platform_users/auth/sign-up',
-                authBody: {email: emailVal, username: usernameVal, name: usernameVal, password: passVal, passwordConfirm: passVal},
-                actionLabel: 'Registered as',
-                interactive: !!process.stdin.isTTY && !(options.email && options.password),
-            })
-        },
-        'none',
-    ))
-
-// login
-cli
-    .command('login', 'log in to Teenybase')
-    .option('--server <url>', `[string] server URL (default: TEENYBASE_URL env, else the saved login's server)`)
-    .option('--email <email>', `[string] email address`)
-    .option('--password <password>', `[string] password`)
-    .action(wrapAction(
-        async (ctx, options: GlobalCLIOptions & { server?: string, email?: string, password?: string }) => {
-            const serverUrl = resolveServerUrl(options.server)
-            const emailVal = await promptEmail(options.email)
-            const passVal = await promptPassword(options.password)
-            await authFlow({
-                serverUrl, logger: ctx.logger,
-                authPath: '/api/v1/table/platform_users/auth/login-password',
-                authBody: {email: emailVal, password: passVal},
-                actionLabel: 'Logged in as',
-                interactive: !!process.stdin.isTTY && !(options.email && options.password),
-            })
-        },
-        'none',
-    ))
-
-// logout
-cli
-    .command('logout', 'log out from Teenybase')
-    .action(wrapAction(
-        async (ctx, options: GlobalCLIOptions) => {
-            if (deleteCredentials()) {
-                ctx.logger.info('Logged out successfully')
-            } else {
-                ctx.logger.info('Not logged in')
-            }
-        },
-        'none',
-    ))
-
-// whoami
-cli
-    .command('whoami', 'show current logged-in user')
-    .action(wrapAction(
-        async (ctx, options: GlobalCLIOptions) => {
-            const {logger} = ctx
-            const creds = loadCredentials()
-            if (creds) {
-                logger.info(`Logged in as ${colors.bold(creds.email)}`)
-                logger.info(`Server: ${creds.serverUrl}`)
-            } else {
-                logger.info('Not logged in. Run "teeny register" or "teeny login" to get started.')
-            }
-        },
-        'none',
-    ))
-
-// list
-cli
-    .command('list', 'list deployed workers')
-    .action(wrapAction(
-        async (ctx, options: GlobalCLIOptions) => {
-            const {logger} = ctx
-            await loadValidatedCredentials(options, logger)
-
-            const data = await managedFetch('/client/v4/managed/workers', {
-                signal: AbortSignal.timeout(15000),
-            })
-
-            const workers = data.result || []
-            if (workers.length === 0) {
-                logger.info('No workers deployed. Run `teeny deploy` to deploy.')
-                return
-            }
-
-            logger.info(colors.bold('Your workers:\n'))
-            for (const w of workers) {
-                logger.info(`  ${colors.green(w.name)}`)
-                logger.info(`    Created: ${w.created_at}`)
-                if (w.databases?.length > 0) {
-                    logger.info(`    Databases: ${w.databases.map((d: any) => d.name).join(', ')}`)
-                }
-                logger.info('')
-            }
-        },
-        'remote',
-    ))
-
-// status
-cli
-    .command('status [name]', 'show status of a deployed worker')
-    .action(wrapAction(
-        async (ctx, name: string | undefined, options: GlobalCLIOptions) => {
-            const {logger} = ctx
-            const {creds, workerName: workerNameFromConfig} = await loadValidatedCredentials(options, logger)
-
-            const workerName = name || workerNameFromConfig
-            if (!workerName) {
-                throw new Error('Worker name required. Provide as argument or run from a project with wrangler.jsonc.')
-            }
-
-            const data = await managedFetch(`/client/v4/managed/workers/${encodeURIComponent(workerName)}`, {
-                signal: AbortSignal.timeout(15000),
-            })
-
-            const w = data.result
-            logger.info(colors.bold(`Worker: ${w.name}\n`))
-            // Show gateway URL if available, otherwise fall back to raw CF URL
-            if (creds.gatewayDomain && creds.username) {
-                const gwUrl = creds.gatewayDomain.includes('/')
-                    ? `https://${creds.gatewayDomain}/${creds.username}/${w.name}`
-                    : `https://${w.name}--${creds.username}.${creds.gatewayDomain}`
-                logger.info(`  URL: ${gwUrl}`)
-            } else if (w.url) {
-                logger.info(`  URL: ${w.url}`)
-            }
-            logger.info(`  Created: ${w.created_at}`)
-            if (w.deployment) {
-                logger.info(`  Last deploy: ${w.deployment.created_on}`)
-            }
-            if (w.databases?.length > 0) {
-                logger.info(`  Databases:`)
-                for (const d of w.databases) {
-                    logger.info(`    - ${d.name}`)
-                }
-            }
-        },
-        'remote',
-    ))
-
-// todo this should make a list of all the resources used in the current project, and prompt to delete all of them or ask one by one. when deleted the resource reference should be removed from wrangler.json and replaced with TEENY_AUTO_CREATE:region:name
-// delete
-cli
-    .command('delete [name]', 'delete a deployed worker and its databases')
-    .option('-y, --yes', `[boolean] skip confirmation prompt (default: false)`)
-    .action(wrapAction(
-        async (ctx, name: string | undefined, options: GlobalCLIOptions & { yes?: boolean }) => {
-            const {logger} = ctx
-            const {workerName: workerNameFromConfig} = await loadValidatedCredentials(options, logger)
-
-            const workerName = name || workerNameFromConfig
-            if (!workerName) {
-                throw new Error('Worker name required. Provide as argument or run from a project with wrangler.jsonc.')
-            }
-
-            // First fetch status to show what will be deleted
-            const workerPath = `/client/v4/managed/workers/${encodeURIComponent(workerName)}`
-            const statusData = await managedFetch(workerPath, {
-                signal: AbortSignal.timeout(15000),
-            })
-
-            const w = statusData.result
-            logger.info(colors.yellow(`About to delete worker "${w.name}"`))
-            if (w.databases?.length > 0) {
-                logger.info(colors.yellow(`  This will also delete databases: ${w.databases.map((d: any) => d.name).join(', ')}`))
-            }
-
-            if (!options.yes) {
-                const ok = await ask<boolean>({
-                    type: 'confirm',
-                    message: 'Are you sure you want to delete this worker and all its data?',
-                    initial: false,
-                }, 'Pass --yes to delete.')
-                if (!ok) {
-                    logger.info('Deletion cancelled.')
-                    return
-                }
-            }
-
-            const deleteData = await managedFetch(workerPath, {
-                method: 'DELETE',
-                signal: AbortSignal.timeout(30000),
-            })
-
-            const deleted = deleteData.result?.deleted
-            logger.info(colors.green(`Deleted worker: ${deleted?.workers?.join(', ') || workerName}`))
-            if (deleted?.databases?.length > 0) {
-                logger.info(colors.green(`Deleted databases: ${deleted.databases.join(', ')}`))
-            }
-        },
-        'remote',
     ))
 
 // logs
