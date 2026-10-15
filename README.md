@@ -118,7 +118,7 @@ Stop building these from scratch. They're included:
 - **File uploads** — object storage, per-field handling
 - **OpenAPI docs** — auto-generated 3.1.0 spec + Swagger UI
 - **Admin panel** — browse tables, view/edit records at `/api/v1/pocket/`. Two named roles (`viewer`, `editor`) with passwords in `.dev.vars` / `.prod.vars`; full admin by signing in with `ADMIN_SERVICE_TOKEN` as the password. The UI ([`@teenybase/pocket-ui`](https://www.npmjs.com/package/@teenybase/pocket-ui)) is a fork of the [PocketBase](https://github.com/pocketbase/pocketbase) admin dashboard (MIT, © Gani Georgiev)
-- **Local dev** — full stack runs locally, zero cloud calls
+- **Local dev** — the API, database and auth run locally with no Cloudflare account; Swagger UI and the admin panel load their pinned UI files from jsDelivr
 
 <img src="docs/images/admin-panel.png" alt="The admin panel at /api/v1/pocket/ showing the users table of a project made with the with-auth template, with three signed-up users.">
 

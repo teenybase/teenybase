@@ -18,6 +18,7 @@ Release 0.1.0. The last version on npm is 0.0.14; 0.0.15 and 0.0.16 were never p
 - `change-password` writes only the password and salt. It used to pass the whole request body to the update, so a signed-in user could also change their own `role`, `email` and other fields.
 - `OR REPLACE` could delete another user's row through a unique-key conflict without checking `deleteRule`/`updateRule`; now restricted as described under Breaking.
 - OAuth: a provider's email is no longer treated as verified when its userinfo response has no verification field. New per-provider option `trustEmailVerified` (default `false`); the built-in Google and LinkedIn presets set it. This closes a pre-account-takeover path through providers that don't verify email.
+- The admin panel loads an exact `@teenybase/pocket-ui` version (0.0.5, `POCKET_UI_VERSION`) instead of `@latest`, so a new publish of that package can't change what runs in admin sessions. Swagger UI loads `swagger-ui-dist` 5.33.2 instead of the latest, and the admin login page's Pico CSS is pinned to 2.1.1 with Subresource Integrity.
 
 ### Added
 

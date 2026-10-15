@@ -585,8 +585,10 @@ db.extensions.push(new PocketUIExtension(db))
 | Parameter | Type | Default | Description |
 |-----------|------|---------|-------------|
 | `db` | `$Database` | (required) | The database instance |
-| `baseUrl` | `string` | CDN (`jsdelivr.net/npm/@teenybase/pocket-ui@.../dist/`) | Custom URL for UI assets (e.g., `http://localhost:4173/` for local PocketUI development) |
-| `uiVersion` | `string` | `'latest'` | Version of `@teenybase/pocket-ui` npm package |
+| `baseUrl` | `string` | CDN (`https://cdn.jsdelivr.net/npm/@teenybase/pocket-ui@POCKET_UI_VERSION/dist/`) | Where the worker fetches the UI files from; `POCKET_UI_VERSION` is replaced with `uiVersion`. E.g. `http://localhost:4173/` for local PocketUI development |
+| `uiVersion` | `string` | `'0.0.5'` | Exact `@teenybase/pocket-ui` npm version. Each teenybase release pins one; pass another exact version to override (avoid `'latest'`, which lets any new publish of that package run in your admin sessions) |
+
+The worker fetches the UI files and serves them from your API's own origin, so the browser only talks to your worker; the worker needs outbound access to jsDelivr. The fallback login page loads Pico CSS 2.1.1 from jsDelivr with Subresource Integrity, and Swagger UI (`/api/v1/doc/ui`) loads `swagger-ui-dist` 5.33.2 from jsDelivr.
 
 **Routes:**
 

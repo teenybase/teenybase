@@ -8,6 +8,12 @@ import {$DBExtension} from '../$DBExtension'
 import {extendZodWithOpenApi, RouteConfig} from '@hono/zod-openapi'
 import {$Env} from '../env'
 
+/**
+ * Exact `swagger-ui-dist` version the Swagger UI page (`/doc/ui`) loads from jsDelivr. Without it
+ * @hono/swagger-ui loads the unversioned (latest) package.
+ */
+export const SWAGGER_UI_VERSION = '5.33.2'
+
 // Extend zod at module level so all schemas (including those created at import time
 // in other modules) get the .openapi() method before any route registration happens.
 // todo move it somewhere else?
@@ -41,7 +47,7 @@ export class OpenApiExtension<T extends $Env = $Env> implements $DBExtension<T>{
                 path: '/doc/ui',
                 method: 'get',
                 handler: {raw: async()=>{
-                        const res = await swaggerUI({ url: this.db.apiBase + '/doc' })(db.c as Context, async ()=>{return})
+                        const res = await swaggerUI({ url: this.db.apiBase + '/doc', version: SWAGGER_UI_VERSION })(db.c as Context, async ()=>{return})
                         return res ? res : undefined
                     }},
                 zod: ()=>(<HttpRouteZod>{

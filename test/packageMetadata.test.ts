@@ -24,3 +24,13 @@ describe('package metadata', () => {
         expect(skills.sort()).toEqual(['skills/teeny-config', 'skills/teeny-migrate', 'skills/teeny-rules', 'skills/teenybase'])
     })
 })
+
+describe('pinned UI assets', () => {
+    it('loads exact versions of the admin panel and Swagger UI, never latest', async () => {
+        const {POCKET_UI_VERSION, PocketUIExtension} = await import('../src/worker/util/pocketui')
+        const {SWAGGER_UI_VERSION} = await import('../src/worker/util/openapi')
+        expect(POCKET_UI_VERSION).toMatch(/^\d+\.\d+\.\d+$/)
+        expect(SWAGGER_UI_VERSION).toMatch(/^\d+\.\d+\.\d+$/)
+        expect(new PocketUIExtension({} as any).uiVersion).toBe(POCKET_UI_VERSION)
+    })
+})

@@ -7,6 +7,20 @@ import {ContentfulStatusCode, StatusCode} from 'hono/utils/http-status'
 import {decode} from '@tsndr/cloudflare-worker-jwt'
 import {$Env, envBool} from '../env'
 
+/**
+ * Exact `@teenybase/pocket-ui` npm version the admin panel loads. npm versions are immutable, so a
+ * later publish (or a compromised publish) of the package can't change what runs in admin sessions
+ * of existing deployments. Bump it deliberately after checking the new release.
+ */
+export const POCKET_UI_VERSION = '0.0.5'
+
+/**
+ * Pico CSS for the fallback login page, loaded by the browser from jsDelivr with Subresource
+ * Integrity (`integrity` = sha384 of exactly this file), so a changed file is refused, not applied.
+ */
+const PICO_CSS_URL = 'https://cdn.jsdelivr.net/npm/@picocss/pico@2.1.1/css/pico.min.css'
+const PICO_CSS_INTEGRITY = 'sha384-L1dWfspMTHU/ApYnFiMz2QID/PlP1xCW9visvBdbEkOLkSSWsP6ZJWhPw6apiXxU'
+
 const cookieName = 'teeny-pocket-ui-access-token'
 const cookieNameRec = 'teeny-pocket-ui-user-data'
 
@@ -29,7 +43,9 @@ export class PocketUIExtension<T extends PocketUiEnv = PocketUiEnv> implements $
     //     if(tok) return this.db.initAuth(tok)
     // }
 
-    uiVersion = 'latest'
+    uiVersion = POCKET_UI_VERSION
+    // The worker fetches the UI files from here and serves them on the API's own origin. The
+    // POCKET_UI_VERSION placeholder is replaced with uiVersion.
     baseUrl = 'https://cdn.jsdelivr.net/npm/@teenybase/pocket-ui@POCKET_UI_VERSION/dist/'
     // baseUrl = 'http://localhost:4173/'
 
@@ -210,7 +226,7 @@ export class PocketUIExtension<T extends PocketUiEnv = PocketUiEnv> implements $
         <head>
           <meta charset="UTF-8">
           <meta name="viewport" content="width=device-width, initial-scale=1.0">
-          <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/@picocss/pico@2/css/pico.min.css"/>
+          <link rel="stylesheet" href="${PICO_CSS_URL}" integrity="${PICO_CSS_INTEGRITY}" crossorigin="anonymous"/>
           <title>Login</title>
         </head>
         <body style="margin: 3rem;">
