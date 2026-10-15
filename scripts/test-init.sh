@@ -1,15 +1,21 @@
 #!/usr/bin/env bash
 #
 # Manual test script for `teeny init` and `teeny create`.
-# Creates projects in ./tmp/ and verifies the generated files.
+# Creates projects in a scratch directory and verifies the generated files.
 #
 # Usage: npm run test-init
+#        TEENY_TEST_INIT_DIR=/some/dir npm run test-init   — use another scratch directory
+#
+# The scratch directory (default: ./tmp/test-init) is owned by this script: it is marked with a
+# .teeny-test-scratch file and emptied at the start of each run. A directory that exists without
+# that marker is never deleted; the script stops instead.
 #
 set -euo pipefail
 
 REPO_ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 TEENY_BIN="$REPO_ROOT/bin/teeny.js"
-TMP_DIR="$REPO_ROOT/tmp"
+TMP_DIR="${TEENY_TEST_INIT_DIR:-$REPO_ROOT/tmp/test-init}"
+SCRATCH_MARKER=".teeny-test-scratch"
 PASS=0
 FAIL=0
 
@@ -97,9 +103,17 @@ assert_fails() {
 log "Building teenybase..."
 (cd "$REPO_ROOT" && npm run build --silent 2>/dev/null)
 
-# Clean and recreate tmp dir
-rm -rf "$TMP_DIR"
+# Empty the scratch dir from the previous run. Only a directory this script created (it has the
+# marker file) is deleted; anything else at that path is left alone and the run stops.
+if [ -e "$TMP_DIR" ]; then
+    if [ ! -f "$TMP_DIR/$SCRATCH_MARKER" ]; then
+        echo -e "${RED}$TMP_DIR exists and was not created by this script (no $SCRATCH_MARKER). Move it away or set TEENY_TEST_INIT_DIR.${RESET}"
+        exit 1
+    fi
+    rm -rf "$TMP_DIR"
+fi
 mkdir -p "$TMP_DIR"
+touch "$TMP_DIR/$SCRATCH_MARKER"
 
 # ─── Test 1: teeny create (default template) ─────────────────────────────────
 

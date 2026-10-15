@@ -37,6 +37,7 @@
         "vitest-proxy": "vitest run test/cli-proxy.test.ts",
         "vitest-managed": "vitest run test/cli-managed.test.ts",
         "vitest-worker": "vitest run -r test/worker",
+        "test-init": "bash scripts/test-init.sh",
         "vitest-init": "npm run test-init && bash scripts/test-init-dev.sh --ci",
         "check": "tsc -p tsconfig.json --pretty --noEmit && tsc -p src/node/tsconfig.json --pretty --noEmit",
         "check:backend": "tsc -p backend/tsconfig.json --pretty --noEmit",

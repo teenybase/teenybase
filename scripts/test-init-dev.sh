@@ -1,11 +1,21 @@
 #!/usr/bin/env bash
 #
 # Dev test script for `teeny create` + `teeny deploy` + `teeny dev`.
-# Creates projects in ./tmp/, runs local migrations, starts dev servers,
+# Creates projects in a scratch directory, runs local migrations, starts dev servers,
 # tests endpoints, then keeps servers running for manual testing.
 #
-# Usage: npm run test-init-dev          — run tests, keep servers alive
-#        npm run test-init-dev:ci       — run tests, exit after completion
+# Usage: bash scripts/test-init-dev.sh          — run tests, keep servers alive
+#        bash scripts/test-init-dev.sh --ci     — run tests, exit after completion
+#
+# Environment:
+#   TEENY_TEST_INIT_DEV_DIR   scratch directory (default: ./tmp/test-init-dev). It is marked with a
+#                             .teeny-test-scratch file and emptied at the start of each run; a directory
+#                             that exists without the marker is never deleted (the script stops).
+#   TEENY_TEST_PORT_A/_B      dev server ports (default 8801 / 8802)
+#   TEENY_TEST_INSPECTOR_A/_B workerd inspector ports (default 9330 / 9331)
+#
+# Only the dev servers this script starts are stopped (each runs in its own process group);
+# other wrangler/workerd processes on the machine are not touched.
 #
 set -euo pipefail
 
@@ -18,13 +28,16 @@ done
 
 REPO_ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 TEENY_BIN="$REPO_ROOT/bin/teeny.js"
-TMP_DIR="$REPO_ROOT/tmp"
+TMP_DIR="${TEENY_TEST_INIT_DEV_DIR:-$REPO_ROOT/tmp/test-init-dev}"
+SCRATCH_MARKER=".teeny-test-scratch"
 PASS=0
 FAIL=0
 
 # Ports for dev servers
-PORT_DEFAULT=8801
-PORT_BLANK=8802
+PORT_DEFAULT="${TEENY_TEST_PORT_A:-8801}"
+PORT_BLANK="${TEENY_TEST_PORT_B:-8802}"
+INSPECTOR_DEFAULT="${TEENY_TEST_INSPECTOR_A:-9330}"
+INSPECTOR_BLANK="${TEENY_TEST_INSPECTOR_B:-9331}"
 
 # Colors
 RED='\033[0;31m'
@@ -45,14 +58,15 @@ run_teeny() {
         node "$TEENY_BIN" "$@"
 }
 
-# Track child PIDs for cleanup on error
+# Dev servers started by this script. Each one is the leader of its own process group
+# (started under `set -m`), so killing the group stops teeny -> wrangler -> workerd together.
 PIDS=()
 cleanup() {
     if [ ${#PIDS[@]} -gt 0 ]; then
         echo
         log "Stopping dev servers..."
         for pid in "${PIDS[@]}"; do
-            kill "$pid" 2>/dev/null || true
+            kill -- "-$pid" 2>/dev/null || kill "$pid" 2>/dev/null || true
         done
         wait 2>/dev/null || true
     fi
@@ -107,9 +121,17 @@ assert_http_contains() {
 log "Building teenybase..."
 (cd "$REPO_ROOT" && npm run build --silent 2>/dev/null)
 
-# Clean and recreate tmp dir
-rm -rf "$TMP_DIR"
+# Empty the scratch dir from the previous run. Only a directory this script created (it has the
+# marker file) is deleted; anything else at that path is left alone and the run stops.
+if [ -e "$TMP_DIR" ]; then
+    if [ ! -f "$TMP_DIR/$SCRATCH_MARKER" ]; then
+        echo -e "${RED}$TMP_DIR exists and was not created by this script (no $SCRATCH_MARKER). Move it away or set TEENY_TEST_INIT_DEV_DIR.${RESET}"
+        exit 1
+    fi
+    rm -rf "$TMP_DIR"
+fi
 mkdir -p "$TMP_DIR"
+touch "$TMP_DIR/$SCRATCH_MARKER"
 
 # Use local teenybase build instead of published npm package
 use_local_teenybase() {
@@ -156,18 +178,17 @@ log "━━━ Running deploy --local for blank-app ━━━"
 echo
 log "━━━ Starting dev servers ━━━"
 
-# Each wrangler instance needs a unique inspector port (default 9229 causes clashes)
-# Kill any leftover wrangler/workerd processes from previous runs
-pkill -f "wrangler dev.*my-app\|wrangler dev.*blank-app" 2>/dev/null || true
-pkill -f "workerd" 2>/dev/null || true
-
+# Each wrangler instance needs a unique inspector port (default 9229 causes clashes).
+# Job control gives each dev server its own process group (see cleanup).
+set -m
 log "  Starting my-app on port $PORT_DEFAULT..."
-(cd "$TMP_DIR/my-app" && TEENY_DEV_PORT=$PORT_DEFAULT TEENY_INSPECTOR_PORT=9330 run_teeny dev --local 2>&1 | sed "s/^/  [my-app] /") &
+(cd "$TMP_DIR/my-app" && TEENY_DEV_PORT=$PORT_DEFAULT TEENY_INSPECTOR_PORT=$INSPECTOR_DEFAULT run_teeny dev --local 2>&1 | sed "s/^/  [my-app] /") &
 PIDS+=($!)
 
 log "  Starting blank-app on port $PORT_BLANK..."
-(cd "$TMP_DIR/blank-app" && TEENY_DEV_PORT=$PORT_BLANK TEENY_INSPECTOR_PORT=9331 run_teeny dev --local 2>&1 | sed "s/^/  [blank-app] /") &
+(cd "$TMP_DIR/blank-app" && TEENY_DEV_PORT=$PORT_BLANK TEENY_INSPECTOR_PORT=$INSPECTOR_BLANK run_teeny dev --local 2>&1 | sed "s/^/  [blank-app] /") &
 PIDS+=($!)
+set +m
 
 # Wait for servers to be ready
 log "\nWaiting for dev servers to start..."
