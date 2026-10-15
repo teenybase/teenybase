@@ -528,7 +528,7 @@ Rules use a JS-like expression language that compiles to **parameterized** SQL W
 }
 ```
 
-`auth.role == 'admin'` is safe to rely on: only admins can write the role column (see [Admin-only auth columns](#auth-usages)), so a user cannot sign up as or promote themselves to `admin`.
+`auth.role == 'admin'` is safe to rely on: only admins can write the role column (see [Admin-only auth columns](#auth-usages)), so a user cannot sign up as or promote themselves to `admin`. `auth.meta` is different: the meta column is writable by the user like any other column their rules allow, so if rules read `auth.meta`, guard it in the users table with `updateRule: "auth.uid == id & new.meta == meta"` and a `createRule` that checks `meta`.
 
 **"Unchanged" checks in updateRule:** `new.<col> == <col>` passes when the request doesn't touch the column and fails when it changes it. Use `==` (`IS`, null-safe); with `=` a NULL column never equals itself, so the rule would block every update of rows where it is NULL.
 

@@ -71,7 +71,7 @@ import type { TableRulesExtensionData } from 'teenybase'
     deleteRule: 'auth.uid == id',
 } as TableRulesExtensionData
 ```
-The auth extension makes `role` (auth_audience), `email_verified` and `password_salt` admin-only on top of these rules: a user who sends them at sign-up or in an update gets 403 `"role can only be set by an admin"`. New users get the column `default` (set one on `role` if every user should start with a role); an admin token promotes a user with a normal `update`. That is what makes `auth.role == 'admin'` below safe.
+The auth extension makes `role` (auth_audience), `email_verified` and `password_salt` admin-only on top of these rules: a user who sends them at sign-up or in an update gets 403 `"role can only be set by an admin"`. New users get the column `default` (set one on `role` if every user should start with a role); an admin token promotes a user with a normal `update`. That is what makes `auth.role == 'admin'` below safe. `auth.meta` is NOT protected this way: if rules read `auth.meta`, add `& new.meta == meta` to the users updateRule (and check `meta` in createRule).
 
 ### Admin-only
 ```typescript

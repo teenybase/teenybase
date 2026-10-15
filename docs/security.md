@@ -114,9 +114,11 @@ See [OAuth Guide → Email Verification Trust](oauth-guide.md#email-verification
 
 ### Encryption
 
-Email verification and password reset tokens are encrypted with AES-GCM (Web Crypto API):
+Email verification and password reset tokens are not encrypted values: each is a random ID (`crypto.getRandomValues()`) stored in KV with a TTL (1 hour by default) and deleted on first use.
+
+AES-GCM (Web Crypto API) is used for environment secrets stored encrypted: when `TEENY_SECRET_ENCRYPTION_KEY` is set, a `$NAME` secret reference is decrypted from the base64 value of `NAME` with the key `TEENY_SECRET_ENCRYPTION_KEY + NAME`. The same functions are exported as `aesGcmEncrypt` / `aesGcmDecrypt`.
 - 256-bit key derived from SHA-256 hash of the secret
-- Random IV per encryption (currently 40-bit — should be 96-bit per NIST spec; fix planned)
+- Random 96-bit IV per encryption (NIST SP 800-38D). Values written before 0.1.0 used a 40-bit IV and still decrypt: the format (`iv + ciphertext + tag`) has no length marker, so decryption tries the 96-bit split first and then the 40-bit one, and the GCM tag rejects the wrong split. Re-encrypt old values when convenient
 - Authenticated encryption (GCM provides integrity + confidentiality)
 
 ### Random Number Generation
@@ -152,7 +154,6 @@ We'd rather tell you what's missing than let you find out the hard way. These ar
 | **File upload validation** | Minimal | No file type whitelist, no file size limits enforced at the application level. R2 stores files as-is. Use Cloudflare WAF or add validation in custom routes. |
 | **Password hashing algorithm** | SHA-256 (fast) | Sufficient with strong passwords, but not ideal. Upgrade to bcrypt/scrypt/Argon2 is planned. |
 | **OAuth redirect validation** | Open redirect possible | OAuth callback redirect URL is not validated against an allowlist. Configure `appUrl` in your settings to limit redirect scope. |
-| **AES-GCM IV length** | 40-bit (should be 96-bit) | Used only for email verification and password reset tokens. Low collision risk at current scale, but fix is planned. |
 
 ---
 
