@@ -112,6 +112,10 @@ To block it, teenybase rejects any OAuth callback where the provider doesn't con
 
 See [OAuth Guide → Email Verification Trust](oauth-guide.md#email-verification-trust) for setup details.
 
+### OAuth Redirects
+
+After an OAuth login the callback redirects the browser to the `redirect` query of the authorize call. The target is parsed as a URL (relative paths resolve against `appUrl`) and followed only if it is in `allowedRedirectUrls` (exact match) or, when that list is not set, if its hostname is `appUrl`'s hostname. Anything else (another host, `//host`, `user@host` tricks, `javascript:`/`data:` URLs) falls back to the provider's `redirectUrl`, then `appUrl`. The check is on the hostname, not the full origin: a different port or `http://` on the same host is accepted. If other services share your app's hostname on other ports, set `allowedRedirectUrls`.
+
 ### Encryption
 
 Email verification and password reset tokens are not encrypted values: each is a random ID (`crypto.getRandomValues()`) stored in KV with a TTL (1 hour by default) and deleted on first use.
@@ -153,7 +157,6 @@ We'd rather tell you what's missing than let you find out the hard way. These ar
 | **Brute force protection** | Not implemented | No account lockout or exponential backoff on failed logins. Mitigate with strong passwords and Cloudflare WAF rules. |
 | **File upload validation** | Minimal | No file type whitelist, no file size limits enforced at the application level. R2 stores files as-is. Use Cloudflare WAF or add validation in custom routes. |
 | **Password hashing algorithm** | SHA-256 (fast) | Sufficient with strong passwords, but not ideal. Upgrade to bcrypt/scrypt/Argon2 is planned. |
-| **OAuth redirect validation** | Open redirect possible | OAuth callback redirect URL is not validated against an allowlist. Configure `appUrl` in your settings to limit redirect scope. |
 
 ---
 
