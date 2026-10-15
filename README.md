@@ -103,7 +103,7 @@ npx teenybase deploy --remote      # uses your login's account, creates the D1 d
 
 No Cloudflare account? `npx teenybase deploy --temporary` deploys to a temporary one: it prints the live URL and a claim link that keeps it if you sign in within 60 minutes. Details: [Try without an account](docs/getting-started.md#try-without-an-account-temporary-deploy).
 
-Details: [Deploy to production (self-hosted)](docs/getting-started.md#deploy-to-production-self-hosted).
+Details: [Deploy to production](docs/getting-started.md#deploy-to-production-your-cloudflare-account).
 
 ## What You Get
 
@@ -155,7 +155,7 @@ The config file is TypeScript with full IDE autocomplete and type checking. Past
 | **Runs on** | Cloudflare Workers + D1 (your account) | AWS (single primary) | Google Cloud | Self-hosted binary |
 | **Open source** | Yes (Apache-2.0) | Yes (Apache-2.0) | No | Yes (MIT) |
 | **Free tier** | 100k req/day, 500MB DB, 10GB files | 500MB DB, 1GB storage | 50K Firestore reads/day, 1 GiB Firestore, 10 GB hosting | Free (self-host) |
-| **Self-hosting** | Yes (own Cloudflare account, no VPS) | Yes (complex) | No | Yes (single binary, needs a VPS) |
+| **Self-hosting** | Your own Cloudflare account (no server to run) | Yes (complex) | No | Yes (single binary, needs a VPS) |
 | **Deploy from CLI** | `teeny deploy` | Dashboard or CLI | Dashboard or CLI | Manual |
 | **Config as code** | Everything in repo | Partial (migrations) | Partial | No |
 
@@ -174,7 +174,7 @@ Teenybase is free and open source. There is nothing to pay us. What you pay is C
 | What you're building | What you get | What Cloudflare charges |
 |----------------------|--------------|-------------------------|
 | Prototype / side project | 3M requests/month, 500 MB DB, 10 GB files | **\$0** (free plan) |
-| App with real users (~1k DAU) | 500k requests/month, 5M row reads, 500 MB DB | **\$5/month base, pennies on top**\* |
+| App with real users (~1k DAU) | 500k requests/month, 5M row reads, 500 MB DB | **\$0** (fits the free plan); on Workers Paid, under \$1 on top of the \$5 base\* |
 | Production SaaS (~10k DAU) | 5M requests/month, 50M row reads, 5 GB DB\*\*, 50 GB files | **\$5/month base + roughly \$1–5**\* |
 
 *\*Cloudflare Workers Paid plan prices as of October 2026; [see the math](docs/cost-breakdown.md) and check [Cloudflare's pricing](https://developers.cloudflare.com/workers/platform/pricing/) for current numbers.*

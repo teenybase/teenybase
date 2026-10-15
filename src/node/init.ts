@@ -333,12 +333,12 @@ export async function runInit(root: string, options: InitOptions): Promise<void>
             type: 'select',
             message: 'Where do you want to deploy?',
             choices: [
-                {title: 'Your own Cloudflare account', value: 'self-hosted'},
+                {title: 'Your own Cloudflare account', value: 'own-account'},
                 {title: 'Decide later', value: 'later'},
             ],
             initial: 1,
         }, NON_INTERACTIVE_HINT)
-        deployToOwnAccount = target === 'self-hosted'
+        deployToOwnAccount = target === 'own-account'
     }
 
     // Determine project name — sanitize auto-detected name when --yes skips the prompt

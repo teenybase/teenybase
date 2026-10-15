@@ -1,20 +1,16 @@
 # Getting Started with Teenybase
 
-You are setting up a **teenybase** backend — a backend-as-a-service on Cloudflare Workers. The entire backend is defined in a single `teenybase.ts` config file. No backend code, no ORM, no route files.
+Teenybase is a backend on Cloudflare Workers and D1 that you define in one TypeScript file, `teenybase.ts`: tables, auth, access rules and actions. From it you get a REST API, OpenAPI docs with Swagger UI, and an admin panel. There is no backend code to write, no ORM and no route files.
 
-**Prerequisites:** Node.js 22 or newer. The commands below use the `teeny` CLI: install it with `npm i -g teenybase`, or run each command as `npx teenybase <command>` instead of `teeny <command>`. Don't use `npx teeny`: it downloads an unrelated npm package named `teeny`.
+This guide takes you from an empty folder to a local API you can call with curl, then to a deploy on your own Cloudflare account. Start a new project with [Option A](#option-a-new-project), or add teenybase to an existing project with [Option B](#option-b-add-to-existing-project).
 
-## Before You Start
+**Prerequisites:** Node.js 22 or newer. You don't need a Cloudflare account for local development. The commands below use the `teeny` CLI: install it with `npm i -g teenybase`, or run each command as `npx teenybase <command>` instead of `teeny <command>`. Don't use `npx teeny`: it downloads an unrelated npm package named `teeny`.
 
-Before modifying `teenybase.ts`, understand what the user is building. If the user has not provided clear instructions, ask them to describe what they're building and what their backend needs to do.
-
-Users will typically answer with intentions, not technical specs: "I need login", "I need a database for my recipes", "I need to process Stripe payments and track subscribers." Infer the required tables, auth setup, and access rules from their description. Don't ask for schema details upfront — translate their intent into config.
-
-Determine whether this is a **new project** or **adding teenybase to an existing project**. Infer from context (e.g., existing `package.json` or "add a backend to my app" → Option B). If unclear, ask: "Are we starting a new project or adding teenybase to an existing one?"
+**Using an AI coding agent?** Point it at the `teenybase` skill (`npx teenybase skills` lists it) or install the Claude Code plugin; the skill tells the agent how to work out what you are building before it edits `teenybase.ts`.
 
 ## Non-Interactive Flags
 
-Always pass these flags when running non-interactively. Without them, a command that needs to ask a question fails with exit code 1 when stdin is not a TTY, and the error names the flag to pass.
+In scripts, CI and agents, pass these flags. Without them, a command that needs to ask a question fails with exit code 1 when stdin is not a terminal, and the error names the flag to pass.
 
 | Flag | What it does |
 |---|---|
@@ -99,7 +95,7 @@ Everything about your backend lives in one file: `teenybase.ts` (or `teeny.confi
              looks good?   need changes? ─────────────┘
                   │
                   ▼
-          teeny deploy --yes
+      teeny deploy --remote --yes
             (deploy to production)
 ```
 
@@ -348,7 +344,7 @@ authProviders: [
 
 `email` enables verification + password reset endpoints. `authProviders` enables OAuth login. See [OAuth Guide](oauth-guide.md) and [Configuration Reference](config-reference.md).
 
-## Deploy to Production (Self-Hosted)
+## Deploy to Production (your Cloudflare account)
 
 Deploy to your own Cloudflare account. Full control, your Workers, your D1 database. Requires a Cloudflare account (Workers free plan is enough to start).
 
@@ -365,6 +361,8 @@ That's all; there is nothing to create or paste by hand. The first deploy:
 - **Applies the migrations** through the new worker's admin API and deploys the full config. The worker URL is saved in `infra.jsonc`.
 
 **CI or other non-browser setups:** instead of `wrangler login`, set `CLOUDFLARE_API_TOKEN` (a token with Workers Scripts and D1 edit permissions) and `CLOUDFLARE_ACCOUNT_ID`. Later deploys (`npx teenybase deploy --remote --yes`) only apply new migrations and redeploy the worker; after changing `.prod.vars`, run `npx teenybase secrets --remote --upload`.
+
+**Logs:** `npx teenybase logs` streams the deployed worker's logs from Cloudflare's telemetry API. It needs an API token in `CLOUDFLARE_API_TOKEN` that can read Workers observability data; `npx wrangler login` alone is not enough. With only `wrangler login`, `npx wrangler tail` streams live requests instead. See [CLI Reference](cli.md#logs-name).
 
 **Custom domain:** add `"routes": [{ "pattern": "api.myapp.com", "custom_domain": true }]` to `wrangler.jsonc`, then redeploy. Domain must have DNS on Cloudflare. Update `appUrl` in `teenybase.ts` to match.
 

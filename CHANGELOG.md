@@ -61,4 +61,7 @@ Release 0.1.0. The last version on npm is 0.0.14; 0.0.15 and 0.0.16 were never p
 ### Docs
 
 - Docs and skills describe deploying to your own Cloudflare account only.
+- Getting Started opens for a human reader; the agent guidance it used to start with is in the `teenybase` skill. Its workflow ends with `teeny deploy --remote --yes` (it said `teeny deploy --yes`, which errors).
+- `teeny logs` is documented as needing `CLOUDFLARE_API_TOKEN` (`wrangler login` is not enough; `npx wrangler tail` works with the login). Its error messages say the same instead of "Session expired … run teeny logs again".
+- The experimental `libsql` / `d1-http` adapters are documented as experimental and unsupported, without naming hosted providers.
 - `CONTRIBUTING.md`, `SECURITY.md` and this changelog.

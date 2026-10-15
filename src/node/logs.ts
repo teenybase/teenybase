@@ -64,8 +64,9 @@ function setupQuery(
     const creds = getAuthFromEnv()
     if (!creds) {
         logger.error(colors.red(
-            'No Cloudflare credentials found. Set CLOUDFLARE_API_TOKEN environment variable.\n' +
-            'Create an API token at https://dash.cloudflare.com/profile/api-tokens with \'Workers:Read\' permission.'
+            'No Cloudflare credentials found. teeny logs reads Cloudflare\'s telemetry API with an API token; `wrangler login` is not used.\n' +
+            'Set CLOUDFLARE_API_TOKEN to a token that can read Workers observability data (create one at https://dash.cloudflare.com/profile/api-tokens),\n' +
+            'or use `npx wrangler tail` to stream live logs with your wrangler login.'
         ))
         process.exit(1)
     }
@@ -153,7 +154,7 @@ async function pollLoop(config: PollConfig): Promise<void> {
                     const status = res.status
                     await res.text().catch(() => {}) // drain body
                     if (status === 401 || status === 403) {
-                        process.stderr.write(colors.red('\nSession expired or authentication failed. Run `teeny logs` again.\n'))
+                        process.stderr.write(colors.red(`\nCloudflare rejected the API token (HTTP ${status}). Check that CLOUDFLARE_API_TOKEN is valid, belongs to this account and can read Workers observability data.\n`))
                         process.exit(1)
                     }
                     const err: any = new Error(`API error: ${status} ${res.statusText}`)
@@ -211,10 +212,6 @@ async function pollLoop(config: PollConfig): Promise<void> {
                 // Only advance window on success — on failure, retry the same window
                 from = to - overlap
             } catch (e: any) {
-                if (e?.status === 401 || e?.status === 403) {
-                    process.stderr.write(colors.red('\nSession expired or authentication failed. Run `teeny logs` again.\n'))
-                    process.exit(1)
-                }
                 // Network or transient errors — warn and continue
                 process.stderr.write(colors.yellow(`  Warning: ${getErrorMessage(e)}, retrying...\n`))
             }

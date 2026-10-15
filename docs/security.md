@@ -39,7 +39,7 @@ Teenybase is early (v0.1). Security fixes are applied to the latest version only
 
 > **Note:** SHA-256 is fast by design, which makes it less resistant to brute-force attacks than dedicated password hashing algorithms (bcrypt, scrypt, Argon2). Upgrading to a slower hash function is on the roadmap. In the meantime, enforce strong passwords (minimum 8 characters by default, configurable via Zod schema).
 
-**JWT tokens:** HS256 (HMAC-SHA256) by default, via [`@tsndr/cloudflare-worker-jwt`](https://github.com/tsndr/cloudflare-worker-jwt). Tokens include `sub` (user ID), `iat`, `exp`, and `iss` claims. Expiry duration is configurable per project.
+**JWT tokens:** HS256 (HMAC-SHA256) by default, via [`@tsndr/cloudflare-worker-jwt`](https://github.com/tsndr/cloudflare-worker-jwt). Tokens include `id` (the user's record id), `sub` (the user's email), `user` (username), `cid` (the auth table), `sid` (session id), `verified`, `aud` (from the `auth_audience` field, e.g. `role`), `meta` when set, and `iss`, `iat` and `exp`. Expiry duration is configurable per project.
 
 **Refresh tokens:** Generated as UUID v4 (base64-encoded), stored in KV with TTL. New refresh token issued on every refresh (rotation). Session has a configurable max duration and max refresh count.
 

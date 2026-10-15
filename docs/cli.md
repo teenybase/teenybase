@@ -256,7 +256,7 @@ teeny logs --limit 50                 # stop after 50 events (for CI)
 | `--overlap <duration>` | `1m` | Overlap window to catch delayed events |
 | `--limit <n>` | — | Stop after N events (for CI/scripting) |
 
-**Credentials:** Requires `CLOUDFLARE_API_TOKEN` environment variable with Workers:Read permission. Create one at [dash.cloudflare.com/profile/api-tokens](https://dash.cloudflare.com/profile/api-tokens).
+**Credentials:** `logs` calls Cloudflare's Workers observability (telemetry) API directly and needs an API token in `CLOUDFLARE_API_TOKEN`, a token that can read Workers observability data (create one at [dash.cloudflare.com/profile/api-tokens](https://dash.cloudflare.com/profile/api-tokens)). It doesn't use your `npx wrangler login`, so after only `wrangler login` it fails with "No Cloudflare credentials found". The account comes from `account_id` in the wrangler config or `CLOUDFLARE_ACCOUNT_ID`. With only a wrangler login, `npx wrangler tail <worker>` streams live requests instead.
 
 > **Note:** Cloudflare has a ~1-2 minute ingestion delay. Logs from recent requests may take a moment to appear.
 
@@ -344,7 +344,7 @@ teeny deploy --local --yes
 | `TEENY_DEV_PORT` | Override dev server port (default: 8787) |
 | `TEENY_INSPECTOR_PORT` | Override inspector port (default: 9229) |
 | `CLOUDFLARE_ACCOUNT_ID` | Cloudflare account for `--remote` when `account_id` isn't in the wrangler config |
-| `CLOUDFLARE_API_TOKEN` | Cloudflare API token for wrangler instead of `wrangler login` (CI). Can't be combined with `--temporary` |
+| `CLOUDFLARE_API_TOKEN` | Cloudflare API token for wrangler instead of `wrangler login` (CI). Required by `logs`. Can't be combined with `--temporary` |
 
 ---
 

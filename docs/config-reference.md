@@ -1096,15 +1096,15 @@ Selects the backend and carries connection info. Optional — omitting the field
 
 ### Adapters
 
+> [!WARNING]
+> Only `d1-binding` is supported end to end: the CLI (`teeny generate`, `teeny deploy`, `teeny dev`) and the migration flow assume a Cloudflare D1 binding, and teenybase runs only on Cloudflare Workers. `d1-rest`, `libsql` and `d1-http` are experimental, unsupported runtime adapters, only covered by tests against mock servers.
+
 - **`d1-binding`** (built-in, zero-config default) — uses the wrangler D1 binding from the worker env.
-- **`d1-rest`** — talks to the Cloudflare REST API. Requires the `D1RestExtension` to be imported and registered.
-- **`libsql`** — Turso or self-hosted sqld. Requires the `LibsqlExtension`.
-- **`d1-http`** — a self-hosted server exposing a D1-compatible HTTP API. Requires the `D1HttpExtension`.
+- **`d1-rest`** (experimental) — talks to the Cloudflare D1 REST API. Requires the `D1RestExtension` to be imported and registered.
+- **`libsql`** (experimental) — a libSQL server over HTTP. Requires the `LibsqlExtension`.
+- **`d1-http`** (experimental) — a server exposing a D1-compatible HTTP API. Requires the `D1HttpExtension`.
 
 The non-default adapter extensions (`D1RestExtension`, `LibsqlExtension`, `D1HttpExtension`) are exported from `teenybase/worker` and must be passed to `db.registerExtension()`.
-
-> [!WARNING]
-> Only `d1-binding` is supported end to end: the CLI (`teeny generate`, `teeny deploy`, `teeny dev`) and the migration flow assume a Cloudflare D1 binding. `d1-rest`, `libsql` and `d1-http` are experimental runtime adapters: they are not in a published release yet and are only covered by tests against mock servers.
 
 ### Example — d1-binding (default)
 
@@ -1112,13 +1112,13 @@ The non-default adapter extensions (`D1RestExtension`, `LibsqlExtension`, `D1Htt
 database: {type: 'd1-binding', binding: 'PRIMARY_DB'}
 ```
 
-### Example — libsql (Turso)
+### Example — libsql (experimental)
 
 ```ts
-database: {type: 'libsql', url: '$TURSO_URL', authToken: '$TURSO_TOKEN'}
+database: {type: 'libsql', url: '$LIBSQL_URL', authToken: '$LIBSQL_TOKEN'}
 ```
 
-### Example — d1-http (self-hosted)
+### Example — d1-http (experimental)
 
 ```ts
 database: {type: 'd1-http', url: '$SQLITE_URL', authToken: '$SQLITE_TOKEN'}
@@ -1239,7 +1239,7 @@ The `observability` block in `wrangler.jsonc` enables Cloudflare Workers Logs �
 | `logs.invocation_logs` | boolean | `true` | Log automatic invocation data (request/response metadata) |
 | `logs.head_sampling_rate` | number | `1` | Fraction of requests to log (1 = 100%, 0.01 = 1%) |
 
-Stream logs via `teeny logs` — see [CLI Reference](cli.md#logs-name).
+Stream logs via `teeny logs` (needs `CLOUDFLARE_API_TOKEN`, not just `wrangler login`) — see [CLI Reference](cli.md#logs-name).
 
 > **Note:** This is a wrangler.jsonc setting, not a `teenybase.ts` setting. It controls Cloudflare platform-level logging, not application-level config.
 

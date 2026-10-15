@@ -20,10 +20,18 @@ What do you need?
 ├─ Create or edit teenybase.ts            → use teeny-config skill
 ├─ Write access rules (RLS expressions)  → use teeny-rules skill
 ├─ Migrate, deploy, or start dev server  → use teeny-migrate skill
-├─ View production logs / debug errors   → teeny logs --json --since 5m --limit 100
+├─ View production logs / debug errors   → teeny logs --json --since 5m --limit 100 (needs CLOUDFLARE_API_TOKEN)
 ├─ Understand the framework              → continue reading below
 └─ Call the API or build frontend        → read docs/api-endpoints.md + docs/frontend-guide.md
 ```
+
+## Before Editing teenybase.ts
+
+Understand what the user is building first. If they haven't said, ask them to describe what they're building and what the backend needs to do.
+
+Users usually answer with intentions, not technical specs: "I need login", "I need a database for my recipes", "I need to process Stripe payments and track subscribers". Infer the tables, auth setup and access rules from that; don't ask for schema details up front, translate their intent into config.
+
+Work out whether this is a **new project** (`npx teenybase create <name> -t with-auth -y`) or **adding teenybase to an existing one** (`npx teenybase init -y`, see `docs/getting-started.md` Option B). Infer it from context (an existing `package.json`, or "add a backend to my app" means an existing project). If it's unclear, ask: "Are we starting a new project or adding teenybase to an existing one?"
 
 ## Project Structure
 

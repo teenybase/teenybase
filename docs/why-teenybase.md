@@ -68,7 +68,7 @@ Supabase is a great product. But real pain points exist:
 
 Firebase pioneered the BaaS category. The pain points are well-known:
 
-- **Vendor lock-in.** Firebase is deeply tied to Google Cloud. Migrating off is a project in itself. Teenybase is open source and self-hostable — your data lives in a SQLite database you can export anytime.
+- **Vendor lock-in.** Firebase is deeply tied to Google Cloud. Migrating off is a project in itself. Teenybase is open source and runs in your own Cloudflare account. It does depend on Cloudflare (Workers + D1), but your data is a SQLite database you can export any time.
 - **Pricing model.** Firebase charges per read/write/delete operation. A popular app can run up bills fast. Teenybase's infrastructure charges per request (100k/day free), with generous included database operations.
 - **NoSQL constraints.** Firestore is document-based. Relational queries are painful. Teenybase uses SQLite — proper relational data with joins, indexes, and full-text search.
 - **Where Firebase wins:** Real-time sync (best in class), mobile SDKs, Google ecosystem integration, massive scale, mature tooling.

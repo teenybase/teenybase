@@ -40,7 +40,7 @@ Add the D1 database binding to your `wrangler.jsonc` (or `wrangler.toml`):
 }
 ```
 
-Enable Cloudflare Workers Logs for log streaming with `teeny logs`:
+Enable Cloudflare Workers Logs for log streaming with `teeny logs` (which needs `CLOUDFLARE_API_TOKEN`; see [CLI Reference](cli.md#logs-name)):
 
 ```jsonc
 {

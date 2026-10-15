@@ -53,7 +53,7 @@ Check `.dev.vars` exists with `JWT_SECRET=some-value`. For production: check `.p
 ### Migration conflicts
 Pull latest → `teeny deploy --local --yes` (regenerates from merged config) → test → deploy.
 
-### "D1 database not found" (self-hosted)
+### "D1 database not found" (remote deploy)
 Set `"database_id": "TEENY_AUTO_CREATE"` in `wrangler.jsonc` and run `teeny deploy --remote` again: teeny creates the database and writes its id.
 
 ### "You are not logged in to Cloudflare"
@@ -77,5 +77,5 @@ Quick reference of most-used commands:
 | `teeny deploy --temporary --yes` | Deploy to a temporary Cloudflare account (no login, claim within 60 min) |
 | `teeny secrets --remote --upload` | Upload `.prod.vars` secrets |
 | `teeny exec <route> --local` | Run API route directly |
-| `teeny logs [name]` | Stream live logs from deployed worker |
+| `teeny logs [name]` | Stream live logs from deployed worker. Needs `CLOUDFLARE_API_TOKEN` (`wrangler login` is not enough; `npx wrangler tail` works with the login) |
 | `teeny logs --json --since 5m --limit 100` | Fetch recent logs as JSON (for scripting/AI) |
