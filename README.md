@@ -201,8 +201,8 @@ Teenybase is free and open source. There is nothing to pay us. What you pay is C
 
 ## Requirements
 
-- Node.js >= 18.14.1
-- For self-hosted: Cloudflare account (Workers + D1)
+- Node.js 22 or newer (wrangler 4 requires it)
+- A Cloudflare account (Workers + D1) to deploy. Local development and `--temporary` deploys don't need one.
 
 ## Roadmap
 

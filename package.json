@@ -138,7 +138,7 @@
         "url": "https://github.com/teenybase/teenybase/issues"
     },
     "engines": {
-        "node": ">=18.14.1"
+        "node": ">=22"
     },
     "homepage": "https://teenybase.com"
 }

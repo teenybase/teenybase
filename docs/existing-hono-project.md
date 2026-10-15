@@ -7,7 +7,7 @@ This guide walks through integrating Teenybase into a project that already uses 
 ## Prerequisites
 
 - An existing Hono project deployed on Cloudflare Workers
-- Node.js >= 18.14.1
+- Node.js 22 or newer
 - Wrangler CLI installed
 
 ## 1. Install Teenybase

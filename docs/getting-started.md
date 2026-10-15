@@ -2,7 +2,7 @@
 
 You are setting up a **teenybase** backend — a backend-as-a-service on Cloudflare Workers. The entire backend is defined in a single `teenybase.ts` config file. No backend code, no ORM, no route files.
 
-**Prerequisites:** Node.js >= 18.14.1. The commands below use the `teeny` CLI: install it with `npm i -g teenybase`, or run each command as `npx teenybase <command>` instead of `teeny <command>`. Don't use `npx teeny`: it downloads an unrelated npm package named `teeny`.
+**Prerequisites:** Node.js 22 or newer. The commands below use the `teeny` CLI: install it with `npm i -g teenybase`, or run each command as `npx teenybase <command>` instead of `teeny <command>`. Don't use `npx teeny`: it downloads an unrelated npm package named `teeny`.
 
 ## Before You Start
 

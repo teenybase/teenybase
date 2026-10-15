@@ -10,6 +10,8 @@ import {
     supportsTemporaryFlag,
     TemporaryNoticeFilter,
     versionAtLeast,
+    NODE_MIN_VERSION,
+    nodeVersionError,
     WranglerCommandError,
     wranglerArgs,
     ALREADY_AUTHENTICATED_HINT,
@@ -162,6 +164,15 @@ describe('wrangler argv and versions', () => {
         expect(versionAtLeast('4.102.0', '4.102.0')).toBe(true)
         expect(versionAtLeast('4.80.0', '4.102.0')).toBe(false)
         expect(versionAtLeast('', '4.102.0')).toBe(false)
+    })
+
+    it('requires Node 22 (wrangler 4\'s floor), matching engines.node', () => {
+        expect(nodeVersionError('20.19.5')).toMatch(/needs Node\.js 22 or newer.*v20\.19\.5/)
+        expect(nodeVersionError('18.14.1')).toMatch(/v18\.14\.1/)
+        expect(nodeVersionError('22.0.0')).toBeUndefined()
+        expect(nodeVersionError('24.21.0')).toBeUndefined()
+        const pkg = JSON.parse(fs.readFileSync(path.resolve(import.meta.dirname, '..', 'package.json'), 'utf8'))
+        expect(pkg.engines.node).toBe(`>=${NODE_MIN_VERSION.split('.')[0]}`)
     })
 
     it('appends --temporary only to commands that accept it', () => {

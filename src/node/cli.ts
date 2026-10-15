@@ -37,6 +37,7 @@ import {ask} from './prompts'
 import {findTeenybasePackageRoot} from './utils/package-root'
 import {prepareTemporaryAccount, printTemporaryDeployment} from './temporary-account'
 import {resolveDeployAccountId} from './cloudflare-account'
+import {nodeVersionError} from './utils/wrangler-run'
 
 process.env.WRANGLER_SEND_METRICS = 'false'
 process.env.WRANGLER_HIDE_BANNER = 'true'
@@ -73,6 +74,10 @@ function writeInfoToStderr(message: string, logLevel?: LogLevel) {
 }
 
 async function initContext(options: GlobalCLIOptions, logger: Logger, ctx?: ActionContext) {
+    // Every command that builds a context runs wrangler (in-process or as a child); fail clearly
+    // here instead of with whatever an older Node makes wrangler or workerd throw.
+    const nodeError = nodeVersionError()
+    if (nodeError) throw new Error(nodeError)
     const wranglerConfig = await parseWrangler(options.root, options, logger)
     const c = new CliContext(options.root, options, wranglerConfig, logger)
     if (ctx) ctx.c = c

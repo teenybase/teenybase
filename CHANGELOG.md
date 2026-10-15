@@ -39,6 +39,7 @@ Release 0.1.0. The last version on npm is 0.0.14; 0.0.15 and 0.0.16 were never p
 
 ### Changed
 
+- Requires Node.js 22 or newer (`engines.node` `>=22`, was `>=18.14.1`). New projects install the latest wrangler 4, which refuses to start on older Node. Commands that run wrangler now stop at once with a message naming the Node version.
 - `$Database` no longer requires an adapter argument; it falls back to the configured `database` (default: the `PRIMARY_DB` D1 binding).
 - File-name normalisation uses a Unicode-aware snake_case conversion.
 - `dist/` is cleaned before every build, so packed tarballs contain no stale files.

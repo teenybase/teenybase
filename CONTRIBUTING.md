@@ -7,7 +7,7 @@ Thanks for helping. Bug reports, docs fixes and PRs are all welcome.
 
 ## Setup
 
-Node.js 18.14.1 or later.
+Node.js 22 or later.
 
 ```bash
 git clone https://github.com/teenybase/teenybase.git

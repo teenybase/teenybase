@@ -32,6 +32,19 @@ export function versionAtLeast(version: string, min: string): boolean {
 }
 
 /**
+ * Oldest Node.js the commands that run wrangler support. New projects get wrangler ^4 (latest), whose
+ * CLI refuses to start below Node 22 (`MIN_NODE_VERSION` in wrangler's bin/wrangler.js, engines `>=22.0.0`).
+ * Keep in sync with `engines.node` in package.json.
+ */
+export const NODE_MIN_VERSION = '22.0.0'
+
+/** Error message when `version` (default: this process) is older than {@link NODE_MIN_VERSION}, else undefined. */
+export function nodeVersionError(version: string = process.versions.node): string | undefined {
+    if (versionAtLeast(version, NODE_MIN_VERSION)) return undefined
+    return `teenybase needs Node.js ${NODE_MIN_VERSION.split('.')[0]} or newer to run wrangler, and this is Node.js v${version}. Install Node.js 22+ (https://nodejs.org) and try again.`
+}
+
+/**
  * Top-level wrangler commands that accept `--temporary` (in wrangler 4.150 every subcommand of these
  * has `behaviour.supportTemporary: true`). `dev`, `types`, `whoami`, `login`/`logout` don't, and
  * `deploy --dry-run` never talks to Cloudflare.

@@ -223,7 +223,7 @@ Common issues and solutions when using Teenybase.
 
 **workerd on Alpine** — Needs glibc. Run `bash scripts/fix-alpine-workerd.sh`. Re-run after `npm install`.
 
-**GitHub Actions** — Use `ubuntu-latest` + Node 20+. Alpine runners need the workerd fix.
+**GitHub Actions** — Use `ubuntu-latest` + Node 22+. Alpine runners need the workerd fix.
 
 **Miniflare in CI** — Set `NODE_ENV=test`. Local D1 state is ephemeral per test run.
 
