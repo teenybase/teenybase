@@ -301,11 +301,22 @@ export class TableAuthExtension extends TableExtension<TableAuthExtensionData> {
         return ret
     }
 
+    /**
+     * The configured email sender. Without one the verification and password-reset routes can't work at all, which is
+     * a server capability, not a client mistake or a crash: 501 with a message that says what to configure.
+     */
+    private _requireEmail() {
+        const email = this.table.$db.email
+        if(!email) throw new HTTPException(501, {message: 'Email not configured: add an `email` provider to the config to send verification and password reset emails'})
+        return email
+    }
+
     async requestVerification(){
         if(!this.mapping.email || !this.mapping.emailVerified) throw new HTTPException(500, {message: 'Invalid Configuration'})
         const auth = this.jc.globals.auth
         if(!auth?.uid) throw new HTTPException(403, {message: 'Unauthorized'})
         if(auth.verified) throw new HTTPException(400, {message: 'Already verified'})
+        this._requireEmail()
 
         const user = await this.getUser(auth.uid)
         if(!user) throw new HTTPException(400, {message: 'User not found'})
@@ -340,6 +351,8 @@ export class TableAuthExtension extends TableExtension<TableAuthExtensionData> {
 
     async requestPasswordReset(){
         if(!this.mapping.email || !this.mapping.password) throw new HTTPException(500, {message: 'Invalid Configuration'})
+        // before looking the user up, so the answer doesn't depend on whether the account exists
+        this._requireEmail()
 
         const data = await this.table.$db.getRequestBody()
         if(!data) throw new HTTPException(400, {message: 'Usage: POST /auth/request-password-reset {data} in JSON/FormData'})
@@ -1187,8 +1200,7 @@ export class TableAuthExtension extends TableExtension<TableAuthExtensionData> {
         // }, await this.jwtSecret(), this.data.emailVerifyTokenDuration || 1 * 60 * 60)
         const token = generateUid()
 
-        const email = this.table.$db.email
-        if(!email) throw new HTTPException(500, {message: 'Email not configured'})
+        const email = this._requireEmail()
 
         const template = this.data.emailTemplates?.verification || {}
 
@@ -1258,8 +1270,7 @@ export class TableAuthExtension extends TableExtension<TableAuthExtensionData> {
         // }, await this.jwtSecret(), this.data.passwordResetTokenDuration || 60 * 60)
         const token = generateUid()
 
-        const email = this.table.$db.email
-        if(!email) throw new HTTPException(500, {message: 'Email not configured'})
+        const email = this._requireEmail()
 
         const template = this.data.emailTemplates?.passwordReset || {}
         await email.sendActionLink({

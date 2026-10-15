@@ -522,14 +522,14 @@ function testToken(suffix: string) {
 
 test('request-verification fails without email config', async () => {
     const json = await createUser({})
-    // The test drive1 config has no email configured, so request-verification should fail with 500
+    // The test drive1 config has no email configured: 501 (server capability missing), not a 500 crash
     const res = await fetch(`table/users/auth/request-verification`, {
         method: 'POST',
         headers: {'Authorization': 'Bearer ' + json.token},
     })
-    expect(res.status).toEqual(500)
+    expect(res.status).toEqual(501)
     const body = await res.json() as any
-    expect(body.message).toEqual('Email not configured')
+    expect(body.message).toMatch(/^Email not configured: add an `email` provider/)
 })
 
 test('request-verification fails without auth', async () => {
@@ -708,9 +708,15 @@ test('request-password-reset fails without email config', async () => {
         method: 'POST',
         body: JSON.stringify({email: 'admin@example.com'}),
     })
-    expect(res.status).toEqual(500)
+    expect(res.status).toEqual(501)
     const body = await res.json() as any
-    expect(body.message).toEqual('Email not configured')
+    expect(body.message).toMatch(/^Email not configured: add an `email` provider/)
+    // same answer for an address with no account
+    const res2 = await fetch(`table/users/auth/request-password-reset`, {
+        method: 'POST',
+        body: JSON.stringify({email: 'nobody@example.com'}),
+    })
+    expect(res2.status).toEqual(501)
 })
 
 test('request-password-reset → confirm-password-reset (full flow with mock email)', async () => {

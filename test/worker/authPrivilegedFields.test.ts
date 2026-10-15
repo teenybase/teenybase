@@ -134,13 +134,17 @@ describe('role (auth_audience) is admin-only', () => {
     })
 
     test('a multi-row insert is rejected when any row sets role', async () => {
-        // only the second row sets it: every row is checked, before the same-keys check of the SQL builder
-        await expectAdminOnly(await call('table/users/insert', post({
-            values: [
-                {username: 'multi1', email: 'multi1@example.com', password: '12345678', passwordConfirm: '12345678', name: 'm'},
-                {username: 'multi2', email: 'multi2@example.com', password: '12345678', passwordConfirm: '12345678', name: 'm', role: 'admin'},
-            ],
-        })), ['role'])
+        const rows = (role2: Record<string, any>) => [
+            {username: 'multi1', email: 'multi1@example.com', password: '12345678', passwordConfirm: '12345678', name: 'm', role: 'guest'},
+            {username: 'multi2', email: 'multi2@example.com', password: '12345678', passwordConfirm: '12345678', name: 'm', ...role2},
+        ]
+        await expectAdminOnly(await call('table/users/insert', post({values: rows({role: 'admin'})})), ['role'])
+        // role only in the second row: rows must set the same fields, so this is a 400 before any row is looked at
+        const res = await call('table/users/insert', post({values: rows({}).reverse()}))
+        expect(res.status).toEqual(400)
+        expect(((await res.json()) as any).message).toMatch(/^Every row in values must set the same fields: row 2 has role/)
+        const check = await call(`table/users/select?select=id&where=${encodeURIComponent(`username ~ 'multi%'`)}`, {}, ADMIN)
+        expect(await check.json()).toEqual([])
     })
 
     test('an action step that runs with the user\'s privileges cannot set role', async () => {

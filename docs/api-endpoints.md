@@ -35,7 +35,7 @@ All CRUD endpoints respect row-level security rules defined in your config.
 
 | Field | Type | Required | Description |
 |-------|------|----------|-------------|
-| `values` | object or object[] | Yes | Field values. Array for batch insert. |
+| `values` | object or object[] | Yes | Field values. Array for batch insert; every row must set the same fields (use `null` where a row has no value), otherwise 400 naming the row and field. |
 | `returning` | string or string[] | No | Fields to return. `"*"` for all. **Without this, response is empty.** |
 | `or` | string | No | Conflict handling: `"IGNORE"`, `"REPLACE"`, `"ABORT"`, `"FAIL"`, `"ROLLBACK"`. `"REPLACE"` is admin-only on tables with rules (see below). |
 

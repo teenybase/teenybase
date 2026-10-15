@@ -47,11 +47,11 @@ export function buildInsertQuery(query: InsertQuery, simplify = true, allowAllWh
     for (let j = 0; j < values.length; j++){
         const value = values[j]
         const vals = []
+        // $Table.checkSameKeys reports this to clients; key order may differ between rows
         const setKeys = Object.keys(value)
-        if(setKeys.length !== keys.length) throw new Error('All values must have the same keys')
-        for (let i = 0; i < keys.length; i++){
-            const key = keys[i]
-            if(setKeys[i] !== key) throw new Error('All values must have the same keys')
+        if(setKeys.length !== keys.length || keys.some(k => !Object.prototype.hasOwnProperty.call(value, k)))
+            throw new Error('All values must have the same keys')
+        for (const key of keys){
             const set = literalToQuery(value[key], true, redactColumns?.has(key))
             vals.push(set.q)
             Object.assign(p, set.p)

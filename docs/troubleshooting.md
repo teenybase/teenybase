@@ -150,7 +150,7 @@ Common issues and solutions when using Teenybase.
 
 **OAuth `CSRF token mismatch`** — Cookie expired (10 min) or blocked. Retry the OAuth flow with cookies enabled.
 
-**`Email not configured` (500)** — No `email` section in teenybase.ts. Add Resend or Mailgun config.
+**`Email not configured` (501)** — `request-verification` / `request-password-reset` need an email provider and there is no `email` section in teenybase.ts. Add a Resend, Mailgun or Cloudflare Email Service config. Without one, users can't verify their email, so `change-password` (which needs a verified email) also stays unavailable.
 
 **`Verification/reset email already sent`** — Rate limited (2 min cooldown). Wait and retry.
 

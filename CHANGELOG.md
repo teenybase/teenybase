@@ -55,6 +55,9 @@ Release 0.1.0. The last version on npm is 0.0.14; 0.0.15 and 0.0.16 were never p
 
 ### Fixed
 
+- A multi-row insert whose rows set different fields returns 400 naming the row and field (`Every row in values must set the same fields: row 2 is missing published_at...`) instead of 500. Rows that set the same fields in a different order now insert instead of failing with 500.
+- `request-verification` and `request-password-reset` without an email provider return 501 `Email not configured: add an email provider...` instead of 500, and password reset answers the same whether or not the account exists.
+
 - Duplicate sign-up returns a field-level error regardless of debug flags: `{"code":400,"message":"An account with this email already exists","data":{"email":{"_errors":[...]}}}` (same for username).
 - D1 errors from current workerd: the extended result code is parsed into `extendedCode` instead of producing `code: "SQLITE_CONSTRAINT_UNIQUE)"`; composite unique indexes report every column. This also revives the OAuth username-collision retry.
 - `/update` with `or` built `UPDATE t OR x SET` (a syntax error); it now builds `UPDATE OR x t SET`.

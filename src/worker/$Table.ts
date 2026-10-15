@@ -428,8 +428,9 @@ export class $Table<T extends $Env = any>{
 
     protected async onInsertParse(query: InsertQuery) {
         let v = Array.isArray(query.values) ? query.values : [query.values]
+        $Table.checkSameKeys(v)
         if(v.length && v[0]) {
-            const setKeys = Object.keys(v[0]) // its checked in the buildInsert if all the rows share the same key. todo should it be done here?
+            const setKeys = Object.keys(v[0]) // every row has the same keys (checkSameKeys)
             for (const key of setKeys) {
                 const field = this.fields[key]
                 // if (!field) throw new ProcessError: 'Invalid field ' + key}) // this check is moved below.
@@ -462,6 +463,26 @@ export class $Table<T extends $Env = any>{
                 const field = this.fields[key]
                 if (!field) throw new ProcessError('Invalid field ' + key)
             }
+        }
+    }
+
+    /**
+     * A multi-row insert is one INSERT with one column list, so every row must set the same columns. Checked on the
+     * request's rows (a client mistake, 400 naming the row and field), before anything adds columns to them.
+     */
+    static checkSameKeys(rows: Record<string, unknown>[]) {
+        if(rows.length < 2) return
+        const first = Object.keys(rows[0] ?? {})
+        for (let i = 1; i < rows.length; i++) {
+            const keys = Object.keys(rows[i] ?? {})
+            const missing = first.filter(k => !keys.includes(k))
+            const extra = keys.filter(k => !first.includes(k))
+            if(!missing.length && !extra.length) continue
+            const problems = [
+                missing.length ? `is missing ${missing.join(', ')}` : '',
+                extra.length ? `has ${extra.join(', ')}, which row 1 does not` : '',
+            ].filter(Boolean).join(' and ')
+            throw new ProcessError(`Every row in values must set the same fields: row ${i + 1} ${problems}. Set the field to null in rows that don't need a value`, 400)
         }
     }
 
