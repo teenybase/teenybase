@@ -255,7 +255,7 @@ Example: a `posts` table linked to `users`. Add `sqlValue` to your teenybase imp
           listRule: 'published == true | auth.uid == author_id',
           viewRule: 'published == true | auth.uid == author_id',
           createRule: 'auth.uid != null & author_id == auth.uid',
-          updateRule: 'auth.uid == author_id',
+          updateRule: 'auth.uid == author_id & new.author_id == author_id',  // can't hand a post to someone else
           deleteRule: 'auth.uid == author_id',
         } as TableRulesExtensionData,
     ],
@@ -271,12 +271,13 @@ The `rules` extension injects SQL WHERE clauses. Rules are expressions:
 ```typescript
 { name: 'rules',
   listRule: 'auth.uid == owner_id', viewRule: 'auth.uid == owner_id',
-  createRule: 'auth.uid != null', updateRule: 'auth.uid == owner_id',
+  createRule: 'auth.uid != null & owner_id == auth.uid',
+  updateRule: 'auth.uid == owner_id & new.owner_id == owner_id',
   deleteRule: 'auth.uid == owner_id',
 } as TableRulesExtensionData
 ```
 
-**Variables:** `auth.uid` (authenticated user's ID, null if not logged in), any column name, `true`/`false` (allow/deny all), `null` (deny all).
+**Variables:** `auth.uid` (authenticated user's ID, null if not logged in), `auth.role` (the user's `role` column, which only admins can set), any column name, `new.<col>` (the value being written; a column an update doesn't touch is its stored value, so `new.owner_id == owner_id` means "owner unchanged"), `true`/`false` (allow/deny all), `null` (deny all).
 **Every table needs rules or `public: true`.** A table with no `rules` extension is denied to everyone but admins, and `teeny generate`/`deploy` refuse to run until you add rules or mark it `public: true` (open read and write for everyone). See [Access Control Defaults](config-reference.md#access-control-defaults).
 **Operators:** `==`, `!=`, `>`, `<`, `>=`, `<=`, `~` (LIKE), `!~` (NOT LIKE), `in`, `@@` (FTS), `&` (AND), `|` (OR). [Full syntax](config-reference.md#expression-syntax).
 

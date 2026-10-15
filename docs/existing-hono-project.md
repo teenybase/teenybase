@@ -142,7 +142,7 @@ export default {
                     listRule: "auth.uid == owner_id",
                     viewRule: "auth.uid == owner_id",
                     createRule: "auth.uid != null & owner_id == auth.uid",
-                    updateRule: "auth.uid == owner_id",
+                    updateRule: "auth.uid == owner_id & new.owner_id == owner_id",
                     deleteRule: "auth.uid == owner_id",
                 },
     ],

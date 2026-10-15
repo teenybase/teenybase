@@ -62,7 +62,7 @@ export default {
       listRule: 'published == true | auth.uid == author_id',
       viewRule: 'published == true | auth.uid == author_id',
       createRule: 'auth.uid != null & author_id == auth.uid',
-      updateRule: 'auth.uid == author_id',
+      updateRule: 'auth.uid == author_id & new.author_id == author_id',  // can't hand a post to someone else
       deleteRule: 'auth.uid == author_id',
     } as TableRulesExtensionData],
   }],
