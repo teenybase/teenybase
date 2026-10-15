@@ -46,3 +46,7 @@ npm run linkcheck      # relative links and anchors in README and docs (needs py
 - Update `docs/` and `skills/` when a feature or config option changes.
 - Add a line under `Unreleased` in [CHANGELOG.md](CHANGELOG.md).
 - By contributing you agree that your contribution is licensed under [Apache-2.0](LICENSE).
+
+## Releases
+
+Maintainers release by bumping `version` in `package.json`, `package-lock.json` and `.claude-plugin/plugin.json`, turning `Unreleased` in the changelog into the version heading, and pushing a matching tag (`git tag v0.1.0 && git push origin v0.1.0`). [`.github/workflows/release.yml`](.github/workflows/release.yml) checks that the tag matches `package.json`, runs the checks and tests, and publishes to npm with provenance. Prerelease versions (`0.2.0-beta.1`) are published under the `next` dist-tag.
