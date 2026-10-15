@@ -4,7 +4,7 @@ All notable changes to the `teenybase` npm package. The format follows [Keep a C
 
 ## Unreleased
 
-Changes since 0.0.16 on GitHub `main` (the last published npm version is 0.0.14).
+Release 0.1.0. The last version on npm is 0.0.14; 0.0.15 and 0.0.16 were never published to npm (0.0.16 was the version on GitHub `main`), so upgrading from npm 0.0.14 also brings everything that was on that `main`. The entries below are the changes since that 0.0.16 tree.
 
 ### Breaking
 
@@ -47,7 +47,7 @@ Changes since 0.0.16 on GitHub `main` (the last published npm version is 0.0.14)
 - `/update` with `or` built `UPDATE t OR x SET` (a syntax error); it now builds `UPDATE OR x t SET`.
 - CLI: every failure exits non-zero, including a failed `npm install` in `create`/`init` and a failed final `wrangler deploy`. Without a terminal, a command that needs an answer fails at once and names the flag (usually `--yes`).
 - CLI: `deploy --local` writes `.local-persist/config.json` only after the migrations are applied, and sets up the database through the worker API directly instead of retrying a direct-D1 path that could not run batches.
-- CLI: runs wrangler as `node <wrangler bin>` without a shell, fixing `spawn npx ENOENT` on Windows (#1, PR #3).
+- CLI: runs wrangler as `node <wrangler bin>` without a shell, fixing `spawn npx ENOENT` on Windows. Thanks to @izulwahidin for reporting it (#1) and for the first fix (PR #3).
 - `zod`, `esbuild`, `miniflare` and `undici` are declared dependencies; `@cloudflare/workers-types` ^5 is accepted.
 - Applying migrations no longer fails when only the stored `sql_revert` differs from the local file.
 - Wrangler warnings on stderr no longer break the CLI's parsing of wrangler's JSON output.

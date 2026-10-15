@@ -1,6 +1,6 @@
 {
     "name": "teenybase",
-    "version": "0.0.15",
+    "version": "0.1.0",
     "description": "Skills for building backends with Teenybase on Cloudflare Workers + D1: config, auth, access rules, migrations and deployment",
     "author": { "name": "Teenybase", "url": "https://github.com/teenybase" },
     "homepage": "https://teenybase.com",

@@ -1,6 +1,6 @@
 {
     "name": "teenybase",
-    "version": "0.0.15",
+    "version": "0.1.0",
     "description": "A teeny tiny Supabase for your own Cloudflare account: one TypeScript config gives you a REST API, auth, access rules, generated migrations, OpenAPI docs and an admin panel on Workers + D1.",
     "keywords": [
         "cloudflare-workers",
