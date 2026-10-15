@@ -135,8 +135,13 @@ assert_dir  "$DIR/migrations" "migrations/"
 assert_file "$DIR/.claude/settings.json" ".claude/settings.json"
 
 # Claude settings content checks
-assert_contains "$DIR/.claude/settings.json" '"plugins"' "claude settings has plugins"
+assert_contains "$DIR/.claude/settings.json" '"extraKnownMarketplaces"' "claude settings declares the teenybase marketplace"
+assert_contains "$DIR/.claude/settings.json" '"teenybase@teenybase-tools": true' "claude settings enables the teenybase plugin"
 assert_contains "$DIR/.claude/settings.json" 'node_modules/teenybase' "claude settings points to teenybase"
+assert_not_contains "$DIR/.claude/settings.json" '"rules"' "claude settings has no undocumented rules key"
+assert_file "$DIR/.claude/rules/teenybase.md" ".claude/rules/teenybase.md"
+assert_contains "$DIR/.claude/rules/teenybase.md" 'npx wrangler login' "claude rules allow npx wrangler login"
+assert_not_contains "$DIR/.claude/rules/teenybase.md" 'Never run npx wrangler directly' "claude rules don't forbid wrangler login"
 
 # Content checks
 assert_contains "$DIR/package.json" '"name": "my-app"' "package.json has correct name"

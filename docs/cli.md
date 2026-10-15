@@ -50,6 +50,8 @@ teeny create my-app --template blank --yes
 
 Creates a directory, scaffolds the project, and runs `npm install`. The generated `package.json` pins `teenybase` to the exact version of the CLI that created it. If the install fails, the command exits 1 and leaves the files in place so you can fix the problem and run `npm install` yourself.
 
+For Claude Code it also writes `.claude/settings.json`, which enables the `teenybase` plugin (the skills) from `node_modules/teenybase` once you trust the folder, and `.claude/rules/teenybase.md` with project instructions for the agent. `init` writes the same files; it never overwrites existing ones.
+
 ### `init`
 
 Initialize teenybase in the current directory. Only creates files that don't already exist — never overwrites.

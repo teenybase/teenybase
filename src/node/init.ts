@@ -107,7 +107,7 @@ function generatePackageJson(name: string): string {
 function generateWranglerJsonc(name: string): string {
     const today = new Date().toISOString().slice(0, 10)
     return `{
-    // Use 'npx teenybase' commands instead of 'npx wrangler' — teenybase wraps wrangler with auto-resource creation and auth.
+    // Deploy, migrate and run the dev server with 'npx teenybase' (it wraps wrangler: generates migrations, creates the D1 database, uploads secrets). 'npx wrangler login' / 'whoami' are fine to run directly.
     "$schema": "node_modules/wrangler/config-schema.json",
     "name": ${JSON.stringify(name)},
     "main": "src/index.ts",
@@ -239,16 +239,39 @@ POCKET_UI_EDITOR_PASSWORD=editor
 `
 }
 
+/**
+ * Claude Code project settings: the teenybase package (after install, in node_modules) is a plugin
+ * marketplace (`.claude-plugin/marketplace.json`, "teenybase-tools") with one plugin, "teenybase",
+ * that ships the skills. Only documented settings keys: `extraKnownMarketplaces` with a `directory`
+ * source and `enabledPlugins` keyed `<plugin>@<marketplace>`. Claude Code applies them after the
+ * user trusts the folder. Agent instructions go in `.claude/rules/` (see generateClaudeRules).
+ */
 function generateClaudeSettings(): string {
     const settings = {
-        plugins: [
-            {path: './node_modules/teenybase'},
-        ],
-        rules: [
-            'Never run npx wrangler directly. Always use npx teenybase commands instead. The teenybase CLI wraps wrangler with support for both teenybase and cloudflare platforms, handles auto-resource creation, authentication and edge-cases.',
-        ],
+        extraKnownMarketplaces: {
+            'teenybase-tools': {
+                source: {source: 'directory', path: './node_modules/teenybase'},
+            },
+        },
+        enabledPlugins: {
+            'teenybase@teenybase-tools': true,
+        },
     }
     return JSON.stringify(settings, null, 4) + '\n'
+}
+
+/** Project instructions for Claude Code (`.claude/rules/*.md` are loaded like CLAUDE.md). */
+function generateClaudeRules(): string {
+    return `# teenybase
+
+The backend is defined in \`teenybase.ts\` and runs on Cloudflare Workers + D1 through the teenybase CLI.
+
+- Migrate, deploy, upload secrets and run the dev server with \`npx teenybase\` (\`deploy --local\`, \`dev\`, \`deploy --remote\`, \`secrets --remote --upload\`), not \`npx wrangler deploy\`, \`wrangler dev\` or \`wrangler d1 migrations\`. teenybase generates the migrations from \`teenybase.ts\`, creates the D1 database and uploads the secrets.
+- \`npx wrangler login\` and \`npx wrangler whoami\` are expected: deploying to the user's Cloudflare account starts with \`npx wrangler login\`.
+- Don't edit files in \`migrations/\` by hand. Change \`teenybase.ts\` and run \`npx teenybase deploy --local\`.
+- Run it as \`npx teenybase\`, never \`npx teeny\` (an unrelated npm package).
+- Reference: \`npx teenybase docs\` lists the docs and \`npx teenybase skills\` the skills shipped in \`node_modules/teenybase\`.
+`
 }
 
 const GITIGNORE_LINES = [
@@ -417,6 +440,7 @@ export async function runInit(root: string, options: InitOptions): Promise<void>
     if (!state.hasClaudeSettings) {
         writeFile('.claude/settings.json', generateClaudeSettings())
     }
+    writeFile('.claude/rules/teenybase.md', generateClaudeRules())
 
     // .gitignore: append missing lines if it exists, create if it doesn't
     if (state.hasGitignore) {
