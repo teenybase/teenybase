@@ -6,7 +6,9 @@ import {DatabaseSettings} from '../../src'
 // Where the OAuth callback sends the browser after login: the `redirect` query of the authorize call travels in
 // `state` and is validated by TableAuthExtension._validateRedirectUrl. Without allowedRedirectUrls only appUrl's
 // hostname is accepted (drive2 appUrl: https://localhost); anything else falls back to provider.redirectUrl/appUrl.
-// The provider is a fake one, its token and userinfo endpoints are answered by fetchMock.
+// The provider is a fake one, its token and userinfo endpoints are answered by fetchMock (the outbound-fetch mock of
+// cloudflare:test). Files that replace globalThis.fetch must restore it (vi.stubGlobal + vi.unstubAllGlobals): the
+// pool runs every file in one worker, and a leftover vi.fn() fetch made every callback here a 500.
 
 const IDP = 'https://idp.example.com'
 let base: DatabaseSettings
@@ -26,13 +28,17 @@ const get = (path: string, settings: DatabaseSettings, headers: Record<string, s
         headers: {'$DB_TEST_DATABASE_SETTINGS': JSON.stringify(settings), 'Content-Type': 'text/plain', ...headers},
     })
 
-/** Runs authorize + callback and returns where the callback redirects to. */
-async function landing(redirect: string | undefined, settings = withProvider()) {
+/** Runs authorize + callback and returns the callback response. */
+async function callback(redirect: string | undefined, settings: DatabaseSettings) {
     const auth = await get(redirect === undefined ? '' : '?redirect=' + encodeURIComponent(redirect), settings)
     expect(auth.status).toEqual(302)
     const state = new URL(auth.headers.get('location')!).searchParams.get('state')!
     const csrf = /oauth_state=([^;]+)/.exec(auth.headers.get('set-cookie') ?? '')![1]
-    const cb = await get(`/callback?code=c0de&state=${encodeURIComponent(state)}`, settings, {Cookie: `oauth_state=${csrf}`})
+    return get(`/callback?code=c0de&state=${encodeURIComponent(state)}`, settings, {Cookie: `oauth_state=${csrf}`})
+}
+/** Runs authorize + callback and returns where the callback redirects to. */
+async function landing(redirect: string | undefined, settings = withProvider()) {
+    const cb = await callback(redirect, settings)
     expect(cb.status, await cb.clone().text()).toEqual(302)
     return cb.headers.get('location')
 }
@@ -43,6 +49,8 @@ beforeAll(async () => {
     fetchMock.disableNetConnect()
     const idp = fetchMock.get(IDP)
     idp.intercept({path: '/token', method: 'POST'}).reply(200, JSON.stringify({access_token: 'at'}), {headers: {'content-type': 'application/json'}}).persist()
+    // a provider whose token endpoint is broken: an HTML error page instead of JSON
+    fetchMock.get('https://broken-idp.example.com').intercept({path: '/token', method: 'POST'}).reply(500, '<html>Internal Error</html>', {headers: {'content-type': 'text/html'}}).persist()
     idp.intercept({path: '/userinfo', method: 'GET'}).reply(200, JSON.stringify({sub: 'u1', email: 'oauth-user@example.com', name: 'O'}), {headers: {'content-type': 'application/json'}}).persist()
 })
 afterAll(() => fetchMock.deactivate())
@@ -82,5 +90,21 @@ describe('OAuth redirect after login', () => {
         expect(await landing('https://app.example.com/welcome', s)).toEqual('https://app.example.com/welcome')
         expect(await landing('/settings', s)).toEqual('https://localhost')
         expect(await landing('https://app.example.com/welcome/../admin', s)).toEqual('https://localhost')
+    })
+})
+
+describe('OAuth callback when the provider fails', () => {
+    // these used to surface as 500 with the raw TypeError/SyntaxError/network error
+    test('a token endpoint that answers with a non-JSON error page is a 502', async () => {
+        const res = await callback('/x', withProvider({}, {tokenUrl: 'https://broken-idp.example.com/token'}))
+        expect(res.status).toEqual(502)
+        expect(((await res.json()) as any).message).toEqual('OAuth provider token response is not JSON (HTTP 500)')
+    })
+
+    test('an unreachable token endpoint is a 502', async () => {
+        // no intercept for this host and net connect is disabled, so fetch() rejects
+        const res = await callback('/x', withProvider({}, {tokenUrl: 'https://unreachable-idp.example.com/token'}))
+        expect(res.status).toEqual(502)
+        expect(((await res.json()) as any).message).toEqual('OAuth provider token request failed')
     })
 })

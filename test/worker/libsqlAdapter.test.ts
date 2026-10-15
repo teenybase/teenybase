@@ -17,8 +17,8 @@ const OK_EXECUTE = (cols: {name: string}[], rows: any[][], meta: any = {}) => ({
 
 describe('LibsqlAdapter.run', () => {
     let fetchMock: any
-    beforeEach(() => { fetchMock = vi.fn(); globalThis.fetch = fetchMock })
-    afterEach(() => { vi.restoreAllMocks() })
+    beforeEach(() => { fetchMock = vi.fn(); vi.stubGlobal('fetch', fetchMock) })
+    afterEach(() => { vi.restoreAllMocks(); vi.unstubAllGlobals() })
 
     it('POSTs to /v2/pipeline with auth header and tagged-value args', async () => {
         fetchMock.mockResolvedValueOnce(new Response(JSON.stringify(OK_EXECUTE(
@@ -132,8 +132,8 @@ describe('LibsqlAdapter.run', () => {
 
 describe('LibsqlAdapter.runBatch', () => {
     let fetchMock: any
-    beforeEach(() => { fetchMock = vi.fn(); globalThis.fetch = fetchMock })
-    afterEach(() => { vi.restoreAllMocks() })
+    beforeEach(() => { fetchMock = vi.fn(); vi.stubGlobal('fetch', fetchMock) })
+    afterEach(() => { vi.restoreAllMocks(); vi.unstubAllGlobals() })
 
     function batchOk(stepResults: Array<{cols: {name: string}[], rows: any[][]}|null>, stepErrors: any[] = []) {
         return {

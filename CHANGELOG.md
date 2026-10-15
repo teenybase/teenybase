@@ -55,6 +55,7 @@ Release 0.1.0. The last version on npm is 0.0.14; 0.0.15 and 0.0.16 were never p
 
 ### Fixed
 
+- OAuth callback: a provider token/userinfo endpoint that can't be reached or answers with a non-JSON body (an HTML error page) returns 502 `OAuth provider token request failed` / `... response is not JSON (HTTP 500)` instead of a 500 with the raw error.
 - A multi-row insert whose rows set different fields returns 400 naming the row and field (`Every row in values must set the same fields: row 2 is missing published_at...`) instead of 500. Rows that set the same fields in a different order now insert instead of failing with 500.
 - `request-verification` and `request-password-reset` without an email provider return 501 `Email not configured: add an email provider...` instead of 500, and password reset answers the same whether or not the account exists.
 

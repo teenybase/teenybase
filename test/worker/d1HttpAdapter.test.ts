@@ -10,8 +10,8 @@ const OK = (results: any[], meta: any = {}) => ({
 
 describe('D1HttpAdapter.run', () => {
     let fetchMock: any
-    beforeEach(() => { fetchMock = vi.fn(); globalThis.fetch = fetchMock })
-    afterEach(() => { vi.restoreAllMocks() })
+    beforeEach(() => { fetchMock = vi.fn(); vi.stubGlobal('fetch', fetchMock) })
+    afterEach(() => { vi.restoreAllMocks(); vi.unstubAllGlobals() })
 
     it('POSTs to /query/all/ with auth header and encoded params', async () => {
         fetchMock.mockResolvedValueOnce(new Response(JSON.stringify(OK([{a: 1}])), {status: 200}))
@@ -101,8 +101,8 @@ describe('D1HttpAdapter.run', () => {
 
 describe('D1HttpAdapter.runBatch', () => {
     let fetchMock: any
-    beforeEach(() => { fetchMock = vi.fn(); globalThis.fetch = fetchMock })
-    afterEach(() => { vi.restoreAllMocks() })
+    beforeEach(() => { fetchMock = vi.fn(); vi.stubGlobal('fetch', fetchMock) })
+    afterEach(() => { vi.restoreAllMocks(); vi.unstubAllGlobals() })
 
     it('POSTs to /query/batch/ with wrapped {queries:[...]} body, returns per-statement results', async () => {
         fetchMock.mockResolvedValueOnce(new Response(JSON.stringify([

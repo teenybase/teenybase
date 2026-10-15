@@ -104,31 +104,51 @@ type UserFieldsAdmin = UserFields & {
 
 const SALT_LENGTH = 20
 
+/**
+ * fetch() to an OAuth provider during the callback. If the provider can't be reached, that is an upstream failure,
+ * not a server bug: 502 naming the step, instead of the raw network error as a 500.
+ */
+async function oauthProviderFetch(step: string, url: string, init?: RequestInit): Promise<Response> {
+    try {
+        return await fetch(url, init)
+    } catch (e) {
+        throw new HTTPException(502, {message: `OAuth provider ${step} request failed`, cause: e})
+    }
+}
+/** Parses a provider response body as JSON; a body that isn't JSON (an HTML error page, an empty body) is a 502. */
+async function oauthProviderJson<T>(step: string, res: Response): Promise<T> {
+    try {
+        return await res.json<T>()
+    } catch (e) {
+        throw new HTTPException(502, {message: `OAuth provider ${step} response is not JSON (HTTP ${res.status})`, cause: e})
+    }
+}
+
 export class TableAuthExtension extends TableExtension<TableAuthExtensionData> {
     static readonly name = 'auth'
     /** Registry for custom OAuth exchange handlers. Keyed by provider name. */
     static oauthExchangeHandlers: Record<string, OAuthExchangeHandler> = {
         // GitHub needs a separate /user/emails call because /user often returns email: null for private emails
         github: async ({code, callbackUrl, clientId, clientSecret}) => {
-            const tokenRes = await fetch('https://github.com/login/oauth/access_token', {
+            const tokenRes = await oauthProviderFetch('token', 'https://github.com/login/oauth/access_token', {
                 method: 'POST',
                 headers: {'Content-Type': 'application/x-www-form-urlencoded', 'Accept': 'application/json'},
                 body: new URLSearchParams({code, client_id: clientId, client_secret: clientSecret, redirect_uri: callbackUrl}),
             })
-            const tokenData = await tokenRes.json<Record<string, any>>()
+            const tokenData = await oauthProviderJson<Record<string, any>>('token', tokenRes)
             if (!tokenRes.ok || tokenData.error) throw new HTTPException(400, {message: `Token exchange failed: ${tokenData.error_description || tokenData.error || tokenRes.statusText}`})
 
             const headers = {'Authorization': `Bearer ${tokenData.access_token}`, 'Accept': 'application/json', 'User-Agent': 'Teenybase'}
             const [userRes, emailsRes] = await Promise.all([
-                fetch('https://api.github.com/user', {headers}),
-                fetch('https://api.github.com/user/emails', {headers}),
+                oauthProviderFetch('userinfo', 'https://api.github.com/user', {headers}),
+                oauthProviderFetch('userinfo', 'https://api.github.com/user/emails', {headers}),
             ])
             if (!userRes.ok) throw new HTTPException(400, {message: 'Failed to fetch GitHub user info'})
-            const user = await userRes.json<Record<string, any>>()
+            const user = await oauthProviderJson<Record<string, any>>('userinfo', userRes)
 
             let email = user.email as string | null
             if (emailsRes.ok) {
-                const emails = await emailsRes.json<{email: string, primary: boolean, verified: boolean}[]>()
+                const emails = await oauthProviderJson<{email: string, primary: boolean, verified: boolean}[]>('userinfo', emailsRes)
                 const primary = emails.find(e => e.primary && e.verified) ?? emails.find(e => e.verified)
                 if (primary) email = primary.email
             }
@@ -657,7 +677,7 @@ export class TableAuthExtension extends TableExtension<TableAuthExtensionData> {
         if (!provider.tokenUrl) throw new HTTPException(500, {message: `Missing tokenUrl for provider: ${provider.name}`})
 
         // Exchange code for token
-        const tokenRes = await fetch(provider.tokenUrl, {
+        const tokenRes = await oauthProviderFetch('token', provider.tokenUrl, {
             method: 'POST',
             headers: {'Content-Type': 'application/x-www-form-urlencoded', 'Accept': 'application/json'},
             body: new URLSearchParams({
@@ -668,7 +688,7 @@ export class TableAuthExtension extends TableExtension<TableAuthExtensionData> {
                 grant_type: 'authorization_code',
             }),
         })
-        const tokenData = await tokenRes.json<Record<string, any>>()
+        const tokenData = await oauthProviderJson<Record<string, any>>('token', tokenRes)
         if (!tokenRes.ok || tokenData.error)
             throw new HTTPException(400, {message: `Token exchange failed: ${tokenData.error_description || tokenData.error || tokenData.message || tokenRes.statusText}`})
 
@@ -679,9 +699,9 @@ export class TableAuthExtension extends TableExtension<TableAuthExtensionData> {
         }
         if (provider.userinfoUrl) {
             const headers: Record<string, string> = {'Authorization': `Bearer ${tokenData.access_token}`, 'Accept': 'application/json', ...provider.userinfoHeaders}
-            const userinfoRes = await fetch(provider.userinfoUrl, {headers})
+            const userinfoRes = await oauthProviderFetch('userinfo', provider.userinfoUrl, {headers})
             if (!userinfoRes.ok) throw new HTTPException(400, {message: 'Failed to fetch user info'})
-            let data = await userinfoRes.json<Record<string, any>>()
+            let data = await oauthProviderJson<Record<string, any>>('userinfo', userinfoRes)
             if (provider.userinfoField) data = data?.[provider.userinfoField]
             userInfo = data
         }

@@ -14,8 +14,8 @@ function fakeDb(config: DatabaseConfig | undefined, adapter: any) {
 
 describe('D1RestExtension', () => {
     let fetchMock: any
-    beforeEach(() => { fetchMock = vi.fn(); globalThis.fetch = fetchMock })
-    afterEach(() => { vi.restoreAllMocks() })
+    beforeEach(() => { fetchMock = vi.fn(); vi.stubGlobal('fetch', fetchMock) })
+    afterEach(() => { vi.restoreAllMocks(); vi.unstubAllGlobals() })
 
     it('static adapterType is "d1-rest"', () => {
         expect(D1RestExtension.adapterType).toBe('d1-rest')

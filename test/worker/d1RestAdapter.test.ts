@@ -10,9 +10,9 @@ describe('D1RestAdapter.run', () => {
     let fetchMock: any
     beforeEach(() => {
         fetchMock = vi.fn()
-        globalThis.fetch = fetchMock
+        vi.stubGlobal('fetch', fetchMock)
     })
-    afterEach(() => { vi.restoreAllMocks() })
+    afterEach(() => { vi.restoreAllMocks(); vi.unstubAllGlobals() })
 
     it('POSTs to the correct URL with auth header and body', async () => {
         fetchMock.mockResolvedValueOnce(new Response(JSON.stringify(OK_RESP([{a: 1}])), {status: 200}))
@@ -79,8 +79,8 @@ describe('D1RestAdapter.run', () => {
 
 describe('D1RestAdapter.runBatch', () => {
     let fetchMock: any
-    beforeEach(() => { fetchMock = vi.fn(); globalThis.fetch = fetchMock })
-    afterEach(() => { vi.restoreAllMocks() })
+    beforeEach(() => { fetchMock = vi.fn(); vi.stubGlobal('fetch', fetchMock) })
+    afterEach(() => { vi.restoreAllMocks(); vi.unstubAllGlobals() })
 
     it('sends documented batch body and returns one QueryResult per statement', async () => {
         fetchMock.mockResolvedValueOnce(new Response(JSON.stringify({
