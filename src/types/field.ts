@@ -26,7 +26,7 @@ export interface TableFieldData<
 
     noUpdate?: boolean // value in this field cannot be updated.
     noInsert?: boolean // value in this field cannot be inserted.
-    noSelect?: boolean // value in this field cannot be get(except for admins).
+    noSelect?: boolean // value in this field cannot be get(except for admins). auth_password/auth_password_salt columns are hidden from admins too, see isAuthSecretField.
 
     // this can be set to/after rename a field
     lastName?: string

@@ -163,7 +163,7 @@ export default {
 | `collate` | `string` | No | — | Collation. `'BINARY'`, `'NOCASE'`, or `'RTRIM'`. |
 | `foreignKey` | `FieldForeignKey` | No | — | Foreign key relation. See below. |
 | `usage` | `string` | No | — | Semantic usage that extensions act on. See [Field Usages](#field-usages). |
-| `noSelect` | `boolean` | No | `false` | Exclude from API responses (hidden field). Used for passwords, salts, etc. |
+| `noSelect` | `boolean` | No | `false` | Exclude from API responses for non-admin requests, and from where/rule expressions. Admin requests (service token, Pocket UI viewer/editor) still read it. The auth password hash and salt are hidden from everyone, admins included, whether or not they set `noSelect`. |
 | `noInsert` | `boolean` | No | `false` | Cannot be set via API insert. Used for auto-generated fields. |
 | `noUpdate` | `boolean` | No | `false` | Cannot be changed via API update. Used for IDs, creation timestamps. |
 
@@ -248,8 +248,8 @@ These are recognized by the [Auth Extension](#auth-extension-tableauthextensiond
 |-------|-------------|---------------|
 | `auth_email` | User's email address | Used as login identity. Must be unique. |
 | `auth_username` | Username | Used as alternative login identity. Must be unique. |
-| `auth_password` | Password hash | Automatically hashed on sign-up. Hidden from API responses (`noSelect`). |
-| `auth_password_salt` | Password salt | Auto-generated. Hidden from API responses. Admin-only write (see below). |
+| `auth_password` | Password hash | Automatically hashed on sign-up and on update. Never returned by any select or `returning` and not usable in where/rules, admin requests included. Admins set a new password by updating it (`setValues: {password, passwordConfirm}`). |
+| `auth_password_salt` | Password salt | Auto-generated with the hash. Never returned or filterable, like the hash. Admin-only write (see below). |
 | `auth_email_verified` | Email verification status | Set to `false` on sign-up. Updated on verification confirm. Admin-only write. |
 | `auth_name` | Display name | Included in JWT payload. |
 | `auth_avatar` | Profile picture (file) | Stored in R2 via file upload. |
@@ -619,7 +619,7 @@ The worker fetches the UI files and serves them from your API's own origin, so t
 
 | Variable | Description |
 |----------|-------------|
-| `POCKET_UI_VIEWER_PASSWORD` | Password for viewer role (read-only) |
+| `POCKET_UI_VIEWER_PASSWORD` | Password for viewer role (read-only). The viewer and editor logins are admin tokens: they read every row and every `noSelect` column, but never password hashes or salts. |
 | `POCKET_UI_EDITOR_PASSWORD` | Password for editor role (read + write) |
 | `ADMIN_SERVICE_TOKEN` | Also accepted as superadmin password |
 

@@ -46,6 +46,7 @@ import {D1PreparedQuery} from './util/sql'
 import {sqlQueryToD1Query} from '../sql/build/d1'
 import {sqlValSchemaFile2, sqlValSchemaFile3, sqlValSchemaRecord} from '../types/zod/sqlSchemas';
 import {tableFieldTypeToZod} from '../types/zod/dataTypesSchemas'
+import {isFieldSelectable} from '../types/config/isFieldSelectable'
 
 export class $Table<T extends $Env = any>{
     extensions: TableExtension[] = []
@@ -441,25 +442,6 @@ export class $Table<T extends $Env = any>{
                     if (!val[this.mapping.uid]) val[this.mapping.uid] = {l: generateUid()}
                 }
             }
-
-            // todo this makes some responses change in test, think about this properly
-            // Apply schema-defined defaults (or NULL) for missing columns so they're
-            // available in the CTE for createRule expressions.
-            // Without this, rules like `role == 'guest'` reference [new].[role] which
-            // doesn't exist in the CTE → "no such column" error.
-            // for (const field of this.data.fields) {
-            //     if (field.noInsert) continue
-            //     // Skip auth-managed fields — auth extension sets these itself in onInsertParse
-            //     if (field.usage === 'auth_email_verified' || field.usage === 'auth_password_salt') continue
-            //     if (v[0][field.name] != null) continue
-            //     if (field.default != null) {
-            //         const defaultVal = typeof field.default === 'string'
-            //             ? {q: field.default} : {...field.default}
-            //         for (const val of v) val[field.name] = defaultVal
-            //     } else {
-            //         for (const val of v) val[field.name] = {l: null}
-            //     }
-            // }
         }
 
         // todo notNull check
@@ -806,7 +788,7 @@ export class $Table<T extends $Env = any>{
         for (const col of cols) {
             if(col === '*') {
                 if(!this.allowWildcard/* || hidden.length*/) {
-                    const fields = Object.entries(this.fields).filter(f => isAdmin || !f[1].noSelect)
+                    const fields = Object.entries(this.fields).filter(f => isFieldSelectable(f[1], isAdmin))
                     const fieldsSql = fields.map(s => ident(s[0], this.jc))
                     res.push(...fieldsSql)
                     fields.forEach(f=> addAlias(f[0]))

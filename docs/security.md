@@ -63,7 +63,8 @@ All parsed expressions produce parameterized SQL. No exceptions.
 Table rules (`listRule`, `viewRule`, `createRule`, `updateRule`, `deleteRule`) are parsed into SQL WHERE clauses and injected directly into queries. Filtering happens inside SQLite — unauthorized data never leaves the database, not even as an intermediate result. This is the same approach Supabase and Postgres use, applied at the framework level.
 
 - **Deny by default:** an omitted/`null` rule denies that operation, and a table with no `rules` extension denies all CRUD to non-admins. `teeny generate`/`deploy` refuse a table that has neither rules nor an explicit `public: true`, so a table can't end up world-writable by omission. See [Access Control Defaults](config-reference.md#access-control-defaults).
-- Admin users (`auth.admin = true`) bypass all rules
+- Admin users (`auth.admin = true`) bypass all rules. That includes the Pocket UI `viewer` and `editor` logins, which read every row and every `noSelect` column (viewer is read-only)
+- Password hashes and salts (`auth_password` / `auth_password_salt` columns) are never returned by any select or `returning` and can't be used in a where or rule expression, for any caller including admins and the service token; only the auth extension reads them, for login
 - `INSERT/UPDATE OR REPLACE` (the `or: 'REPLACE'` option, and `edit/:id?or=INSERT`) is rejected with 403 for non-admin callers on a table with rules unless `deleteRule` is `'true'` (no trigger on that event, never on auth tables): SQLite deletes the conflicting row without a WHERE, so `deleteRule`/`updateRule` could not be enforced on it
 - Auth routes that write the user row without table rules (change-password, password reset, email verification) only write their own fields; extra fields in the request body are ignored
 - Rules can reference `auth.*` (authenticated user) and column values

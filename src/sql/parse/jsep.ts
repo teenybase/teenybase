@@ -8,6 +8,7 @@ import {SelectQuerySelect, SelectQuerySelect1, SelectSubQuery} from '../build/se
 import {fts5TableName} from '../schema/tableQueries'
 import {HonoRequest} from 'hono'
 import {isTableFieldUnique} from '../../types/config/isTableFieldUnique';
+import {isFieldSelectable} from '../../types/config/isFieldSelectable'
 import {sqlValSchema, tableColumnNameSchema} from '../../types/zod/sqlSchemas'
 
 let jsepSetup = false
@@ -217,7 +218,7 @@ export function createJsepContext(tableName: string, tables: TableData[], global
         columnify(t.name), [
             rowIdField,
             ...t.fields
-                .filter(f=>isAdmin || !f.noSelect)
+                .filter(f=>isFieldSelectable(f, isAdmin))
                 .map(f=>(<JsepFieldType>{
                     name: columnify(f.name),
                     sqlType: f.sqlType,

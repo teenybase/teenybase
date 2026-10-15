@@ -394,7 +394,7 @@ Evaluation order: `requireAuth` → `guard` → parameter validation → SQL exe
 
 ## Sensitive Field Filtering
 
-When using `returning: ['*']` in SQL mode, sensitive fields (those with `noSelect: true` in the field definition) are automatically excluded from the response for non-admin users.
+When using `returning: ['*']` in SQL mode, sensitive fields are excluded from the response: `noSelect: true` fields for non-admin callers, and the auth password hash and salt (`auth_password` / `auth_password_salt` usage) for every caller, admins included.
 
 ```typescript
 // Field definition
@@ -402,11 +402,12 @@ When using `returning: ['*']` in SQL mode, sensitive fields (those with `noSelec
 
 // Action with returning: ['*']
 {
-    name: 'update_user',
+    name: 'rename_user',
+    params: { id: 'string', name: 'string' },
     sql: {
         type: 'UPDATE',
         table: 'users',
-        set: { email_verified: sqlValue(true) },
+        set: { name: sql`{:name}` },
         where: sql`id = {:id}`,
         returning: ['*'],              // password will be excluded
     },
@@ -415,7 +416,7 @@ When using `returning: ['*']` in SQL mode, sensitive fields (those with `noSelec
 
 **Response:** Includes all fields *except* `password`, `password_salt`, and any other `noSelect` fields.
 
-Superadmin users bypass this filtering and see all fields.
+Admin callers (service token, Pocket UI logins) also get the other `noSelect` fields, but never the password hash or salt. An explicit `returning: ['password']` in SQL mode is passed through as written, so don't list secret columns in an action you expose.
 
 ---
 

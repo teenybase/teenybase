@@ -38,6 +38,7 @@ import {$DatabaseRawImpl} from './$DatabaseRawImpl'
 import {parseRuleQuery} from './extensions/tableRulesExtension'
 import {StorageAdapter} from './storage/StorageAdapter'
 import {DefaultDatabaseAdapter} from './storage/DefaultDatabaseAdapter'
+import {isFieldSelectable} from '../types/config/isFieldSelectable'
 
 export class $Database<T extends $Env = $Env> extends $DatabaseRawImpl/*<T>*/{
     protected readonly tables: Record<string, $Table<T>> = {}
@@ -841,13 +842,13 @@ export class $Database<T extends $Env = $Env> extends $DatabaseRawImpl/*<T>*/{
         })
     }
 
-    /** Expands returning: ['*'] to explicit field names excluding noSelect fields (like password) */
+    /** Expands returning: ['*'] to explicit field names: noSelect fields only for admins, password hash/salt never */
     private _expandReturningWildcard(table: $Table, returning: string[]): string[] {
         const isAdmin = !!this.auth.admin
         return returning.flatMap(r => {
             if(r !== '*') return [r]
             return Object.entries(table.fields)
-                .filter(([_, f]) => isAdmin || !f.noSelect)
+                .filter(([_, f]) => isFieldSelectable(f, isAdmin))
                 .map(([name]) => name)
         })
     }

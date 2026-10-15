@@ -30,6 +30,7 @@ import {zParseWithPath} from '../../utils/zod'
 import {deleteCookie, getCookie, setCookie} from 'hono/cookie'
 import {AuthProvider, OAuthExchangeResult} from '../../types/config'
 import {envBool} from '../env'
+import {isFieldSelectable} from '../../types/config/isFieldSelectable'
 
 type OAuthPreset = Pick<AuthProvider, 'authorizeUrl' | 'tokenUrl' | 'userinfoUrl' | 'scopes' | 'mapping' | 'authorizeParams' | 'userinfoHeaders' | 'userinfoField' | 'trustEmailVerified'>
 
@@ -1101,7 +1102,9 @@ export class TableAuthExtension extends TableExtension<TableAuthExtensionData> {
             this.mapping.metadata,
         ].filter(v => {
             const f = v ? this.table.fields[v]:undefined
-            return f && (!f.noSelect || asAdmin)
+            // asAdmin is the extension's own login lookup (password hash and salt included). Everything else is
+            // returned or used as a `returning` list, so it follows the normal select rules (no hash/salt, no noSelect)
+            return f && (asAdmin || isFieldSelectable(f, false))
         }) as string[]
         const jc = !asAdmin ? this.jc : {
             ...this.jc,
@@ -1398,7 +1401,8 @@ export class TableAuthExtension extends TableExtension<TableAuthExtensionData> {
                 let current = await this._parseCurrentPasswordField(record, salt || '')
                 const currentQ = literalToQuery({l: current, redact: true})
                 const where = {
-                    q: `${ident(this.mapping.password, this.jc)} = ${currentQ.q}`,
+                    // the password column is never in the request's column list (isAuthSecretField), so skip the check
+                    q: `${ident(this.mapping.password, {...this.jc, _checkColumns: false})} = ${currentQ.q}`,
                     p: currentQ.p
                 }
                 // const simplify = this.c.req.header('$DB_TEST_PARSE_SIMPLIFY_DISABLE') !== 'true'

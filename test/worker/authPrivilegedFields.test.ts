@@ -134,9 +134,10 @@ describe('role (auth_audience) is admin-only', () => {
     })
 
     test('a multi-row insert is rejected when any row sets role', async () => {
+        // only the second row sets it: every row is checked, before the same-keys check of the SQL builder
         await expectAdminOnly(await call('table/users/insert', post({
             values: [
-                {username: 'multi1', email: 'multi1@example.com', password: '12345678', passwordConfirm: '12345678', name: 'm', role: 'guest'},
+                {username: 'multi1', email: 'multi1@example.com', password: '12345678', passwordConfirm: '12345678', name: 'm'},
                 {username: 'multi2', email: 'multi2@example.com', password: '12345678', passwordConfirm: '12345678', name: 'm', role: 'admin'},
             ],
         })), ['role'])
