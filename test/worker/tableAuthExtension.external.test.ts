@@ -49,7 +49,7 @@ const loginToken = async (email: string, extra?: Record<string, any>) =>
 const signUp = (body: Record<string, any>) => fetch('users/auth/sign-up', {
     method: 'POST',
     body: JSON.stringify({password: '12345678', passwordConfirm: '12345678', name: 'U',
-        role: 'guest', meta: '{"base": "/"}', ...body}),
+        meta: '{"base": "/"}', ...body}),
 })
 
 test('external login creates a user with a username derived from the email', async () => {

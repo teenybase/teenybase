@@ -23,8 +23,8 @@ These come from the authenticated user's JWT. See `docs/config-reference.md` (JW
 
 | Variable | Available in | Description |
 |----------|-------------|-------------|
-| Column names | All rules except createRule | Any column from the current table (e.g., `owner_id`, `published`, `status`). |
-| `new.*` | createRule, updateRule | The **new values being inserted/updated**. E.g., `new.status`, `new.author_id`. In createRule, these are the values from the INSERT. In updateRule, these are the SET values. |
+| Column names | All rules | Any column from the current table (e.g., `owner_id`, `published`, `status`). In createRule there is no stored row yet, so a column name means the row being inserted (same as `new.<col>`). |
+| `new.*` | createRule, updateRule | The **new values being inserted/updated**. E.g., `new.status`, `new.author_id`. In createRule, these are the values from the INSERT; a column the request leaves out is its `default`, or NULL. In updateRule, these are the SET values; a column the update leaves out is its stored value, so `new.author_id == author_id` means "author unchanged" (use `==`, not `=`, which never matches NULL). |
 
 ### Steps-only variables
 
@@ -38,7 +38,7 @@ These come from the authenticated user's JWT. See `docs/config-reference.md` (JW
 | Variable | listRule | viewRule | createRule | updateRule | deleteRule | Action steps |
 |----------|----------|----------|------------|------------|------------|-------------|
 | `auth.*` | Yes | Yes | Yes | Yes | Yes | Yes |
-| Column names | Yes | Yes | **No** (row doesn't exist yet) | Yes | Yes | Yes |
+| Column names | Yes | Yes | Yes (the row being inserted, like `new.*`) | Yes | Yes | Yes |
 | `new.*` | No | No | Yes (inserted values) | Yes (SET values) | No | No |
 | `params.*` | No | No | No | No | No | Yes |
 | `request.*` | No | No | No | No | No | Yes |
@@ -176,7 +176,8 @@ The expression parser handles all parameterization. You never write raw SQL in e
 
 1. **`null` denies access.** Omitting a rule = `null` = deny all. Set `'true'` for public access. A table with no `rules` extension is denied entirely (unless it sets `public: true`), and the CLI refuses to deploy it.
 2. **String `'true'`, not boolean.** `listRule: 'true'` (string) works. `listRule: true` (boolean) does NOT.
-3. **Create rules can't reference existing row data.** The row doesn't exist yet. Use `auth.*` and `new.*` only.
+3. **Create rules see only the row being inserted.** There is no stored row yet: `author_id` and `new.author_id` are both the inserted value, and an omitted column is its `default` (or NULL).
+3b. **updateRule needs `new.*` to stop reassignment.** `auth.uid == author_id` alone lets the author set `author_id` to another user; add `& new.author_id == author_id`.
 4. **Null comparison.** `auth.uid == null` checks if NOT logged in. `auth.uid != null` checks if logged in.
 5. **No nested subqueries.** Expressions are flat — no `SELECT` inside a rule expression.
 6. **`=` vs `==`.** `=` is SQL `=` (not null-safe), `==` is SQL `IS` (null-safe). Use `==` when comparing with `null` or when null values are possible. `auth.uid == null` works, `auth.uid = null` does not.

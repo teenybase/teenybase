@@ -146,6 +146,11 @@ export class TableAuthExtension extends TableExtension<TableAuthExtensionData> {
     }
 
     readonly mapping
+    /**
+     * Columns only an admin may write: the audience fields (the JWT `aud` claim, read as `auth.role` in rules),
+     * email_verified (the `verified` claim) and the password salt. See {@link _rejectPrivilegedWrites}.
+     */
+    readonly privilegedFields: string[]
     /** Resolves the auth extension's JWT secret. Public so callers (e.g. platform
      * gateways verifying tokens externally) can sign/verify auth JWTs without
      * going through `_loginWithToken`. */
@@ -174,6 +179,8 @@ export class TableAuthExtension extends TableExtension<TableAuthExtensionData> {
         } as const
         if(this.mapping.emailVerified && !this.mapping.email) throw new HTTPException(500, {message: 'Invalid Configuration - email field required for emailVerified'})
         if(this.mapping.passwordSalt && !this.mapping.password) throw new HTTPException(500, {message: 'Invalid Configuration - passwordSalt field required for password'})
+        this.privilegedFields = [...this.mapping.audience ?? [], this.mapping.emailVerified, this.mapping.passwordSalt]
+            .filter((f): f is string => !!f)
 
         setupTableAuthExtensionRoutes.call(this)
     }
@@ -184,12 +191,32 @@ export class TableAuthExtension extends TableExtension<TableAuthExtensionData> {
             throw new HTTPException(403, {message: `OR REPLACE is not allowed on the auth table "${this.table.name}"`})
     }
 
+    /**
+     * A non-admin request may not write {@link privilegedFields} - not at sign-up, not through insert, update or
+     * edit - whatever the table's rules and noInsert/noUpdate flags allow. Otherwise anyone could sign up with
+     * `role: "admin"` (or update their own row to it) and pass every `auth.role == 'admin'` rule.
+     * Rejected rather than ignored, like noInsert/noUpdate: on these routes the body is the record, so dropping a
+     * key would return 200 with a row the client didn't ask for.
+     * Admin tokens can write them (e.g. to promote a user), and so can action steps with `applyTableRules: false`,
+     * which already bypass rules and noInsert/noUpdate. OAuth/token sign-up builds its own values and never copies
+     * client keys. See docs/security.md "Privileged auth fields".
+     */
+    private _rejectPrivilegedWrites(record: Record<string, unknown>) {
+        if(this.jc.globals.auth?.admin || this.table._skipRulesExtension) return
+        const denied = this.privilegedFields.filter(f => record[f] !== undefined)
+        if(!denied.length) return
+        const message = `${denied.join(', ')} can only be set by an admin`
+        throw new FieldError(message, Object.fromEntries(denied.map(f => [f, `${f} can only be set by an admin`])), undefined, 403)
+    }
+
     async onInsertParse(query: InsertQuery) {
         this._rejectReplace(query)
         const v = query.values
         const records = Array.isArray(v) ? v : [v]
 
         for (const record of records) {
+            this._rejectPrivilegedWrites(record)
+
             await this._parsePasswordFieldsInsert(record)
 
             this._parseUsername(record)
@@ -198,12 +225,10 @@ export class TableAuthExtension extends TableExtension<TableAuthExtensionData> {
             if (this.mapping.name) zParseWithPath(defaultSchema.name, (record[this.mapping.name] as SQLLiteral)?.l, [this.mapping.name])
 
             if (this.mapping.emailVerified) {
-                let val = zParseWithPath(defaultSchema.emailVerified, (record[this.mapping.emailVerified] as SQLLiteral)?.l, [this.mapping.emailVerified])
-
-                if(!this.jc.globals.auth?.admin) {
-                    if (val !== undefined) throw new HTTPException(400, {message: `${this.mapping.emailVerified} must not be set`})
-                    record[this.mapping.emailVerified] = {l: false}
-                }
+                const ev = this.mapping.emailVerified
+                // only an admin (or an applyTableRules: false action) can get here with a value, see _rejectPrivilegedWrites
+                if (record[ev] !== undefined) zParseWithPath(defaultSchema.emailVerified, (record[ev] as SQLLiteral).l, [ev])
+                else if (!this.jc.globals.auth?.admin) record[ev] = {l: false}
             }
         }
 
@@ -213,7 +238,28 @@ export class TableAuthExtension extends TableExtension<TableAuthExtensionData> {
     async onUpdateParse(query: UpdateQuery) {
         this._rejectReplace(query)
         const record = query.set
+        this._rejectPrivilegedWrites(record)
+        if (this.mapping.email && record[this.mapping.email] !== undefined && !this.jc.globals.auth?.admin)
+            this._parseEmailUpdate(record)
         await this._parsePasswordFieldUpdate(record as any, query)
+    }
+
+    /**
+     * A non-admin changing the email (only possible when the config doesn't set noUpdate on it): validate and
+     * normalize it like sign-up, and un-verify the row unless the address is unchanged - otherwise the verified
+     * flag would carry over to an address nobody verified. Computed in the UPDATE itself (SET expressions read
+     * the old row), so it also holds for multi-row updates. The current session's JWT still carries the old
+     * address, so the next refresh-token call fails and the user logs in again with the new one.
+     */
+    private _parseEmailUpdate(record: Record<string, SQLQuery | SQLLiteral>) {
+        const email = this._parseEmail(record)
+        const ev = this.mapping.emailVerified
+        if(!ev || record[ev] !== undefined) return // applyTableRules: false action that sets it explicitly
+        const val = literalToQuery({l: email})
+        record[ev] = {
+            q: `CASE WHEN ${ident(this.mapping.email!, this.jc)} IS ${val.q} THEN ${ident(ev, this.jc)} ELSE ${literalToQuery({l: false}).q} END`,
+            p: val.p,
+        }
     }
 
     async onDeleteParse(query: DeleteQuery, admin?: boolean) {

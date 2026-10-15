@@ -2,7 +2,7 @@ import {DatabaseSettings} from '../../../src'
 export const migrations = [
   {
     "name": "10000_create_table_users.sql",
-    "sql": "CREATE TABLE users (\n\tid TEXT PRIMARY KEY NOT NULL, \n\tcreated TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP, \n\tupdated TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP, \n\tusername TEXT UNIQUE NOT NULL, \n\temail TEXT UNIQUE NOT NULL, \n\temail_verified BOOLEAN NOT NULL DEFAULT 0, \n\tpassword TEXT NOT NULL, \n\tpassword_salt TEXT NOT NULL, \n\tname TEXT NOT NULL, \n\tavatar TEXT, \n\trole TEXT, \n\tmeta JSON\n);\nCREATE INDEX idx_users_name ON users (name);\nCREATE INDEX idx_users_role ON users (role);\nCREATE TRIGGER tgr_users_raise_on_created_update BEFORE UPDATE OF created ON users BEGIN SELECT RAISE(FAIL, 'Cannot update created column') WHERE OLD.created != NEW.created; END;\nCREATE TRIGGER tgr_users_update_updated_on_update AFTER UPDATE ON users BEGIN UPDATE users SET updated = CURRENT_TIMESTAMP WHERE id = NEW.id AND OLD.updated = NEW.updated; END;",
+    "sql": "CREATE TABLE users (\n\tid TEXT PRIMARY KEY NOT NULL, \n\tcreated TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP, \n\tupdated TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP, \n\tusername TEXT UNIQUE NOT NULL, \n\temail TEXT UNIQUE NOT NULL, \n\temail_verified BOOLEAN NOT NULL DEFAULT 0, \n\tpassword TEXT NOT NULL, \n\tpassword_salt TEXT NOT NULL, \n\tname TEXT NOT NULL, \n\tavatar TEXT, \n\trole TEXT DEFAULT \"guest\", \n\tmeta JSON\n);\nCREATE INDEX idx_users_name ON users (name);\nCREATE INDEX idx_users_role ON users (role);\nCREATE TRIGGER tgr_users_raise_on_created_update BEFORE UPDATE OF created ON users BEGIN SELECT RAISE(FAIL, 'Cannot update created column') WHERE OLD.created != NEW.created; END;\nCREATE TRIGGER tgr_users_update_updated_on_update AFTER UPDATE ON users BEGIN UPDATE users SET updated = CURRENT_TIMESTAMP WHERE id = NEW.id AND OLD.updated = NEW.updated; END;",
     "sqlRevert": "DROP TABLE IF EXISTS users;",
     "logs": [
       "✔ Table Created - users"
@@ -128,7 +128,10 @@ export const config = {
           "name": "role",
           "sqlType": "text",
           "type": "text",
-          "usage": "auth_audience"
+          "usage": "auth_audience",
+          "default": {
+            "l": "guest"
+          }
         },
         {
           "name": "meta",

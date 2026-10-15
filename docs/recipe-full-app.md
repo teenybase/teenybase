@@ -13,7 +13,8 @@ const userTable: TableData = {
     autoSetUid: true,
     fields: [
         ...baseFields,  // id, created, updated
-        ...authFields,   // username, email, email_verified, password, password_salt, name, avatar, role, meta
+        // username, email, email_verified, password, password_salt, name, avatar, role, meta; every new user starts as 'guest'
+        ...authFields.map(f => f.name === 'role' ? {...f, default: sqlValue('guest')} : f),
     ],
     indexes: [{fields: "role COLLATE NOCASE"}],
     extensions: [
@@ -22,10 +23,12 @@ const userTable: TableData = {
             // Public profiles: anyone can list non-private users. Admins see all.
             listRule: "(auth.uid == id) | auth.role ~ '%admin' | meta->>'$.pvt'!=true",
             viewRule: "(auth.uid == id) | auth.role ~ '%admin'",
-            // Sign-up: anonymous users get 'guest' role. Admins can create non-superadmin users.
-            createRule: "(auth.uid == null & role == 'guest') | (auth.role ~ '%admin' & role != 'superadmin')",
-            // Users can update own profile but can't change role/meta. Admins can change roles (except promote to superadmin).
-            updateRule: "(auth.uid == id & role == new.role & meta == new.meta) | (auth.role ~ '%admin' & new.role != 'superadmin' & (role != 'superadmin' | auth.role = 'superadmin'))",
+            // Sign-up: anonymous users only. role is admin-only (the auth extension rejects it from non-admin
+            // requests), so it gets the default 'guest'; the role check below is a second line of defence.
+            createRule: "auth.uid == null & role == 'guest'",
+            // Users can update their own profile but not meta (rules elsewhere read auth.meta). Role changes go through
+            // the set_user_role action below: a user with role 'admin' is not an admin token, so it can't write role directly.
+            updateRule: "(auth.uid == id & new.meta == meta) | auth.role ~ '%admin'",
             // Only admins can delete non-admin users.
             deleteRule: "auth.role ~ '%admin' & role !~ '%admin'",
         } as TableRulesExtensionData,
@@ -96,7 +99,7 @@ const itemsTable: TableData = {
             viewRule: "(is_public = true & !deleted_at & !archived) | auth.role ~ '%admin' | (auth.uid != null & owner_id == auth.uid)",
             listRule: "(is_public & !deleted_at & !archived) | auth.role ~ '%admin' | (auth.uid != null & owner_id == auth.uid)",
             createRule: "auth.uid != null & owner_id == auth.uid",
-            updateRule: "auth.uid != null & owner_id == auth.uid & owner_id = new.owner_id",
+            updateRule: "auth.uid != null & owner_id == auth.uid & new.owner_id == owner_id",
             deleteRule: "auth.role ~ '%admin' | (auth.uid != null & owner_id == auth.uid)",
         } as TableRulesExtensionData,
     ],
@@ -125,6 +128,22 @@ export default {
 
     // Actions — server-side logic callable via POST /api/v1/action/{name}
     actions: [
+        {
+            // Role management by users whose role is admin/superadmin. applyTableRules: false is what lets this
+            // write the admin-only role column, so the guard and where clause carry all the access control:
+            // nobody becomes superadmin, and only a superadmin can change another admin.
+            name: 'set_user_role',
+            requireAuth: true,
+            applyTableRules: false,
+            guard: "auth.role ~ '%admin' & params.role != 'superadmin'",
+            params: { user_id: 'string', role: 'string' },
+            steps: {
+                type: 'UPDATE',
+                table: userTable.name,
+                set: {role: 'params.role'},
+                where: "id == params.user_id & role != 'superadmin' & (role !~ '%admin' | auth.role == 'superadmin')",
+            },
+        },
         {
             name: 'increment_view',
             description: 'Increment view count for an item by slug.',
@@ -233,8 +252,9 @@ teeny deploy --remote --yes             # create D1, deploy, migrate
 - **`baseFields`**: `id`, `created`, `updated`
 - **`authFields`**: `username`, `email`, `email_verified`, `password`, `password_salt`, `name`, `avatar`, `role`, `meta`
 - **Auth extension requires**: `jwtSecret`, `jwtTokenDuration`, `maxTokenRefresh` — all three mandatory
-- **Users `createRule`**: must allow anonymous insert for sign-up to work. Use `'true'` for simple apps, or `"auth.uid == null & role == 'guest'"` to restrict sign-up to guest role.
-- **`new.*` in rules**: reference incoming values in update rules (e.g., `new.role` = the role being set)
+- **Users `createRule`**: must allow anonymous insert for sign-up to work. Use `'true'` for simple apps, or `"auth.uid == null"` to allow sign-up only when logged out.
+- **`role`, `email_verified`, `password_salt` are admin-only**: a non-admin request that sets them gets 403, so users can't sign up as or promote themselves to admin. New users get the field `default`; change roles with an admin token or an `applyTableRules: false` action with a guard (like `set_user_role`). See [Security: Privileged auth fields](security.md#privileged-auth-fields).
+- **`new.*` in rules**: the incoming value (e.g., `new.owner_id`). When the request leaves the column out it is the default in createRule and the stored value in updateRule, so `new.owner_id == owner_id` means "owner unchanged"
 - **SSR queries**: use `c.env.PRIMARY_DB.prepare(...)` directly — don't fetch your own worker URL
 - **Insert format**: `POST /api/v1/table/{name}/insert` with `{"values": {...}}` — bare `{"title":"x"}` silently fails
 - **Select order**: use `-created` or `created DESC` for descending, `created` or `created ASC` for ascending

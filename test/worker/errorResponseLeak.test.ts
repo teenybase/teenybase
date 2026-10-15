@@ -21,7 +21,7 @@ const fetch = (input: RequestInfo, init?: RequestInit) => {
 const signUp = (body: Record<string, any>) => fetch('users/auth/sign-up', {
     method: 'POST',
     body: JSON.stringify({password: PASSWORD, passwordConfirm: PASSWORD, name: 'U',
-        role: 'guest', meta: '{"base": "/"}', ...body}),
+        meta: '{"base": "/"}', ...body}),
 })
 
 test('a failed sign-up leaks neither the password hash, the salt, nor the plaintext', async () => {

@@ -21,7 +21,8 @@ export default {
             // allowWildcard: false,
             fields: [
                 ...baseFields,
-                ...authFields,
+                // users sign up as guest: role is admin-only (TableAuthExtension), so the default sets it
+                ...authFields.map(f => f.name === 'role' ? {...f, default: sqlValue('guest')} : f),
             ],
             triggers: [createdTrigger, updatedTrigger],
             indexes: [

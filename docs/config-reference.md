@@ -249,12 +249,14 @@ These are recognized by the [Auth Extension](#auth-extension-tableauthextensiond
 | `auth_email` | User's email address | Used as login identity. Must be unique. |
 | `auth_username` | Username | Used as alternative login identity. Must be unique. |
 | `auth_password` | Password hash | Automatically hashed on sign-up. Hidden from API responses (`noSelect`). |
-| `auth_password_salt` | Password salt | Auto-generated. Hidden from API responses. |
-| `auth_email_verified` | Email verification status | Set to `false` on sign-up. Updated on verification confirm. |
+| `auth_password_salt` | Password salt | Auto-generated. Hidden from API responses. Admin-only write (see below). |
+| `auth_email_verified` | Email verification status | Set to `false` on sign-up. Updated on verification confirm. Admin-only write. |
 | `auth_name` | Display name | Included in JWT payload. |
 | `auth_avatar` | Profile picture (file) | Stored in R2 via file upload. |
-| `auth_audience` | Role / audience | Included in JWT `aud` claim. Used for role-based access. |
-| `auth_metadata` | User metadata (JSON) | Included in JWT `meta` claim. Flexible key-value storage. |
+| `auth_audience` | Role / audience | Included in JWT `aud` claim, read as `auth.role` in rules. Admin-only write. |
+| `auth_metadata` | User metadata (JSON) | Included in JWT `meta` claim. Flexible key-value storage. Writable by the user if the rules allow. |
+
+**Admin-only auth columns.** A non-admin request cannot write the `auth_audience`, `auth_email_verified` or `auth_password_salt` columns: sign-up, `insert`, `update`, `edit` and action steps that set one get `403` with a field error (`"role can only be set by an admin"`), even when the rules and `noInsert`/`noUpdate` would allow it. New users get the column's `default`, so give `role` a default if every user should start with one (`{...fields.role, default: sqlValue('guest')}`). Admin tokens can set them (promote a user with an admin `update`); action steps with `applyTableRules: false` can too. A non-admin email change (when `email` is not `noUpdate`) is validated like sign-up and resets `email_verified` unless the address is unchanged. See [Security: Privileged auth fields](security.md#privileged-auth-fields).
 
 ---
 
@@ -444,8 +446,8 @@ Rules use a JS-like expression language that compiles to **parameterized** SQL W
 | `auth.superadmin` | Whether user is superadmin (boolean). |
 | `auth.meta` | User metadata from JWT `meta` claim. |
 | `auth.jwt` | Raw JWT payload (all claims). |
-| Column names | Any column from the current table (e.g., `owner_id`, `published`). Not available in createRule. |
-| `new.*` | New values being inserted/updated (e.g., `new.status`, `new.author_id`). Available in createRule and updateRule only. |
+| Column names | Any column from the current table (e.g., `owner_id`, `published`). In createRule there is no stored row yet, so a column name means the row being inserted, the same as `new.<col>`. |
+| `new.*` | New values being inserted/updated (e.g., `new.status`, `new.author_id`). Available in createRule and updateRule only. A column the request leaves out is the value the row will get in createRule (its `default`, or NULL), and the stored value in updateRule (it is not changing). |
 
 **Operators:**
 
@@ -510,11 +512,25 @@ Rules use a JS-like expression language that compiles to **parameterized** SQL W
     name: 'rules',
     listRule: 'auth.uid == id',
     viewRule: 'auth.uid == id',
-    createRule: "auth.uid == null & role = 'guest'",   // Sign-up: only non-authenticated, default role
-    updateRule: 'auth.uid == id',
+    createRule: 'auth.uid == null',                      // Sign-up: only non-authenticated
+    updateRule: 'auth.uid == id',                        // role/email_verified stay admin-only regardless
     deleteRule: null,                                    // No one can delete
 }
+
+// Posts: the author can edit, but not hand the post to someone else
+{
+    name: 'rules',
+    listRule: 'published == true | auth.uid == author_id',
+    viewRule: 'published == true | auth.uid == author_id',
+    createRule: 'auth.uid != null & author_id == auth.uid',
+    updateRule: 'auth.uid == author_id & new.author_id == author_id',  // omitted author_id = unchanged
+    deleteRule: 'auth.uid == author_id',
+}
 ```
+
+`auth.role == 'admin'` is safe to rely on: only admins can write the role column (see [Admin-only auth columns](#auth-usages)), so a user cannot sign up as or promote themselves to `admin`.
+
+**"Unchanged" checks in updateRule:** `new.<col> == <col>` passes when the request doesn't touch the column and fails when it changes it. Use `==` (`IS`, null-safe); with `=` a NULL column never equals itself, so the rule would block every update of rows where it is NULL.
 
 #### Common Mistakes
 

@@ -50,7 +50,7 @@ beforeAll(async () => {
     base = await setup() as unknown as Settings // setup() returns the generated config as a deep-readonly literal
     const res = await call(base, 'table/users/auth/sign-up', post({
         username: 'regular', email: 'regular@example.com', password: '12345678', passwordConfirm: '12345678',
-        name: 'Regular', role: 'guest', meta: '{"base": "/"}',
+        name: 'Regular', meta: '{"base": "/"}',
     }))
     expect(res.status).toEqual(200)
     userToken = ((await res.json()) as any).token

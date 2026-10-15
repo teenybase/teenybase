@@ -11,6 +11,8 @@ import {DeleteQuery} from '../../sql/build/delete'
 import {queryToSqlQuery} from '../../sql/parse/parse'
 import {sqlExprSchema} from '../../types/zod/sqlSchemas';
 import {tableRulesDataSchema} from '../../types/zod/tableExtensionsSchema'
+import {TableFieldData} from '../../types/field'
+import {SQLLiteral, SQLQuery} from '../../types/sql'
 
 export class TableRulesExtension extends TableExtension<TableRulesExtensionData>{
     static readonly name = 'rules'
@@ -49,24 +51,14 @@ export class TableRulesExtension extends TableExtension<TableRulesExtensionData>
 
     async onInsertParse(query: InsertQuery){
         this._checkConflictClause(query, 'INSERT')
-        // todo add allowed columns based on what data is passed in the insert
-        //  so if the rule is `role = 'guest'` and role is not in the insert data, throw an error
-
-        // const values = Array.isArray(query.values) ? query.values[0] : query.values
+        // createRule runs against the row being inserted: its columns (`role`, `new.role`) resolve to the `[new]`
+        // CTE that buildInsertQuery builds from the values. A column the request leaves out reads as the value
+        // the row will get - its default, or NULL - instead of failing with `no such column: new.<col>`.
+        query.columnDefaults = Object.fromEntries(this.table.data.fields.map(f => [f.name, columnDefaultValue(f)]))
         this._applyWhere({
             ...this.jc,
             tableName: UPDATE_NEW_COL_ID,
             allowedTables: {[UPDATE_NEW_COL_ID]: this.jc.allowedTables[this.jc.tableName]},
-            // todo check later, might have issues
-            // Pass insert values as known literals so the expression parser can resolve
-            // new.* references (same pattern as parseUpdateQuery for update rules).
-            // This enables simplification: e.g., role == 'guest' with role='guest' → true.
-            // extras: { ...this.jc.extras,
-            //     [UPDATE_NEW_COL_ID]: {
-            //         table: this.jc.tableName,
-            //         literals: values || {},
-            //     }
-            // },
         }, query, this.data.createRule)
     }
 
@@ -83,6 +75,22 @@ export class TableRulesExtension extends TableExtension<TableRulesExtensionData>
         this._checkConflictClause(query, 'UPDATE')
         this._applyWhere(query.contextWithNew || this.jc, query, this.data.updateRule)
     }
+}
+
+/**
+ * The value a column gets on INSERT when the statement leaves it out, as an expression for the createRule CTE:
+ * the column's `default` (raw SQL string, sql`` expression or literal), or NULL when it has none.
+ * JSON object/array literals are stored as their JSON text, so they are compared as that text.
+ */
+export function columnDefaultValue(field: TableFieldData): SQLQuery | SQLLiteral {
+    const d = field.default
+    if(d === undefined || d === null) return {l: null}
+    if(typeof d === 'string') return {q: d}
+    if((d as SQLLiteral).l !== undefined) {
+        const l = (d as SQLLiteral).l
+        return {l: l !== null && typeof l === 'object' ? JSON.stringify(l) : l}
+    }
+    return {q: (d as SQLQuery).q, p: (d as SQLQuery).p}
 }
 
 export function parseRuleQuery(c: JsepContext, rule?: string | null){

@@ -184,17 +184,19 @@ Steps mode uses expression-based statements that go through the table layer. Thi
 
 ```typescript
 {
-    name: 'mark_verified',
+    name: 'archive_my_drafts',
     requireAuth: true,
-    params: { email: 'string' },
+    params: { before: 'string' },
     steps: {
         type: 'UPDATE',
-        table: 'users',
-        setValues: { email_verified: true },
-        where: "email = params.email & email_verified = false & id = auth.uid",
+        table: 'posts',
+        setValues: { status: 'archived' },
+        where: "author_id = auth.uid & status = 'draft' & created < params.before",
     },
 }
 ```
+
+Steps run with the caller's privileges (unless `applyTableRules: false`), so they cannot write the admin-only auth columns (`role`/audience, `email_verified`, `password_salt`): a step that sets one gets `403`. See [Security: Privileged auth fields](security.md#privileged-auth-fields).
 
 ### Multiple Steps
 
@@ -250,7 +252,7 @@ Controls whether table-level RLS rules apply to steps:
 | Value | Behavior |
 |-------|----------|
 | `true` (default) | Table rules from the `rules` extension apply. Steps respect RLS. An INSERT/UPDATE step with `or: 'REPLACE'` is rejected (403) for non-admin callers unless the table's `deleteRule` is `'true'` (no trigger on that event, never on auth tables), because REPLACE deletes conflicting rows without checking `deleteRule`. |
-| `false` | Rules are skipped. The action has unrestricted access. Use `guard` or `requireAuth` for access control. |
+| `false` | Rules are skipped. The action has unrestricted access, including `noInsert`/`noUpdate` columns and the admin-only auth columns (`role`, `email_verified`, `password_salt`). Use `guard` or `requireAuth` for access control. |
 
 ---
 

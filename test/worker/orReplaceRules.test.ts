@@ -32,7 +32,7 @@ beforeAll(async () => {
     for (const name of ['victim', 'attacker'] as const) {
         const res = await call('table/users/auth/sign-up', post({
             username: name, email: `${name}@example.com`, password: '12345678', passwordConfirm: '12345678',
-            name, role: 'guest', meta: '{"base": "/"}',
+            name, meta: '{"base": "/"}',
         }))
         expect(res.status).toEqual(200)
         const json = await res.json() as any
@@ -124,9 +124,10 @@ describe('OR REPLACE and table rules', () => {
         // anonymous insert satisfies users.createRule; REPLACE on the victim's email would delete the victim's row
         const res = await call('table/users/insert', post({
             or: 'REPLACE', values: {username: 'taker', email: 'victim@example.com', password: '12345678', passwordConfirm: '12345678',
-                name: 'x', role: 'guest', meta: '{"base": "/"}'}, returning: ['id'],
+                name: 'x', meta: '{"base": "/"}'}, returning: ['id'],
         }), undefined, open)
         expect(res.status).toEqual(403)
+        expect(((await res.json()) as any).message).toEqual('OR REPLACE is not allowed on the auth table "users"')
         const check = await call(`table/users/select?select=id&where=${encodeURIComponent(`email = 'victim@example.com'`)}`, {}, ADMIN)
         expect(await check.json()).toEqual([{id: users.victim.id}])
     })

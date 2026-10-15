@@ -54,8 +54,8 @@ import type { TableRulesExtensionData } from 'teenybase'
     name: 'rules',
     listRule: 'true',
     viewRule: 'true',
-    createRule: 'auth.uid != null',
-    updateRule: 'auth.uid == author_id',
+    createRule: 'auth.uid != null & author_id == auth.uid',             // can't post as someone else
+    updateRule: 'auth.uid == author_id & new.author_id == author_id',   // can't hand the row to someone else
     deleteRule: 'auth.uid == author_id',
 } as TableRulesExtensionData
 ```
@@ -71,6 +71,7 @@ import type { TableRulesExtensionData } from 'teenybase'
     deleteRule: 'auth.uid == id',
 } as TableRulesExtensionData
 ```
+The auth extension makes `role` (auth_audience), `email_verified` and `password_salt` admin-only on top of these rules: a user who sends them at sign-up or in an update gets 403 `"role can only be set by an admin"`. New users get the column `default` (set one on `role` if every user should start with a role); an admin token promotes a user with a normal `update`. That is what makes `auth.role == 'admin'` below safe.
 
 ### Admin-only
 ```typescript
@@ -90,8 +91,8 @@ import type { TableRulesExtensionData } from 'teenybase'
     name: 'rules',
     listRule: "published == true | auth.uid == author_id",
     viewRule: "published == true | auth.uid == author_id",
-    createRule: 'auth.uid != null',
-    updateRule: 'auth.uid == author_id',
+    createRule: 'auth.uid != null & author_id == auth.uid',
+    updateRule: 'auth.uid == author_id & new.author_id == author_id',
     deleteRule: 'auth.uid == author_id',
 } as TableRulesExtensionData
 ```
@@ -114,8 +115,8 @@ import type { TableRulesExtensionData } from 'teenybase'
     name: 'rules',
     listRule: "status == 'published' | auth.uid == author_id",
     viewRule: "status == 'published' | auth.uid == author_id",
-    createRule: 'auth.uid != null',
-    updateRule: "auth.uid == author_id & status != 'locked'",
+    createRule: 'auth.uid != null & author_id == auth.uid',
+    updateRule: "auth.uid == author_id & status != 'locked' & new.author_id == author_id",
     deleteRule: 'auth.uid == author_id',
 } as TableRulesExtensionData
 ```
@@ -142,23 +143,25 @@ import type { TableRulesExtensionData } from 'teenybase'
    listRule: true       // ❌ wrong
    ```
 
-3. **Create rules can't reference existing row data.** The row doesn't exist yet during create. Use `auth.*` and `new.*` variables only:
+3. **In createRule, columns are the row being inserted.** There is no stored row yet, so `author_id` and `new.author_id` both mean the value being inserted. A column the request leaves out is its `default`, or NULL:
    ```typescript
-   createRule: 'auth.uid == author_id'              // ❌ author_id doesn't exist yet
-   createRule: 'auth.uid != null'                    // ✅ check auth state
-   createRule: 'auth.uid != null & new.author_id == auth.uid'  // ✅ check inserted values
+   createRule: 'auth.uid != null'                              // ✅ check auth state
+   createRule: 'auth.uid != null & new.author_id == auth.uid'  // ✅ check inserted values (same as author_id == auth.uid)
+   createRule: "status == 'draft'"                             // ✅ passes when status is omitted and defaults to 'draft'
    ```
 
-4. **Null comparisons.** `auth.uid != null` = logged in. `auth.uid == null` = NOT logged in.
+4. **updateRule only sees the old row unless you use `new.*`.** `updateRule: 'auth.uid == author_id'` lets the author set `author_id` to someone else. Add an "unchanged" check: `new.author_id == author_id`. A column the update doesn't touch reads as its stored value, so other edits still pass. Use `==` here, not `=` (with `=` a NULL column never equals itself).
 
-5. **`=` vs `==`.** `=` is SQL `=` (not null-safe), `==` is SQL `IS` (null-safe). Use `==` when comparing with `null` or when null values are possible.
+5. **Null comparisons.** `auth.uid != null` = logged in. `auth.uid == null` = NOT logged in.
 
-6. **Quoting strings in expressions.** Use single quotes inside double-quoted strings:
+6. **`=` vs `==`.** `=` is SQL `=` (not null-safe), `==` is SQL `IS` (null-safe). Use `==` when comparing with `null` or when null values are possible.
+
+7. **Quoting strings in expressions.** Use single quotes inside double-quoted strings:
    ```typescript
    listRule: "status == 'published'"     // ✅
    ```
 
-6. **`!column` doesn't work for NULL columns.** In SQL, `NOT NULL` evaluates to NULL (falsy), not true. Use explicit null checks:
+8. **`!column` doesn't work for NULL columns.** In SQL, `NOT NULL` evaluates to NULL (falsy), not true. Use explicit null checks:
    ```typescript
    listRule: '!deleted_at'              // ❌ NOT NULL → NULL → row filtered out
    listRule: 'deleted_at == null'       // ✅ IS NULL → true when column is null

@@ -70,7 +70,6 @@ async function createUser(data: any, status = 200) {
             password: '12345678',
             passwordConfirm: '12345678',
             name: 'Admin User',
-            role: 'guest',
             meta: '{"base": "/"}',
             ...data,
         }),
@@ -107,8 +106,10 @@ test('sign up with password', async () => {
 })
 
 test('sign up with password - fail role', async () => {
-    const res = await createUser({role: ''}, 400)
-    expect(res.message).toEqual('Unable to create user')
+    // role is the JWT audience (auth.role): only an admin can set it, sign-up gets the column default
+    const res = await createUser({role: 'superadmin'}, 403)
+    expect(res.message).toEqual('role can only be set by an admin')
+    expect(res.data.role).toEqual({_errors: ['role can only be set by an admin']})
 })
 
 test('sign up with password - fail base', async () => {

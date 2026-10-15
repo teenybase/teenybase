@@ -67,7 +67,26 @@ Table rules (`listRule`, `viewRule`, `createRule`, `updateRule`, `deleteRule`) a
 - `INSERT/UPDATE OR REPLACE` (the `or: 'REPLACE'` option, and `edit/:id?or=INSERT`) is rejected with 403 for non-admin callers on a table with rules unless `deleteRule` is `'true'` (no trigger on that event, never on auth tables): SQLite deletes the conflicting row without a WHERE, so `deleteRule`/`updateRule` could not be enforced on it
 - Auth routes that write the user row without table rules (change-password, password reset, email verification) only write their own fields; extra fields in the request body are ignored
 - Rules can reference `auth.*` (authenticated user) and column values
+- `new.<col>` in a rule is the value being written. When the request leaves the column out, it is the value the row will get in `createRule` (the column default, or NULL) and the stored value in `updateRule` (the column is not changing). So `updateRule: "auth.uid == author_id & new.author_id == author_id"` stops an author from handing a row to someone else without blocking other edits. Use `==` (null-safe `IS`) for these "unchanged" checks; `=` follows SQL, where NULL never equals NULL.
 - Rules are validated at config time, not just at runtime
+
+### Privileged auth fields
+
+Some columns of an auth table decide what a user is allowed to do, so the auth extension lets only admins write them:
+
+| Column (usage) | Why |
+|---|---|
+| role (`auth_audience`) | Becomes the JWT `aud` claim, read as `auth.role` in rules (`auth.role == 'admin'`). |
+| email_verified (`auth_email_verified`) | Becomes the JWT `verified` claim. The extension sets it on sign-up and on email verification. |
+| password_salt (`auth_password_salt`) | Set by the extension together with the password hash. |
+
+A non-admin request that writes one of them is rejected with `403` and a field error (`{"message": "role can only be set by an admin", "data": {"role": {"_errors": [...]}}}`). This applies to sign-up, `insert`, `update` (`setValues` and `set`), `edit` and action steps, whatever the table's rules or `noInsert`/`noUpdate` flags allow. Users who sign up get the column's `default` (give `role` a `default` to start every user with a role). Admin tokens can write these columns, so an admin promotes a user with `POST /table/users/update {"where": "id == '<id>'", "setValues": {"role": "admin"}}`; the new role is in the user's next token (log in or refresh). Action steps with `applyTableRules: false` can write them too: such an action already bypasses rules and `noInsert`/`noUpdate`, so guard it with `guard`/`requireAuth`. OAuth and external-token sign-ups never copy fields from the provider into these columns.
+
+When a non-admin changes their own email (possible only if the email column is not `noUpdate`; the scaffold sets `noUpdate`), the new address is validated like at sign-up and `email_verified` is reset to false unless the address is unchanged.
+
+`auth.meta` (the `auth_metadata` column, JWT `meta` claim) stays writable by the user, like any other column their rules allow. If your rules make decisions from `auth.meta` (e.g. `path ~ auth.meta.base`), guard the column in the users table: `updateRule: "auth.uid == id & new.meta == meta"` and a `createRule` that checks `meta`.
+
+If your app ran an earlier version with a user-writable role column, check existing rows for roles you did not grant (`GET /table/users/list?where=role != null` with an admin token).
 
 ### CORS
 

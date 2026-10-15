@@ -92,7 +92,6 @@ async function createUser(data: any, status = 200) {
             password: '12345678',
             passwordConfirm: '12345678',
             name: 'Admin User',
-            role: 'guest',
             ...data,
         }),
     })
@@ -118,7 +117,8 @@ test('sign up with password no name', async () => {
         message: 'Failed to run insert query',
         data: {
             error: 'NOT NULL constraint failed: users.name: SQLITE_CONSTRAINT',
-            input: `WITH [new] ([username], [email], [password], [role], [id], [email_verified]) AS (SELECT "admin", "admin@example.com", '***', "guest", "O-iV9qZXTMOp1U2VV5XC9Q", 0) INSERT INTO [users] ([username], [email], [password], [role], [id], [email_verified]) SELECT [username], [email], [password], [role], [id], [email_verified] FROM [new] WHERE (([new].[role]) = "guest") RETURNING [users].[id], [users].[username], [users].[email], [users].[email_verified], [users].[role], [users].[meta];`,
+            // role is left out (admin-only), so the createRule `role = 'guest'` reads its column default from [new]
+            input: `WITH [new] ([username], [email], [password], [id], [email_verified], [name], [created], [role], [meta], [avatar]) AS (SELECT "admin", "admin@example.com", '***', "O-iV9qZXTMOp1U2VV5XC9Q", 0, NULL, (CURRENT_TIMESTAMP), "guest", "{}", NULL) INSERT INTO [users] ([username], [email], [password], [id], [email_verified]) SELECT [username], [email], [password], [id], [email_verified] FROM [new] WHERE (([new].[role]) = "guest") RETURNING [users].[id], [users].[username], [users].[email], [users].[email_verified], [users].[role], [users].[meta];`,
             name: {
                 code: 'SQLITE_CONSTRAINT',
                 constraint: "NOT NULL",

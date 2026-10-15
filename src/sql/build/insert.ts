@@ -12,6 +12,14 @@ export type InsertQuery = {
     returning?: (string|SelectQuerySelect1)[] // todo subqueries
     where?: SelectWhere
     or?: OnConflict
+    /**
+     * Value of every column the row gets when the statement doesn't set it (the column default, or NULL).
+     * Only used when there is a `where`: columns missing from `values` are added to the `[new]` CTE with
+     * these values, so a createRule can read `new.<col>` / `<col>` for a column the request left out.
+     * They are never part of the INSERT column list, so the table's own defaults still apply.
+     * Set by TableRulesExtension.
+     */
+    columnDefaults?: Record<string, SQLQuery|SQLLiteral>
 
     // params
     params?: Record<string, any>
@@ -71,10 +79,19 @@ export function buildInsertQuery(query: InsertQuery, simplify = true, allowAllWh
         // WHERE column1 NOT LIKE 'hello2%'
         //   AND new.column2 NOT LIKE 'hello2%' // new.column2 is equivalent to column2
         //   AND (other validation conditions);
-        const selectVals = valueSql.map(v => `SELECT ${v}`).join(' UNION ALL ')
+        // Columns the statement leaves out still exist in [new], with the value the row will get, so the
+        // where (createRule) can reference them. Every row has the same keys, so this is the same set for all rows.
+        const defaultKeys = Object.keys(query.columnDefaults ?? {}).filter(k => !keys.includes(k))
+        const defaultVals = defaultKeys.map(k => {
+            const d = literalToQuery(query.columnDefaults![k], true)
+            Object.assign(p, d.p)
+            return d.q
+        })
+        const selectVals = valueSql.map(v => `SELECT ${[v, ...defaultVals].join(', ')}`).join(' UNION ALL ')
+        const cteKeysSql = [...keys, ...defaultKeys].map(k => columnify(k)).join(', ')
         // const cteName = 'new_record_cte'
         const cteName = UPDATE_NEW_COL_ID
-        q = `WITH ${cteName} (${keysSql}) AS (${selectVals}) ${q} (${keysSql}) `
+        q = `WITH ${cteName} (${cteKeysSql}) AS (${selectVals}) ${q} (${keysSql}) `
         q += `SELECT ${keysSql} FROM ${cteName} WHERE ${where.q || '1'}`
         Object.assign(p, where.p)
     }

@@ -187,7 +187,8 @@ Different users see different data. Admins see everything, regular users see the
     autoSetUid: true,
     fields: [
         ...baseFields,
-        ...authFields,
+        // every new user starts as 'guest'
+        ...authFields.map(f => f.name === 'role' ? {...f, default: sqlValue('guest')} : f),
     ],
     triggers: [createdTrigger, updatedTrigger],
     extensions: [{
@@ -195,10 +196,10 @@ Different users see different data. Admins see everything, regular users see the
         // Admins see all; users see only themselves
         listRule: '(auth.uid == id) | auth.role ~ "%admin"',
         viewRule: '(auth.uid == id) | auth.role ~ "%admin"',
-        // New users default to 'guest' role; admins can create any role
-        createRule: '(auth.uid == null & role == "guest") | auth.role ~ "%admin"',
-        // Users can edit own profile but can't change role; admins can do anything
-        updateRule: '(auth.uid == id & role == new.role) | auth.role ~ "%admin"',
+        // Anyone can sign up; the role column is admin-only, so new users get the default 'guest'
+        createRule: 'auth.uid == null | auth.role ~ "%admin"',
+        // Users can edit their own profile; admins can do anything (only admins can change role)
+        updateRule: 'auth.uid == id | auth.role ~ "%admin"',
         // Only admins can delete users
         deleteRule: 'auth.role ~ "%admin"',
     } as TableRulesExtensionData, {
@@ -225,7 +226,7 @@ Different users see different data. Admins see everything, regular users see the
         listRule: 'is_public == true | auth.uid == author_id | auth.role ~ "%admin"',
         viewRule: 'is_public == true | auth.uid == author_id | auth.role ~ "%admin"',
         createRule: 'auth.uid != null & author_id == auth.uid',
-        updateRule: 'auth.uid == author_id | auth.role ~ "%admin"',
+        updateRule: '(auth.uid == author_id & new.author_id == author_id) | auth.role ~ "%admin"',
         deleteRule: 'auth.uid == author_id | auth.role ~ "%admin"',
     } as TableRulesExtensionData],
 }
@@ -234,7 +235,8 @@ Different users see different data. Admins see everything, regular users see the
 ### Key patterns
 
 - **`auth.role ~ "%admin"`** — the `~` operator is LIKE in SQL. This matches roles ending in "admin" (e.g., `"admin"`, `"superadmin"`).
-- **`role == new.role`** — prevents users from escalating their own role. The `new.` prefix references the incoming update value.
+- **The role column is admin-only.** The auth extension rejects (403) any non-admin request that sets `role`, at sign-up or in an update, so users can't make themselves admin whatever the rules say. Give the field a `default` for the starting role; promote users with an admin token (`POST /table/users/update` with `setValues: {role: 'editor'}`). See [Security: Privileged auth fields](security.md#privileged-auth-fields).
+- **`new.author_id == author_id`** — the author can edit the post but not hand it to another user. `new.` is the incoming value; when the update doesn't touch `author_id` it is the stored value, so other edits pass.
 - **`auth.uid == null`** — matches unauthenticated requests (sign-up flow).
 
 ---
@@ -435,7 +437,7 @@ Store per-user settings as key-value pairs: create a preference if the user does
         listRule: 'auth.uid == user_id',
         viewRule: 'auth.uid == user_id',
         createRule: 'auth.uid != null & user_id == auth.uid',
-        updateRule: 'auth.uid == user_id & user_id == new.user_id',  // can't hand a row to another user
+        updateRule: 'auth.uid == user_id & new.user_id == user_id',  // can't hand a row to another user
         deleteRule: 'auth.uid == user_id',
     } as TableRulesExtensionData],
 }
