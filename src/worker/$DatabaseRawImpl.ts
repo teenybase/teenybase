@@ -172,7 +172,15 @@ export class $DatabaseRawImpl extends EventTarget<$DatabaseEventMap> implements 
             for (const onRun of onRuns) { // todo promise.all in batch?
                 await onRun()
             }
-            res = queries.length ? await this.adapter.runBatch<T>(queries) : []
+            // `queries` holds PreparedQuery instances. `StorageAdapter.runBatch` is typed as the
+            // plain `{q, v}` shape and PreparedQuery is structurally compatible, so an in-process
+            // adapter takes either — but an adapter can be a Workers RPC stub (an RPC storage
+            // adapter in another worker), and workerd's serializer refuses application-defined class
+            // instances with `Could not serialize object of type "PreparedQuery"`. Flatten to plain
+            // objects (and the frozen readonly array to a plain one) before the call can cross a boundary.
+            res = queries.length
+                ? await this.adapter.runBatch<T>(queries.map(p => ({q: p.q, v: Array.from(p.v)})))
+                : []
         } catch (e) {
             // throw e
             // console.error(e)

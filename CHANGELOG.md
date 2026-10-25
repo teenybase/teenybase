@@ -68,6 +68,7 @@ Release 0.1.0. The last version on npm is 0.0.14; 0.0.15 and 0.0.16 were never p
 - `zod`, `esbuild`, `miniflare` and `undici` are declared dependencies; `@cloudflare/workers-types` ^5 is accepted.
 - Applying migrations no longer fails when only the stored `sql_revert` differs from the local file.
 - A migration that adds a column whose `check` names that column (`check: 'flag IN (0, 1)'`) no longer fails with `no such column: flag`. The column is added under its final name; when that name is still taken by a column renamed in the same migration, the table is rebuilt instead.
+- Batched queries (`list`, `insert`, `update`, transactions) through a storage adapter that is a Workers RPC stub failed with `Could not serialize object of type "PreparedQuery"`. `runBatch` now receives plain `{q, v}` objects with plain arrays.
 - Wrangler warnings on stderr no longer break the CLI's parsing of wrangler's JSON output.
 - Broken documentation links (self-hosting anchor, JWT library link).
 
