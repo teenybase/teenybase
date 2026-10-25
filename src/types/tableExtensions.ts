@@ -109,7 +109,8 @@ export interface TableAuthExtensionData extends TableExtensionData {
     emailTemplates?: Partial<Record<'verification' | 'passwordReset', {
         subject?: string,
         variables?: Record<string, any>
-        tags?: string,
+        /** Extra email tags, added to the built-in ones for this email (see `email.tags`). */
+        tags?: string[],
         layoutHtml?: string | string[]
         layoutText?: string | string[]
     }>>

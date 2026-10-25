@@ -12,7 +12,7 @@ export const tableRulesDataSchema = z.object({
 export const emailTemplateSchema = z.object({
     subject: z.string().optional(),
     variables: z.record(z.string(), z.any()).optional(),
-    tags: z.string().optional(),
+    tags: z.array(z.string()).optional(),
     layoutHtml: z.union([z.string(), z.array(z.string())]).optional(),
     layoutText: z.union([z.string(), z.array(z.string())]).optional(),
 })

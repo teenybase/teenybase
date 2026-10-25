@@ -317,7 +317,7 @@ emailTemplates: {
         subject: 'Verify your email',
         layoutHtml: '<div>{{EMAIL_CONTENT}}</div>', // custom inner template (wrapped in base + message layouts)
         variables: { custom_key: 'value' },
-        tags: 'verification',
+        tags: ['verification'],
     },
     passwordReset: {
         subject: 'Reset your password',
@@ -331,7 +331,7 @@ emailTemplates: {
 | `subject` | `string` | Email subject line. Supports `{{variable}}` placeholders. |
 | `layoutHtml` | `string \| string[]` | Custom email layout. A full HTML document (starts with `<html` or `<!DOCTYPE`) is used as-is. A fragment string is wrapped in the default base and message layouts. An array of strings replaces the entire template stack — each entry nests into the previous via `{{EMAIL_CONTENT}}`. |
 | `variables` | `Record<string, any>` | Additional template variables merged into the email. |
-| `tags` | `string` | Tags for email tracking (provider-dependent). |
+| `tags` | `string[]` | Extra tags for this email, added to the built-in ones (provider-dependent; ignored by Cloudflare). |
 
 The default email templates (`baseLayout1`, `messageLayout1`, `actionLinkTemplate`, `actionTextTemplate`) are exported from `teenybase/worker` for use in custom layouts.
 
