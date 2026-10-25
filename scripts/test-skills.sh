@@ -80,7 +80,6 @@ section "SKILL.md files"
 
 SKILLS=(
     "skills/teenybase/SKILL.md"
-    "skills/teeny-config/SKILL.md"
     "skills/teeny-rules/SKILL.md"
     "skills/teeny-migrate/SKILL.md"
 )
@@ -123,17 +122,28 @@ for skill in "${SKILLS[@]}"; do
     fi
 done
 
-# ─── Test 4: Reference files ─────────────────────────────────────────────────
+# ─── Test 4: Portable frontmatter ────────────────────────────────────────────
 
-section "Reference files"
+section "SKILL.md frontmatter uses only Agent Skills standard fields"
 
-REFS=(
-    "skills/teenybase/references/CONFIG_QUICK_REF.md"
-    "skills/teenybase/references/EXPRESSION_SYNTAX.md"
-)
-
-for ref in "${REFS[@]}"; do
-    assert_file "$REPO_ROOT/$ref" "$ref"
+for skill in "${SKILLS[@]}"; do
+    skill_path="$REPO_ROOT/$skill"
+    [ -f "$skill_path" ] || continue
+    # top-level keys of the frontmatter (indented lines belong to a folded value)
+    keys=$(awk 'NR==1{next} /^---$/{exit} /^[A-Za-z_-]+:/{sub(/:.*/, ""); print}' "$skill_path")
+    bad=$(echo "$keys" | grep -vxE 'name|description|license|compatibility|metadata|allowed-tools' || true)
+    if [ -z "$bad" ]; then
+        pass "$skill frontmatter keys: $(echo $keys)"
+    else
+        fail "$skill has non-standard frontmatter keys: $(echo $bad)"
+    fi
+    dir_name=$(basename "$(dirname "$skill_path")")
+    name=$(awk 'NR==1{next} /^---$/{exit} /^name:/{sub(/^name:[ ]*/, ""); print}' "$skill_path")
+    if [ "$name" = "$dir_name" ]; then
+        pass "$skill name matches its directory"
+    else
+        fail "$skill name '$name' does not match directory '$dir_name'"
+    fi
 done
 
 # ─── Test 5: Line count limits ───────────────────────────────────────────────
@@ -208,7 +218,10 @@ section "package.json files array"
 PKG="$REPO_ROOT/package.json"
 
 assert_contains "$PKG" '".claude-plugin"' "package.json files includes .claude-plugin"
-assert_contains "$PKG" '"skills"' "package.json files includes skills"
+for skill in "${SKILLS[@]}"; do
+    dir=$(dirname "$skill")
+    assert_contains "$PKG" "\"$dir\"" "package.json files includes $dir"
+done
 
 # ─── Summary ──────────────────────────────────────────────────────────────────
 

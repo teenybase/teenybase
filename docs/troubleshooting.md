@@ -59,7 +59,7 @@ Common issues and solutions when using Teenybase.
 
 **`Admin token not found in secrets file`** — Add `ADMIN_SERVICE_TOKEN=value` to `.dev.vars` or `.prod.vars`.
 
-**`Migrations folder has been modified`** — Run with `--clean` to reset: `teeny deploy --local --clean`.
+**`Migrations folder has been modified`** — Only printed with `--no-clean`, when `migrations/` differs from what was last applied. Run without `--no-clean`: the default `--clean` resets `migrations/` from the database (discarding hand edits) and regenerates from `teenybase.ts`.
 
 **Cannot export with FTS5 (remote)** — Known Cloudflare bug ([workers-sdk#9519](https://github.com/cloudflare/workers-sdk/issues/9519)). Remote export with FTS5 locks the DB for hours. Workaround: drop FTS, export, re-add FTS. Local export works fine.
 

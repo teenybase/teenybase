@@ -45,7 +45,7 @@
         "test-check": "tsc -p test/tsconfig.json --pretty --noEmit",
         "build-runtime-esbuild-temp": "esbuild src/worker/index.ts --bundle --outfile=dist/worker/index.js --format=esm --sourcemap",
         "build:cf-ui-bundle": "esbuild src/bundle/cf-ui-entry.ts --bundle --format=esm --platform=browser --target=es2022 --outfile=../cf-ui-sample/teenybase_lib_$npm_package_version.js --sourcemap --jsx=automatic --jsx-import-source=hono/jsx --external:cloudflare:*",
-        "linkcheck": "python3 scripts/linkcheck.py . README.md CONTRIBUTING.md SECURITY.md CHANGELOG.md docs skills/teenybase skills/teeny-config skills/teeny-migrate skills/teeny-rules"
+        "linkcheck": "python3 scripts/linkcheck.py . README.md CONTRIBUTING.md SECURITY.md CHANGELOG.md docs skills/teenybase skills/teeny-migrate skills/teeny-rules"
     },
     "exports": {
         ".": {
@@ -110,7 +110,6 @@
         "docs",
         "!docs/images",
         "skills/teenybase",
-        "skills/teeny-config",
         "skills/teeny-migrate",
         "skills/teeny-rules",
         "README.md",

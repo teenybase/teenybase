@@ -21,7 +21,7 @@ describe('package metadata', () => {
     it('publishes only the core skills', () => {
         const skills = (pkg.files as string[]).filter(f => f.startsWith('skills'))
         expect(skills).not.toContain('skills')
-        expect(skills.sort()).toEqual(['skills/teeny-config', 'skills/teeny-migrate', 'skills/teeny-rules', 'skills/teenybase'])
+        expect(skills.sort()).toEqual(['skills/teeny-migrate', 'skills/teeny-rules', 'skills/teenybase'])
     })
 })
 

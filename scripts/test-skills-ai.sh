@@ -153,7 +153,7 @@ section "Skill Discovery"
 
 run_skill_test "skill discovery" \
     "List the teenybase skills/slash commands available to you. Just list their names, one per line." \
-    --must "teeny-config" "teeny-rules" "teeny-migrate" \
+    --must "teenybase" "teeny-rules" "teeny-migrate" \
     --must-not "teeny-actions" "teeny-api"
 
 section "Config Generation"

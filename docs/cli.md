@@ -282,7 +282,7 @@ List the documentation files included with the installed `teenybase` package, wi
 
 ### `skills`
 
-List the skill directories included with the installed `teenybase` package, each with a one-line summary read from its `SKILL.md`. Same shape as `teeny docs` but for `skills/`.
+List the agent skills included with the installed `teenybase` package (`teenybase`, `teeny-rules`, `teeny-migrate`): the name, the first sentence of the `description` in its `SKILL.md`, and the directory. An agent reads `<directory>/SKILL.md` to load one. Same shape as `teeny docs` but for `skills/`.
 
 ### `migrate` (deprecated)
 

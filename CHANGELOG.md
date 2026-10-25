@@ -35,7 +35,7 @@ Release 0.1.0. The last version on npm is 0.0.14; 0.0.15 and 0.0.16 were never p
 - `database` config field and experimental storage adapters (`d1-rest`, `libsql`, `d1-http`) plus an R2 REST adapter. Only `d1-binding` (the default) is supported by the CLI and migrations; see [config-reference.md](docs/config-reference.md#database).
 - `db.registerExtension()`, `$Table.findExtension()`, and more exports from `teenybase/worker` (`MigrationHelper`, `$DatabaseRawImpl`, route types).
 - `TEENYBASE_VERSION` export.
-- The npm package now ships `docs/`, the core agent skills (`skills/teenybase`, `teeny-config`, `teeny-migrate`, `teeny-rules`) and the Claude Code plugin manifest, so `teeny docs` and `teeny skills` work from an install.
+- The npm package now ships `docs/`, the agent skills (`skills/teenybase`, `teeny-rules`, `teeny-migrate`) and the Claude Code plugin manifest, so `teeny docs` and `teeny skills` work from an install.
 - Package metadata: description, keywords, repository and bug links.
 - `deploy --remote` with only `npx wrangler login`: the account comes from `account_id`, then `CLOUDFLARE_ACCOUNT_ID`, then the login (saved to `wrangler.jsonc`); the D1 database is created for `"database_id": "TEENY_AUTO_CREATE"` (the scaffold default) and missing secrets are generated into `.prod.vars`. The first deploy uploads secrets together with the worker (`wrangler deploy --secrets-file`, wrangler 4.74+) and retries the first admin API calls on 401/403/404, fixing the first-deploy migration 403.
 - `--temporary` (deploy, generate, secrets, backup): deploy to a Cloudflare temporary account with no login; prints the live URL, the claim URL and the expiry (60 minutes). Needs wrangler 4.102+; refuses R2, routes and other bindings temporary accounts don't support.
@@ -53,6 +53,7 @@ Release 0.1.0. The last version on npm is 0.0.14; 0.0.15 and 0.0.16 were never p
 - `$Database` no longer requires an adapter argument; it falls back to the configured `database` (default: the `PRIMARY_DB` D1 binding).
 - File-name normalisation uses a Unicode-aware snake_case conversion.
 - `dist/` is cleaned before every build, so packed tarballs contain no stale files.
+- `teeny skills` prints the first sentence of each skill's `description` instead of its first heading.
 
 ### Fixed
 
@@ -80,6 +81,7 @@ Release 0.1.0. The last version on npm is 0.0.14; 0.0.15 and 0.0.16 were never p
 ### Docs
 
 - Docs and skills describe deploying to your own Cloudflare account only.
+- Agent skills slimmed to three: `teenybase` (workflow, config shape, the common mistakes; absorbs `teeny-config`), `teeny-rules` and `teeny-migrate`. The copied reference files (`skills/teenybase/references/`) are gone; skills point to the docs shipped in the package (`node_modules/teenybase/docs/`) and on teenybase.com. Frontmatter uses only Agent Skills standard fields. Content the old skills had that the docs lacked is now in config-reference.md (JSON and arithmetic operators, operator precedence, `!column` on NULL, raw-SQL string defaults, unvalidated `usage` names). Removed claims that weren't true: a missing `r2Base` breaking file fields, `in (...)` lists in rules, and an insert without `values` "silently failing" (it is a 400).
 - Getting Started opens for a human reader; the agent guidance it used to start with is in the `teenybase` skill. Its workflow ends with `teeny deploy --remote --yes` (it said `teeny deploy --yes`, which errors).
 - `teeny logs` is documented as needing `CLOUDFLARE_API_TOKEN` (`wrangler login` is not enough; `npx wrangler tail` works with the login). Its error messages say the same instead of "Session expired … run teeny logs again".
 - The experimental `libsql` / `d1-http` adapters are documented as experimental and unsupported, without naming hosted providers.

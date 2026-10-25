@@ -1,176 +1,72 @@
 ---
 name: teeny-rules
 description: >-
-  Write access rule expressions for Teenybase row-level security. Understands
-  expression syntax (auth.uid, operators, variables), how rules compile to SQL
-  WHERE clauses, and patterns like owner-only, admin-only, public read. Use when
-  writing listRule, viewRule, createRule, updateRule, deleteRule.
-allowed-tools: Read Grep
+  Write or review Teenybase access rules (listRule, viewRule, createRule, updateRule, deleteRule) in
+  teenybase.ts: owner-only, public read, published-or-owner, admin-only and role-based patterns, and
+  the expression syntax they compile to (parameterized SQL WHERE clauses). Use when adding a table,
+  changing who can read or write rows, or debugging a 403 or a rule that lets too much through.
+license: Apache-2.0
+allowed-tools: Read Grep Glob
 ---
 
-# Writing Access Rules for Teenybase
+# Teenybase access rules
 
-Rules provide row-level security by compiling JS-like expressions to SQL WHERE clauses.
-
-## Rule Extension Structure
+Each table gets a `rules` extension. Every rule is a string expression that compiles to a parameterized SQL `WHERE` clause; admins (admin JWT, `ADMIN_SERVICE_TOKEN`) skip rules.
 
 ```typescript
-import type { TableRulesExtensionData } from 'teenybase'
-
-{
-    name: 'rules',
-    listRule: 'expression',    // filter for list/select queries
-    viewRule: 'expression',    // filter for single record view
-    createRule: 'expression',  // guard before insert
-    updateRule: 'expression',  // guard + filter for updates
-    deleteRule: 'expression',  // guard + filter for deletes
+{ name: 'rules',
+  listRule: '...',    // filters list/select
+  viewRule: '...',    // filters view/:id
+  createRule: '...',  // checks the row being inserted (also password sign-up on an auth table)
+  updateRule: '...',  // filters which rows can be updated; new.* = the values being set
+  deleteRule: '...',  // filters which rows can be deleted
 } as TableRulesExtensionData
 ```
 
-## Rule Values
+## Values and defaults
 
-| Value | Behavior |
-|-------|----------|
-| `'true'` | Allow all requests, including unauthenticated |
-| `'false'` | Deny all requests |
-| `null` (or omitted) | Deny all requests — this is the default |
-| Expression string | Evaluated per request |
+- `'true'` allows everyone, including logged-out requests. `'false'`, `null` or an omitted rule denies (403).
+- A table with no `rules` extension denies every non-admin request, and `npx teenybase generate` / `deploy` / `build` fail with `Table "x" has no access rules.` Add rules, or `{ name: 'rules' }` for an admin-only table, or `public: true` on the table for full anonymous read AND write (not combinable with rules).
+- Rules are strings: `'true'`, never `true`.
 
-**Important:** `null` = deny. Forgetting to set a rule defaults to denying all access.
+## Patterns
 
-## Tables Without Rules (default-deny)
-
-- A table with **no `rules` extension** denies list/view/insert/update/delete to anonymous and signed-in users (403). Admin / `ADMIN_SERVICE_TOKEN` requests and actions that bypass rules still work.
-- `teeny generate`, `teeny deploy` and `teeny build` **fail** with `Table "x" has no access rules.` until every table has either a `rules` extension or `public: true`.
-- Fix: add a `rules` extension (use `{name: 'rules'}` with no rules for an admin-only table), or set `public: true` on the table to give everyone, including unauthenticated requests, full read AND write access.
-- `public: true` cannot be combined with a `rules` extension (validation error). For "public read, restricted write", use rules: `listRule: 'true', viewRule: 'true'` plus stricter write rules.
-- Upgrading from 0.0.x: rules-less tables used to be fully open. Add `public: true` only if that was really intended.
-
-## Common Patterns
-
-### Public read, authenticated write
 ```typescript
-{
-    name: 'rules',
-    listRule: 'true',
-    viewRule: 'true',
-    createRule: 'auth.uid != null & author_id == auth.uid',             // can't post as someone else
-    updateRule: 'auth.uid == author_id & new.author_id == author_id',   // can't hand the row to someone else
-    deleteRule: 'auth.uid == author_id',
-} as TableRulesExtensionData
+// Users table (auth): own row only, open sign-up
+listRule: 'auth.uid == id', viewRule: 'auth.uid == id', createRule: 'true',
+updateRule: 'auth.uid == id', deleteRule: 'auth.uid == id',
+
+// Published or owner; the author can't post as, or hand the row to, someone else
+listRule: 'published == true | auth.uid == author_id',
+viewRule: 'published == true | auth.uid == author_id',
+createRule: 'auth.uid != null & author_id == auth.uid',
+updateRule: 'auth.uid == author_id & new.author_id == author_id',
+deleteRule: 'auth.uid == author_id',
+
+// Public read, admin-only writes: set only these two
+listRule: 'true', viewRule: 'true',
+
+// Role-based
+createRule: "auth.role == 'admin' | auth.role == 'editor'",
+deleteRule: "auth.role == 'admin'",
 ```
 
-### Owner-only (users table pattern)
-```typescript
-{
-    name: 'rules',
-    listRule: 'auth.uid == id',
-    viewRule: 'auth.uid == id',
-    createRule: 'true',            // needed for sign-up to work
-    updateRule: 'auth.uid == id',
-    deleteRule: 'auth.uid == id',
-} as TableRulesExtensionData
-```
-The auth extension makes `role` (auth_audience), `email_verified` and `password_salt` admin-only on top of these rules: a user who sends them at sign-up or in an update gets 403 `"role can only be set by an admin"`. New users get the column `default` (set one on `role` if every user should start with a role); an admin token promotes a user with a normal `update`. That is what makes `auth.role == 'admin'` below safe. `auth.meta` is NOT protected this way: if rules read `auth.meta`, add `& new.meta == meta` to the users updateRule (and check `meta` in createRule).
+## Syntax
 
-### Admin-only
-```typescript
-{
-    name: 'rules',
-    listRule: "auth.role == 'admin'",
-    viewRule: "auth.role == 'admin'",
-    createRule: "auth.role == 'admin'",
-    updateRule: "auth.role == 'admin'",
-    deleteRule: "auth.role == 'admin'",
-} as TableRulesExtensionData
-```
+- Variables: `auth.uid` (null when logged out), `auth.email`, `auth.role`, `auth.verified`, `auth.admin`, `auth.meta.<key>`, `auth.jwt.<claim>`, column names of the table, and `new.<col>` in createRule/updateRule.
+- `==` is `IS` (null-safe), `!=` is `IS NOT`, `=` is SQL `=`; `<`, `>`, `<=`, `>=`; `~` / `!~` are `LIKE` / `NOT LIKE`; `&` is AND, `|` is OR (`&` binds tighter; use parentheses); `!x` is NOT; `@@` is FTS match; `->` / `->>` read JSON; `||` concatenates.
+- Functions: `lower`, `upper`, `length`, `substring`, `replace`, `concat`, `date`, `datetime`, `time`, `unixepoch`, `json_contains(col, value)`, `json_set` and friends.
+- Literals are bound as parameters and column names are checked against the table (no SQL injection). But a value pasted into an expression string can still change the expression: `` `email == '${v}'` `` with `v = "x' | email != '"` adds an OR. Quote user input with `JSON.stringify`: `` where: `email == ${JSON.stringify(email)}` ``.
 
-### Published or owner
-```typescript
-{
-    name: 'rules',
-    listRule: "published == true | auth.uid == author_id",
-    viewRule: "published == true | auth.uid == author_id",
-    createRule: 'auth.uid != null & author_id == auth.uid',
-    updateRule: 'auth.uid == author_id & new.author_id == author_id',
-    deleteRule: 'auth.uid == author_id',
-} as TableRulesExtensionData
-```
+## Traps
 
-### Role-based (admin or editor)
-```typescript
-{
-    name: 'rules',
-    listRule: 'true',
-    viewRule: 'true',
-    createRule: "auth.role == 'admin' | auth.role == 'editor'",
-    updateRule: "auth.role == 'admin' | auth.role == 'editor'",
-    deleteRule: "auth.role == 'admin'",
-} as TableRulesExtensionData
-```
+- **updateRule needs an "unchanged" check** for columns that must not change: `& new.author_id == author_id`. A column the update doesn't send reads as its stored value, so other edits still pass. Use `==`: `new.col = col` never matches when the column is NULL.
+- **In createRule there is no stored row:** `author_id` and `new.author_id` both mean the inserted value, and a column the request omits reads as its `default` (or NULL). `createRule: "status == 'draft'"` passes when `status` is omitted and defaults to `'draft'`.
+- **`!col` on a NULL column is NULL, so the row is filtered out.** Write `deleted_at == null`, not `!deleted_at`.
+- **`role`, `email_verified`, `password_salt` are admin-only writes**, so `auth.role == 'admin'` is safe to rely on. `auth.meta` is not protected: if rules read it, add `& new.meta == meta` to the users updateRule and check `meta` in its createRule.
+- **list/view rules filter, they don't fail:** a row the user can't see is simply missing from the result (view returns 404).
+- **`or: 'REPLACE'`** on insert/update (and `/edit/:id?or=INSERT`) is 403 for non-admins unless `deleteRule` is `'true'`; never allowed on auth tables. For "create or update", insert with `or: 'IGNORE'` + a unique index, then update.
 
-### Status-based with owner override
-```typescript
-{
-    name: 'rules',
-    listRule: "status == 'published' | auth.uid == author_id",
-    viewRule: "status == 'published' | auth.uid == author_id",
-    createRule: 'auth.uid != null & author_id == auth.uid',
-    updateRule: "auth.uid == author_id & status != 'locked' & new.author_id == author_id",
-    deleteRule: 'auth.uid == author_id',
-} as TableRulesExtensionData
-```
+After editing rules: `npx teenybase deploy --local --yes`, then test as a logged-out user and as two different users.
 
-### Fully public (read + write)
-```typescript
-{
-    name: 'rules',
-    listRule: 'true',
-    viewRule: 'true',
-    createRule: 'true',
-    updateRule: 'true',
-    deleteRule: 'true',
-} as TableRulesExtensionData
-```
-
-## Common Mistakes
-
-1. **`null` denies access.** Omitting a rule defaults to `null` (deny all). Always explicitly set rules you want accessible. A table with no `rules` extension at all is denied too, and the CLI refuses to deploy it (see above).
-
-2. **String `'true'`, not boolean `true`.** Rule values must be strings:
-   ```typescript
-   listRule: 'true'    // ✅ correct
-   listRule: true       // ❌ wrong
-   ```
-
-3. **In createRule, columns are the row being inserted.** There is no stored row yet, so `author_id` and `new.author_id` both mean the value being inserted. A column the request leaves out is its `default`, or NULL:
-   ```typescript
-   createRule: 'auth.uid != null'                              // ✅ check auth state
-   createRule: 'auth.uid != null & new.author_id == auth.uid'  // ✅ check inserted values (same as author_id == auth.uid)
-   createRule: "status == 'draft'"                             // ✅ passes when status is omitted and defaults to 'draft'
-   ```
-
-4. **updateRule only sees the old row unless you use `new.*`.** `updateRule: 'auth.uid == author_id'` lets the author set `author_id` to someone else. Add an "unchanged" check: `new.author_id == author_id`. A column the update doesn't touch reads as its stored value, so other edits still pass. Use `==` here, not `=` (with `=` a NULL column never equals itself).
-
-5. **Null comparisons.** `auth.uid != null` = logged in. `auth.uid == null` = NOT logged in.
-
-6. **`=` vs `==`.** `=` is SQL `=` (not null-safe), `==` is SQL `IS` (null-safe). Use `==` when comparing with `null` or when null values are possible.
-
-7. **Quoting strings in expressions.** Use single quotes inside double-quoted strings:
-   ```typescript
-   listRule: "status == 'published'"     // ✅
-   ```
-
-8. **`!column` doesn't work for NULL columns.** In SQL, `NOT NULL` evaluates to NULL (falsy), not true. Use explicit null checks:
-   ```typescript
-   listRule: '!deleted_at'              // ❌ NOT NULL → NULL → row filtered out
-   listRule: 'deleted_at == null'       // ✅ IS NULL → true when column is null
-   ```
-
-## Expression Syntax Reference
-
-For all operators, variables, SQL functions, and variable scope details, read:
-**`skills/teenybase/references/EXPRESSION_SYNTAX.md`**
-
-Key variables: `auth.uid`, `auth.email`, `auth.role`, `auth.verified`, `new.*` (insert/update values), column names.
-Key operators: `==`, `!=`, `>`, `<`, `~` (LIKE), `in`, `@@` (FTS), `&` (AND), `|` (OR).
+Full reference (variables, operators, functions, more examples): "Rules Extension" in `node_modules/teenybase/docs/config-reference.md` (https://teenybase.com/docs/reference/config-reference), guide: https://teenybase.com/docs/guides/rls. Security model: `docs/security.md`.

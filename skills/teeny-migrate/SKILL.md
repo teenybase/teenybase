@@ -1,84 +1,70 @@
 ---
 name: teeny-migrate
 description: >-
-  Help with Teenybase migration, deployment, and local development workflow.
-  Covers teeny deploy, dev commands. Handles local vs remote,
-  first-time setup, schema changes, and common issues. Use when starting
-  development, deploying, migrating, or troubleshooting.
+  Apply Teenybase schema changes and deploy: generate and apply migrations locally, run the dev
+  server, deploy to the user's Cloudflare account or a temporary one, upload secrets, read logs,
+  and fix the CLI errors these steps print. Use after editing teenybase.ts, before or during a
+  deploy, or when npx teenybase deploy, dev or generate fails.
+license: Apache-2.0
 ---
 
-# Teenybase Migration & Development Workflow
+# Teenybase migrations, dev server and deploys
 
-## The Core Workflow
+Migrations are generated: `teenybase.ts` is the source of truth, the CLI diffs it against what was last applied and writes the SQL. Never write or edit files in `migrations/` by hand: `deploy` and `generate` reset the folder from the database first (`--clean`, on by default), so hand edits are discarded. Always run the CLI as `npx teenybase` (not `npx teeny`, an unrelated package).
 
-Every time you change `teenybase.ts`:
-
-```bash
-teeny deploy --local --yes     # generate + apply migrations
-teeny dev                      # start the dev server once; it reloads after each deploy --local
-```
-
-Your API is at `http://localhost:8787`. Swagger UI at `/api/v1/doc/ui`. Admin panel at `/api/v1/pocket/`.
-
-## Production Deployment
-
-### Your Cloudflare account
+## Local
 
 ```bash
-npx wrangler login              # one-time, opens a browser (or set CLOUDFLARE_API_TOKEN + CLOUDFLARE_ACCOUNT_ID)
-teeny deploy --remote --yes     # account from the login, D1 created, secrets generated + uploaded, migrations applied
+npx teenybase deploy --local --yes   # after every teenybase.ts change: generate + apply to the local DB
+npx teenybase dev                    # http://localhost:8787; start once, it reloads after each deploy --local
 ```
 
-Don't run `wrangler d1 create` or paste ids: `"database_id": "TEENY_AUTO_CREATE"` makes teeny create the database and write its id. `account_id` comes from `wrangler.jsonc`, then `CLOUDFLARE_ACCOUNT_ID`, then the login (saved to `wrangler.jsonc`). If the login has several accounts, `--yes` fails and lists them: set `account_id`.
+`npx teenybase generate --local` only writes the migration files (to review the SQL). `npx teenybase inspect --validate` checks the config. The dev server log prints `Local config changed (deploy --local), reloading the dev server...` after a deploy; if it doesn't, check that the deploy exited 0 in the same directory, then restart `dev`.
 
-### Without a Cloudflare account (temporary, 60 minutes)
+Reset the local database (deletes all local data):
 
 ```bash
-teeny deploy --temporary --yes  # live URL + claim URL + expiry; no login
+rm -rf .local-persist migrations
+npx teenybase deploy --local --yes
 ```
 
-Give the user the claim URL privately (it works like a password) and tell them: open it and sign in or sign up **within 60 minutes of the first `--temporary` command**, or Cloudflare deletes the account, the Worker and all data. After claiming: `npx wrangler login` then `teeny deploy --remote`. Redeploy with `--temporary` within the hour to keep the same URL and database. Limits: one D1 database, no R2, workers.dev only. Run every command as the same OS user and `HOME` (the account lives in wrangler's user config dir).
+## Remote: the user's Cloudflare account
 
-## Common Issues
+```bash
+npx wrangler login                   # one-time, opens a browser; CI: CLOUDFLARE_API_TOKEN + CLOUDFLARE_ACCOUNT_ID instead
+npx teenybase deploy --remote --yes  # every deploy: applies new migrations, then deploys the worker
+```
 
-### "No migrations to apply"
-Config hasn't changed since last deploy. Force redeploy: `teeny deploy --remote --no-migrate`.
+The first deploy picks the account (`account_id` in `wrangler.jsonc`, then `CLOUDFLARE_ACCOUNT_ID`, then the login, saved to `wrangler.jsonc`), creates the D1 database (`"database_id": "TEENY_AUTO_CREATE"` is replaced by the real id: commit `wrangler.jsonc`), writes random secrets to `.prod.vars` and uploads them. Don't run `wrangler d1 create` or paste ids. `.prod.vars` is private: never commit or print it.
 
-### Dev server shows old schema
-A running `teeny dev` reloads by itself after a successful `teeny deploy --local --yes` (its log prints "Local config changed (deploy --local), reloading the dev server..."). If it doesn't: check that the deploy succeeded (exit code 0) and was run in the same project directory, then restart `teeny dev`.
+After editing `.prod.vars`: `npx teenybase secrets --remote --upload`. Redeploy the worker without migrations: `npx teenybase deploy --remote --no-migrate`.
 
-### "JWT_SECRET is not defined"
-Check `.dev.vars` exists with `JWT_SECRET=some-value`. For production: check `.prod.vars` and run `teeny secrets --remote --upload`.
+## Remote: no Cloudflare account
 
-### Migration conflicts
-Pull latest → `teeny deploy --local --yes` (regenerates from merged config) → test → deploy.
+```bash
+npx teenybase deploy --temporary --yes   # prints the live URL, a claim URL and the expiry
+```
 
-### "D1 database not found" (remote deploy)
-Set `"database_id": "TEENY_AUTO_CREATE"` in `wrangler.jsonc` and run `teeny deploy --remote` again: teeny creates the database and writes its id.
+Give the claim URL to the user privately (anyone with it can take the account) and tell them to open it and sign in or sign up **within 60 minutes of the first `--temporary` run**, or Cloudflare deletes the account, worker and data. Redeploying with `--temporary` inside the hour keeps the same URL and database. After claiming: `npx wrangler login`, then `npx teenybase deploy --remote`. Limits: one D1 database, no R2, workers.dev only. Run every command as the same OS user with the same `HOME`.
 
-### "You are not logged in to Cloudflare"
-Run `npx wrangler login` (or set `CLOUDFLARE_API_TOKEN` and `CLOUDFLARE_ACCOUNT_ID`), or deploy without an account: `teeny deploy --temporary --yes`.
+## Logs
 
-### Reset local database
-Delete `.local-persist/` and `migrations/`, then `teeny deploy --local --yes`.
+- `npx wrangler tail` streams live requests with just `wrangler login`.
+- `npx teenybase logs --json --since 5m --limit 100` fetches recent logs (needs `CLOUDFLARE_API_TOKEN` with Workers observability read; `wrangler login` is not enough).
+- Locally, set `RESPOND_WITH_ERRORS=true` in `.dev.vars` to see error causes in API responses. Never in `.prod.vars`.
 
-### "migrations/ has N migration files committed to git, and the ... database has no migrations applied"
-Committing `migrations/` isn't supported yet (the scaffold gitignores it). With an empty target, teeny would delete the committed files and generate new ones, so it stops. Restore a `.local-persist/` (or `database_id`) that has them applied, or move `migrations/` out of the project to rebuild from `teenybase.ts`. Don't delete or edit committed migration files to get past it.
+## Errors
 
-## Full CLI Reference
+| Message | Fix |
+|---|---|
+| `Table "x" has no access rules.` | Add a `rules` extension or `public: true` to that table (`teeny-rules` skill). |
+| `Migrations folder has been modified` | Only with `--no-clean`: `migrations/` differs from what was applied. Run without `--no-clean` (the default resets the folder); put schema changes in `teenybase.ts`. |
+| `migrations/ has N migration files committed to git, and the ... database has no migrations applied` | Committing `migrations/` isn't supported yet (the scaffold gitignores it): with an empty database teeny would replace the committed files, so it stops. Restore a `.local-persist/` (or the `database_id`) that has them applied, or move `migrations/` out of the project to rebuild from `teenybase.ts`. Never delete or edit committed migration files to get past it. |
+| `No local persist config found` | Run `npx teenybase deploy --local` before `npx teenybase dev`. |
+| `You are not logged in to Cloudflare` | Ask the user to run `npx wrangler login` (or set `CLOUDFLARE_API_TOKEN` + `CLOUDFLARE_ACCOUNT_ID`), or use `--temporary`. |
+| `Your Cloudflare login has N accounts` | Set `account_id` in `wrangler.jsonc` (or `CLOUDFLARE_ACCOUNT_ID`) to one of the listed ids. |
+| `--temporary can't be used` | The user is logged in: use `--remote`. |
+| `can't be deployed to a temporary Cloudflare account` | Remove the listed bindings (R2, routes) or deploy with `--remote`. |
+| Config validation error | Read the field path in the message; `npx teenybase inspect --validate` reproduces it. |
 
-For all commands, flags, and options, read **`docs/cli.md`**.
-
-Quick reference of most-used commands:
-
-| Command | What it does |
-|---------|-------------|
-| `teeny create <name>` | New project (templates: `with-auth`, `blank`) |
-| `teeny deploy --local --yes` | Generate + apply migrations locally |
-| `teeny dev` | Start local dev server (port 8787) |
-| `teeny deploy --remote` | Deploy to production + apply migrations |
-| `teeny deploy --temporary --yes` | Deploy to a temporary Cloudflare account (no login, claim within 60 min) |
-| `teeny secrets --remote --upload` | Upload `.prod.vars` secrets |
-| `teeny exec <route> --local` | Run API route directly |
-| `teeny logs [name]` | Stream live logs from deployed worker. Needs `CLOUDFLARE_API_TOKEN` (`wrangler login` is not enough; `npx wrangler tail` works with the login) |
-| `teeny logs --json --since 5m --limit 100` | Fetch recent logs as JSON (for scripting/AI) |
+More: `node_modules/teenybase/docs/cli.md` (every command and flag, https://teenybase.com/docs/reference/cli), `docs/troubleshooting.md` (https://teenybase.com/docs/reference/troubleshooting), deploy walkthrough in `docs/getting-started.md`.

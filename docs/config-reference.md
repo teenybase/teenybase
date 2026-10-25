@@ -108,7 +108,7 @@ export default {
 | `triggers` | `SQLTrigger[]` | No | `[]` | SQL triggers. See [Triggers](#triggers). |
 | `indexes` | `SQLIndex[]` | No | `[]` | Database indexes. See [Indexes](#indexes). |
 | `fullTextSearch` | `object` | No | — | Full-text search config. See [Full-Text Search](#full-text-search-fts). |
-| `r2Base` | `string` | No | — | R2 bucket path prefix for file storage. Required if any field has `type: 'file'`. |
+| `r2Base` | `string` | No | table name | R2 bucket path prefix for this table's files (fields with `type: 'file'`). Defaults to the table name. |
 | `idInR2` | `boolean` | No | `false` | Store files under `{r2Base}/{recordId}/` subdirectories in R2. Cannot be used with `allowMultipleFileRef`. Requires a `record_uid` field with `noUpdate: true`. |
 | `autoDeleteR2Files` | `boolean` | No | `true` | Automatically delete R2 files when records are deleted. |
 | `allowMultipleFileRef` | `boolean` | No | `false` | Allow referencing the same file from multiple records. Cannot be used with `idInR2`. Requires `autoDeleteR2Files: false`. |
@@ -158,11 +158,11 @@ export default {
 | `autoIncrement` | `boolean` | No | `false` | AUTOINCREMENT (integer primary keys only). |
 | `unique` | `boolean` | No | `false` | UNIQUE constraint. |
 | `notNull` | `boolean` | No | `false` | NOT NULL constraint. |
-| `default` | `SQLLiteral \| string` | No | — | Default value. Use `sqlValue('text')` for literal values or `sql\`CURRENT_TIMESTAMP\`` for SQL expressions. |
-| `check` | `SQLLiteral \| string` | No | — | CHECK constraint. Example: `` sql`json_valid(config)` ``. |
+| `default` | `SQLLiteral \| string` | No | — | Default value. Use `sqlValue('text')` for literal values or `sql\`CURRENT_TIMESTAMP\`` for SQL expressions. A plain string is raw SQL: `default: 'draft'` is the SQL identifier `draft`, not the text, so write `sqlValue('draft')`. |
+| `check` | `SQLLiteral \| string` | No | — | CHECK constraint (raw SQL, like a string `default`). Examples: `` sql`json_valid(config)` ``, `` sql`status IN ('draft', 'published')` `` for a `select` field. |
 | `collate` | `string` | No | — | Collation. `'BINARY'`, `'NOCASE'`, or `'RTRIM'`. |
 | `foreignKey` | `FieldForeignKey` | No | — | Foreign key relation. See below. |
-| `usage` | `string` | No | — | Semantic usage that extensions act on. See [Field Usages](#field-usages). |
+| `usage` | `string` | No | — | Semantic usage that extensions act on. See [Field Usages](#field-usages). Not checked against the list: a misspelt usage is ignored, so copy the names from the tables below. |
 | `noSelect` | `boolean` | No | `false` | Exclude from API responses for non-admin requests, and from where/rule expressions. Admin requests (service token, Pocket UI viewer/editor) still read it. The auth password hash and salt are hidden from everyone, admins included, whether or not they set `noSelect`. |
 | `noInsert` | `boolean` | No | `false` | Cannot be set via API insert. Used for auto-generated fields. |
 | `noUpdate` | `boolean` | No | `false` | Cannot be changed via API update. Used for IDs, creation timestamps. |
@@ -464,11 +464,15 @@ String literals can hold text in any script, including combining marks, CJK punc
 | `<=` | `<=` | `count <= 100` |
 | `~` | `LIKE` | `email ~ '%@example.com'` |
 | `!~` | `NOT LIKE` | `role !~ '%admin'` |
-| `!` | `NOT` (unary) | `!deleted_at` |
+| `!` | `NOT` (unary) | `!published` (on a NULL column this is NULL, see below) |
 | `&` | `AND` | `auth.uid == id & published == true` |
 | `\|` | `OR` | `role == 'admin' \| role == 'editor'` |
 | `\|\|` | `\|\|` (concat) | `path ~ (auth.meta.base \|\| '%')` |
 | `@@` | `MATCH` (FTS5) | `articles @@ 'search term'` |
+| `->`, `->>` | JSON extract (as JSON / as text) | `data ->> 'status' == 'active'` |
+| `+`, `-`, `*`, `/` | Arithmetic | `stock - reserved > 0` |
+
+**Precedence:** comparisons bind tighter than `&` (AND), which binds tighter than `|` (OR). `a == 1 | b == 2 & c == 3` means `a == 1 | (b == 2 & c == 3)`; use parentheses for anything else. Strings can use single or double quotes; inside a TypeScript string, `"status == 'published'"` is the usual form. Expressions are flat: there is no `SELECT` subquery syntax.
 
 **SQL functions** available in expressions:
 
@@ -538,7 +542,9 @@ String literals can hold text in any script, including combining marks, CJK punc
 
 - **Forgetting `null` denies access.** If you omit a rule, it defaults to `null` (deny all), and a table with no `rules` extension denies everything. This is secure by default, but make sure you set rules for endpoints you want accessible. See [Access Control Defaults](#access-control-defaults).
 - **`'true'` must be a string.** Use `'true'` (string), not `true` (boolean). Boolean `true` won't work.
-- **Rules on create vs read.** Create rules guard whether the insert can happen. List/view rules filter which records are returned — they don't prevent the query, they limit the results.
+- **Rules on create vs read.** Create rules guard whether the insert can happen. List/view rules filter which records are returned — they don't prevent the query, they limit the results (a hidden record is missing from lists, and `view/:id` returns 404).
+- **`!column` on a nullable column.** In SQL, `NOT NULL` is NULL, which filters the row out. Write `deleted_at == null` ("not deleted"), not `!deleted_at`.
+- **updateRule without an "unchanged" check.** `updateRule: 'auth.uid == author_id'` lets the author set `author_id` to another user. Add `& new.author_id == author_id` (see above).
 
 ### CRUD Extension
 

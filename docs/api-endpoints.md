@@ -39,7 +39,7 @@ All CRUD endpoints respect row-level security rules defined in your config.
 | `returning` | string or string[] | No | Fields to return. `"*"` for all. **Without this, response is empty.** |
 | `or` | string | No | Conflict handling: `"IGNORE"`, `"REPLACE"`, `"ABORT"`, `"FAIL"`, `"ROLLBACK"`. `"REPLACE"` is admin-only on tables with rules (see below). |
 
-**Common mistake:** Sending `{"title": "x"}` without the `values` wrapper — this silently fails.
+**Common mistake:** Sending `{"title": "x"}` without the `values` wrapper: the request fails with 400 `Error parsing INSERT data` (with `RESPOND_WITH_ERRORS`, the detail says `Insert query must have either values or expr`).
 
 ### SELECT — `GET/POST /table/{t}/select`
 

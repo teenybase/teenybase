@@ -48,14 +48,35 @@ process.env.WRANGLER_LOG = 'log' // todo log for now, change later
 const cli = cac('teeny')
 const __pkgRoot = findTeenybasePackageRoot()
 
+/**
+ * One-line summary of a SKILL.md for `teeny skills`: the first sentence of the frontmatter `description`
+ * (plain or folded `>-` / `|` block), else the first non-empty body line without its `#`.
+ */
 function readSkillSummary(content: string): string {
     const lines = content.split(/\r?\n/)
     let start = 0
+    let description = ''
 
     if (lines[0]?.trim() === '---') {
-        start = 1
-        while (start < lines.length && lines[start].trim() !== '---') start++
-        if (start < lines.length) start++
+        let i = 1
+        for (; i < lines.length && lines[i].trim() !== '---'; i++) {
+            const m = /^description:\s*(.*)$/.exec(lines[i])
+            if (!m) continue
+            const value = m[1].trim()
+            if (/^[>|][+-]?$/.test(value)) {
+                const block: string[] = []
+                while (i + 1 < lines.length && /^\s+\S/.test(lines[i + 1])) block.push(lines[++i].trim())
+                description = block.join(' ')
+            } else {
+                description = value.replace(/^(['"])(.*)\1$/, '$2')
+            }
+        }
+        start = i < lines.length ? i + 1 : i
+    }
+
+    if (description) {
+        const sentence = /^.*?[.!?](?=\s|$)/.exec(description)
+        return (sentence ? sentence[0] : description).trim()
     }
 
     for (let i = start; i < lines.length; i++) {

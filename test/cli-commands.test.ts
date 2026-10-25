@@ -49,11 +49,14 @@ describe('CLI utility commands', () => {
         expect(plain).not.toMatch(/Teenybase Cloud|--server/)
     })
 
-    it('prints simple skill summaries from SKILL.md', () => {
+    it('prints each skill with the first sentence of its SKILL.md description', () => {
         const res = runTeeny(['skills'])
         expect(res.status).toBe(0)
-        expect(res.stdout).toContain(path.join(repoRoot, 'skills', 'teenybase'))
-        expect(res.stdout).toContain('Teenybase Framework Context')
+        for (const name of ['teenybase', 'teeny-rules', 'teeny-migrate']) {
+            expect(res.stdout).toContain(path.join(repoRoot, 'skills', name))
+        }
+        expect(res.stdout).toContain('Build, change and deploy a Teenybase backend on Cloudflare Workers + D1, defined in one teenybase.ts file: tables, fields, auth, access rules, actions, generated migrations, local dev and deploys.')
+        expect(res.stdout).not.toContain('teeny-config')
     })
 
     it('lists package documentation files from the installed docs directory', () => {
