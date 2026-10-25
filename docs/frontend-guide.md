@@ -897,7 +897,7 @@ const { items } = await tb.list('posts', { limit: 10, order: 'created DESC' })
 ## Tips
 
 - **SPA clients:** Store tokens in `localStorage` and pass via `Authorization: Bearer` header.
-- **SSR apps:** Set an `httpOnly` cookie server-side after login, and configure [`authCookie`](config-reference.md#auth-cookie) so teenybase reads it on each request. See the [notes-sample](https://github.com/repalash/teeny-notes-sample) for a working example.
+- **SSR apps:** Set an `httpOnly` cookie server-side after login, and configure [`authCookie`](config-reference.md#auth-cookie) so teenybase reads it on each request. See the [notes-sample](https://github.com/teenybase/notes-sample) for a working example.
 - **Mobile apps:** Use secure storage (Keychain/Keystore). Ignore `Set-Cookie` headers — use Bearer tokens.
 - **Build a fetch wrapper** that auto-attaches the `Authorization` header and handles 401 → refresh → retry.
 - **Use the OpenAPI spec** at `/api/v1/doc` to auto-generate typed clients with tools like `openapi-typescript-codegen`.

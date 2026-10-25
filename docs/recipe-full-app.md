@@ -1,6 +1,6 @@
 # Recipe: Full CRUD App with Auth
 
-A complete, working example modeled on the [notes sample app](https://github.com/repalash/teeny-notes-sample). Users with sign-up/login, items with public/private visibility, full-text search, file uploads, actions, email templates, OAuth, auth cookies. Copy, rename the items table to your domain, deploy.
+A complete, working example modeled on the [notes sample app](https://github.com/teenybase/notes-sample). Users with sign-up/login, items with public/private visibility, full-text search, file uploads, actions, email templates, OAuth, auth cookies. Copy, rename the items table to your domain, deploy.
 
 ## teenybase.ts
 
