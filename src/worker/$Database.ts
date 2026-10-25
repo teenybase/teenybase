@@ -38,6 +38,7 @@ import {$DatabaseRawImpl} from './$DatabaseRawImpl'
 import {parseRuleQuery} from './extensions/tableRulesExtension'
 import {StorageAdapter} from './storage/StorageAdapter'
 import {DefaultDatabaseAdapter} from './storage/DefaultDatabaseAdapter'
+import {httpMetaToHeaders} from './storage/R2RestAdapter'
 import {isFieldSelectable} from '../types/config/isFieldSelectable'
 
 export class $Database<T extends $Env = $Env> extends $DatabaseRawImpl/*<T>*/{
@@ -500,7 +501,8 @@ export class $Database<T extends $Env = $Env> extends $DatabaseRawImpl/*<T>*/{
         const onError = async (e: any) => {
             // todo - make onInsertFail
             // if error, delete uploaded files
-            if(filesToUpload) await this._deleteFiles(Object.keys(filesToUpload), table)
+            // _deleteFiles logs its own failure; don't let it replace the error that got us here
+            if(filesToUpload) await this._deleteFiles(Object.keys(filesToUpload), table).catch(()=>{})
             return e
         }
         const onSuccess = async (r: T1[]) => {
@@ -575,7 +577,8 @@ export class $Database<T extends $Env = $Env> extends $DatabaseRawImpl/*<T>*/{
             // todo - make onUpdateFail
             // if error, delete uploaded files
             // TODO: its possible that some rows are not inserted because of where/rule in sql. those files need to be deleted. same in update and delete. we need to add a force returning clause with id? or can we use some other metadata
-            if(filesToUpload) await this._deleteFiles(Object.keys(filesToUpload), table)
+            // _deleteFiles logs its own failure; don't let it replace the error that got us here
+            if(filesToUpload) await this._deleteFiles(Object.keys(filesToUpload), table).catch(()=>{})
             return e
         }
         const onSuccess = async (r: T1[], old?: any[])=>{
@@ -889,7 +892,17 @@ export class $Database<T extends $Env = $Env> extends $DatabaseRawImpl/*<T>*/{
             this.queryLog.push('STORAGE: putFileObject: ' + key) // todo add data about file?
         if(this.dryRunMode) return {dummy: true}
         if(this.readOnlyMode) throw new Error('putFile not allowed in read only mode')
-        return this.bucket.put(key, value, options).then(r=>{
+        // The bucket can be a Workers RPC stub (e.g. to R2RestRPC in another worker). The RPC
+        // serializer refuses File and Blob ("Could not serialize object of type File") and caps
+        // other values at 32 MiB, so send the bytes as a stream with its size via putStream. Only
+        // buckets that implement it get this: an RPC stub answers any method name and
+        // R2RestAdapter has the method, while a native R2Bucket has no putStream and keeps taking
+        // the File as-is, without a copy.
+        const bucket = this.bucket as R2Bucket & {putStream?: (key: string, stream: ReadableStream, size: number, options?: R2PutOptions) => Promise<R2Object>}
+        const put = typeof Blob !== 'undefined' && value instanceof Blob && typeof bucket.putStream === 'function'
+            ? bucket.putStream(key, value.stream(), value.size, options)
+            : bucket.put(key, value, options)
+        return put.then(r=>{
             const id = !value ? 'empty' :
                 typeof value === 'string' ? value.substring(0, 10) :
                 (value as File).name ? (value as File).name :
@@ -1189,8 +1202,9 @@ export class $Database<T extends $Env = $Env> extends $DatabaseRawImpl/*<T>*/{
                 const rid = z.string().min(1).max(255).parse(params!.rid)
                 const table = this.table(params!.table)
                 const object = await table.getFile(path, rid)
-                const headers = new Headers();
-                object.writeHttpMetadata(headers);
+                // Not object.writeHttpMetadata(): over an RPC boundary (an RPC bucket binding) it
+                // fills a copy of the Headers and the response goes out without content-type.
+                const headers = new Headers(httpMetaToHeaders(object.httpMetadata));
                 headers.set("etag", object.httpEtag);
                 object.customMetadata && Object.entries(object.customMetadata).map(([k, v]) => headers.set('DDB-'+k, v))
                 return this.c.newResponse(object.body, {headers})

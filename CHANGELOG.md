@@ -69,6 +69,7 @@ Release 0.1.0. The last version on npm is 0.0.14; 0.0.15 and 0.0.16 were never p
 - Applying migrations no longer fails when only the stored `sql_revert` differs from the local file.
 - A migration that adds a column whose `check` names that column (`check: 'flag IN (0, 1)'`) no longer fails with `no such column: flag`. The column is added under its final name; when that name is still taken by a column renamed in the same migration, the table is rebuilt instead.
 - Batched queries (`list`, `insert`, `update`, transactions) through a storage adapter that is a Workers RPC stub failed with `Could not serialize object of type "PreparedQuery"`. `runBatch` now receives plain `{q, v}` objects with plain arrays.
+- File fields with a bucket that is a Workers RPC stub (such as `R2RestRPC`): uploads failed with `Could not serialize object of type "File"` and now stream through a new `putStream(key, stream, size, options)` on `R2RestAdapter`/`R2RestRPC` (no 32 MiB RPC limit; a native R2 binding still receives the File directly). `R2RestAdapter.delete` and `R2RestRPC.delete` accept an array of keys like `R2Bucket.delete`. A failed cleanup delete after a failed insert or update no longer replaces the original error with `Failed to delete files`. `/api/v1/files/...` builds its headers from `httpMetadata`, so files served through an RPC bucket keep their content type.
 - Wrangler warnings on stderr no longer break the CLI's parsing of wrangler's JSON output.
 - Broken documentation links (self-hosting anchor, JWT library link).
 

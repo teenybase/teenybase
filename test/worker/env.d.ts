@@ -8,5 +8,6 @@ declare module "cloudflare:test" {
         PRIMARY_DB: D1Database; // Defined in `vitest.config.mts`
         PRIMARY_R2?: R2Bucket; // Defined in `vitest.config.mts`
         RECORDING_DB: Service; // RPC stub to RecordingDbRpc in rpcRecorderWorker.js
+        RECORDING_R2: Service; // RPC stub to RecordingR2Rpc in rpcRecorderWorker.js
     }
 }

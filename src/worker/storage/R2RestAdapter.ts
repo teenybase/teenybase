@@ -105,7 +105,29 @@ export class R2RestAdapter {
     return metaFromHeaders(key, res.headers, options)
   }
 
-  async delete(key: string): Promise<void> {
+  // Upload a stream of known size. $Database uses this for file uploads when the bucket is an
+  // R2RestRPC stub: the RPC serializer refuses File/Blob and caps other values at 32 MiB, but
+  // streams cross with flow control. The S3 PUT needs a Content-Length, which FixedLengthStream
+  // gives fetch without buffering. (Plain put() with a stream would be rejected by R2 for the
+  // missing length.) A stream body can't be replayed, so a retriable failure isn't retried.
+  async putStream(key: string, stream: ReadableStream, size: number, options?: R2PutOptions): Promise<R2Object> {
+    if (!Number.isSafeInteger(size) || size < 0) throw new Error(`R2RestAdapter: putStream ${key}: invalid size ${size}`)
+    const body = typeof FixedLengthStream === "function"
+      ? stream.pipeThrough(new FixedLengthStream(size))
+      : await new Response(stream).arrayBuffer() // outside workerd (no FixedLengthStream): buffer it
+    return this.put(key, body, options)
+  }
+
+  // Takes one key or several, like R2Bucket.delete — $Database always passes an array.
+  async delete(keys: string | string[]): Promise<void> {
+    if (Array.isArray(keys)) {
+      await Promise.all(keys.map((key) => this.deleteOne(key)))
+      return
+    }
+    await this.deleteOne(keys)
+  }
+
+  private async deleteOne(key: string): Promise<void> {
     // R2 DELETE is idempotent: 204/200 success, 404 also treated as success.
     const res = await this.send("DELETE", key)
     try { await res.body?.cancel() } catch {}
@@ -182,7 +204,10 @@ async function throwForStatus(res: Response, method: string, key: string): Promi
   throw new RestAdapterError(res.status, code, `R2RestAdapter: ${method} ${key}: ${message}`)
 }
 
-function httpMetaToHeaders(m?: R2HTTPMetadata): Record<string, string> {
+// Also used by $Database to build file response headers: an R2Object that came over a
+// Workers RPC boundary has a writeHttpMetadata() stub that fills a copy of the Headers,
+// so callers build them from the plain httpMetadata data instead.
+export function httpMetaToHeaders(m?: R2HTTPMetadata): Record<string, string> {
   const h: Record<string, string> = {}
   if (!m) return h
   if (m.contentType) h["content-type"] = m.contentType

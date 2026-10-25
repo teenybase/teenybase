@@ -46,13 +46,20 @@ export class R2RestRPC extends WorkerEntrypoint<{}, R2RestRPCProps> {
     return await a.get(key, options)
   }
 
+  // RPC can't carry a File or Blob, and caps other values at 32 MiB; file uploads use putStream.
   async put(key: string, body: ArrayBuffer | Uint8Array | string, options?: unknown) {
     const a = this.adapter() as unknown as { put: (k: string, b: unknown, o?: unknown) => Promise<unknown> }
     return await a.put(key, body, options)
   }
 
-  async delete(key: string) {
-    return await this.adapter().delete(key)
+  // Not part of R2Bucket. $Database.putFileObject calls it for File/Blob uploads, sending
+  // file.stream() and file.size; streams cross RPC without the 32 MiB limit.
+  async putStream(key: string, stream: ReadableStream, size: number, options?: R2PutOptions) {
+    return await this.adapter().putStream(key, stream, size, options)
+  }
+
+  async delete(keys: string | string[]) {
+    return await this.adapter().delete(keys)
   }
 
   async list(options?: unknown) {

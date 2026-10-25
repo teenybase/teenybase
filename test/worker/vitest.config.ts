@@ -2,8 +2,8 @@ import { defineWorkersConfig } from "@cloudflare/vitest-pool-workers/config";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 
-// Auxiliary worker whose entrypoints are bound below, so tests can call a storage adapter
-// that sits behind a real Workers RPC boundary (see rpcRecorderWorker.js).
+// Auxiliary worker whose entrypoints are bound below, so tests can call a storage adapter or
+// bucket that sits behind a real Workers RPC boundary (see rpcRecorderWorker.js).
 const rpcRecorderWorker = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "rpcRecorderWorker.js");
 
 export default defineWorkersConfig({
@@ -28,6 +28,7 @@ export default defineWorkersConfig({
                     r2Buckets: ["PRIMARY_R2"],
                     serviceBindings: {
                         RECORDING_DB: { name: "rpc-recorder", entrypoint: "RecordingDbRpc" },
+                        RECORDING_R2: { name: "rpc-recorder", entrypoint: "RecordingR2Rpc" },
                     },
                     workers: [{
                         name: "rpc-recorder",
