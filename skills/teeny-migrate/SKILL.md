@@ -62,6 +62,9 @@ Run `npx wrangler login` (or set `CLOUDFLARE_API_TOKEN` and `CLOUDFLARE_ACCOUNT_
 ### Reset local database
 Delete `.local-persist/` and `migrations/`, then `teeny deploy --local --yes`.
 
+### "migrations/ has N migration files committed to git, and the ... database has no migrations applied"
+Committing `migrations/` isn't supported yet (the scaffold gitignores it). With an empty target, teeny would delete the committed files and generate new ones, so it stops. Restore a `.local-persist/` (or `database_id`) that has them applied, or move `migrations/` out of the project to rebuild from `teenybase.ts`. Don't delete or edit committed migration files to get past it.
+
 ## Full CLI Reference
 
 For all commands, flags, and options, read **`docs/cli.md`**.

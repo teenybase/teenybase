@@ -112,6 +112,10 @@ Migrations are applied through the worker's admin API (`/api/v1/setup-db`, `/api
 
 If the final `wrangler deploy` fails after the migrations were applied, the command exits 1. The database is already migrated; fix the error and run `teeny deploy --remote` again to redeploy the worker.
 
+**The `migrations/` folder follows the database you deploy to.** With `--clean` (the default), `deploy` and `generate` first replace the folder's `.sql` files with the migrations the target database has applied, then add new ones. A target with nothing applied yet (no `.local-persist/` locally, a new D1 remotely) has none, so the folder is emptied and generated again from `teenybase.ts`. That's how `deploy --local` followed by a first `deploy --remote` works, and why scaffolded projects keep `migrations/` in `.gitignore`.
+
+Committing `migrations/` to git isn't supported yet (planned for 0.1.1: applying the committed files to an empty database). Until then, if the target has nothing applied and git tracks any of the `.sql` files (committed or staged), `deploy` and `generate` stop with exit code 1 before changing anything, also with `--yes`, instead of deleting them and generating a set with different names. Either restore a `.local-persist/` (or point `database_id` at a database) that has them applied, or move `migrations/` out of the project to build the database from `teenybase.ts`. Without git, or with the folder untracked, nothing changes.
+
 > **Note:** `teeny migrate` is a deprecated alias for `teeny deploy`. If you have it in old scripts, update them.
 
 #### Temporary deploys (`--temporary`)
@@ -146,7 +150,7 @@ teeny generate --remote
 | `--clean` | true | Re-download migrations before generating |
 | `-y, --yes` | false | Skip confirmation prompts (with `--temporary`: accept Cloudflare's terms) |
 
-Usually you don't need this separately — `deploy` runs generate automatically.
+Usually you don't need this separately — `deploy` runs generate automatically. `--clean` and committed migrations work as described for [`deploy`](#deploy).
 
 `generate` (and therefore `deploy` and `build`) fails with `Table "x" has no access rules.` if any table has neither a `rules` extension nor `public: true`. See [Access Control Defaults](config-reference.md#access-control-defaults).
 
@@ -167,6 +171,8 @@ Leave `dev` running while you change `teenybase.ts`: each successful `teeny depl
 - `TEENY_INSPECTOR_PORT` — override inspector port (default: 9229, useful for multiple dev servers)
 
 > `dev` always runs locally. Passing `--remote` will error.
+
+Stop it with Ctrl-C, or send SIGINT/SIGTERM to the `teeny dev` process (a process manager, `kill <pid>`): it stops wrangler and workerd, waits for them to exit, then exits.
 
 ### `build`
 
@@ -321,6 +327,7 @@ teeny deploy --remote
 rm -rf .local-persist migrations
 teeny deploy --local --yes
 ```
+If git tracks `migrations/`, deleting only `.local-persist/` makes `deploy --local` stop instead (see [`deploy`](#deploy)): committed migrations can't be applied to an empty database yet.
 
 ---
 

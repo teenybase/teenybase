@@ -992,6 +992,60 @@ export function loadLocalPersistConfig(c: CliContext) {
     return undefined
 }
 
+/**
+ * Which of `names` (files directly in `dir`) git tracks, i.e. are committed or staged. Runs
+ * `git ls-files` from `root`, scoped to `dir`. Returns an error message instead when git can't answer
+ * (not installed, `root` isn't in a repository, `dir` is outside it, ...).
+ */
+export function gitTrackedFiles(root: string, dir: string, names: string[]): {tracked: string[]} | {error: string} {
+    // git takes and prints '/'-separated paths on every platform
+    const rel = path.relative(root, dir).split(path.sep).join('/') || '.'
+    let out: string
+    try {
+        out = execFileSync('git', ['ls-files', '-z', '--', rel], {cwd: root, encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe']})
+    } catch (e: any) {
+        return {error: e?.stderr?.toString().trim() || e?.message || String(e)}
+    }
+    const listed = new Set(out.split('\0').filter(Boolean))
+    const prefix = rel === '.' ? '' : rel.replace(/\/$/, '') + '/'
+    return {tracked: names.filter(n => listed.has(prefix + n))}
+}
+
+/**
+ * With --clean and a target that has no settings yet (no `.local-persist/config.json`, an empty or
+ * not yet created D1), generateMigrationsDir deletes every .sql file in migrations/ and generates a new
+ * set from teenybase.ts. That's how the folder follows the target it was last deployed to, and it's
+ * harmless for the gitignored copy a scaffolded project keeps there. For migrations committed to git it
+ * isn't: the new set gets different names than the ones other databases recorded, and the committed
+ * files are gone. Applying committed migrations to an empty database isn't supported yet, so stop
+ * before anything is changed. Exported for tests.
+ */
+export function assertCommittedMigrationsKept(c: Pick<CliContext, 'isLocal' | 'root' | 'migrationsPath' | 'wranglerConfig' | 'logger'>, fileNames: string[]) {
+    if (!fileNames.length) return
+    const res = gitTrackedFiles(c.root, c.migrationsPath, fileNames)
+    if ('error' in res) {
+        // No git, not a repository, ...: nothing we can tell is committed, keep the regular --clean behaviour
+        c.logger.debug(`Not checking for committed migrations, git ls-files failed: ${res.error}`)
+        return
+    }
+    const tracked = res.tracked
+    if (!tracked.length) return
+    const dir = readableRelative(c.migrationsPath).replace(/[\\/]*$/, '/')
+    const files = `${tracked.length} migration file${tracked.length === 1 ? '' : 's'} committed to git (${tracked.length > 2 ? `${tracked[0]} ... ${tracked[tracked.length - 1]}` : tracked.join(', ')})`
+    const dbId = c.wranglerConfig.db.database_id
+    const target = c.isLocal
+        ? `the local database has no migrations applied (no ${readableRelative(path.join(c.root, localPersist, 'config.json'))})`
+        : dbId.startsWith(AUTO_CREATE)
+            ? `the remote database hasn't been created yet (database_id is ${dbId})`
+            : `the remote database ${dbId} has no migrations applied`
+    const restore = c.isLocal
+        ? `restore a ${localPersist}/ that has them applied (for example from another checkout of this repository)`
+        : `point database_id in ${readableRelative(c.wranglerConfig.config.path)} at the database they were applied to`
+    throw new Error(`${dir} has ${files}, and ${target}.\n` +
+        `Continuing would delete them and generate a new set from your teenybase config, whose names won't match the ones recorded by databases these files were applied to. Nothing was changed.\n` +
+        `Applying committed migrations to an empty database isn't supported yet (planned for teenybase 0.1.1). Either ${restore}, or move ${dir} out of the project to build this database from your teenybase config (the folder is then generated again, with new files).`)
+}
+
 export async function generateMigrationsDir(c: CliContext, clean = false, write = true) {
     c.logger.section?.('Generating migrations')
 
@@ -1044,6 +1098,11 @@ export async function generateMigrationsDir(c: CliContext, clean = false, write 
         lastVersion = json.version
     } else {
         // do nothing?
+    }
+
+    // --clean below would delete every file in the folder (the target has none to write back)
+    if (!deployed && clean && write) {
+        assertCommittedMigrationsKept(c, currentMigrations.map(m => m.name))
     }
 
     if(!clean && write){
