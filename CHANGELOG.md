@@ -67,6 +67,7 @@ Release 0.1.0. The last version on npm is 0.0.14; 0.0.15 and 0.0.16 were never p
 - CLI: runs wrangler as `node <wrangler bin>` without a shell, fixing `spawn npx ENOENT` on Windows. Thanks to @izulwahidin for reporting it (#1) and for the first fix (PR #3).
 - `zod`, `esbuild`, `miniflare` and `undici` are declared dependencies; `@cloudflare/workers-types` ^5 is accepted.
 - Applying migrations no longer fails when only the stored `sql_revert` differs from the local file.
+- A migration that adds a column whose `check` names that column (`check: 'flag IN (0, 1)'`) no longer fails with `no such column: flag`. The column is added under its final name; when that name is still taken by a column renamed in the same migration, the table is rebuilt instead.
 - Wrangler warnings on stderr no longer break the CLI's parsing of wrangler's JSON output.
 - Broken documentation links (self-hosting anchor, JWT library link).
 

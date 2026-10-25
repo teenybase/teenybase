@@ -77,19 +77,51 @@ export function alterTable([table, lastTable, changes]: AlterTable, others: Tabl
     // to ensure that there are no name collisions in case there is
     // names switch/reuse of existing columns (eg. name, title -> title, name).
     // This way we are always doing 1 more rename operation but it provides better dev experience.
+    //
+    // A temporary name is only safe for a column that carries no self-referencing constraint.
+    // `createFieldQuery` substitutes the column *head* name; a `check:` is raw user SQL that names
+    // the final column, so `ADD COLUMN flag_a1b2c ... CHECK(flag IN (0, 1))` asks SQLite to resolve
+    // a column that does not exist yet and the whole migration aborts with `no such column: flag`.
+    // So the temporary name is now taken only when the final name is genuinely still occupied, and
+    // a column that needs both a temporary name and a CHECK goes through the table rebuild instead.
+
+    // Column names still present by the time the ADD COLUMNs below run: whatever the previous table
+    // had, less the columns dropped just above.
+    const droppedNames = new Set(changes.drop.map(f => f.name))
+    const occupiedAtAdd = new Set(lastTable.fields.map(f => f.name).filter(n => !droppedNames.has(n)))
+
+    // Held back until `needsTableChange` is final. A table rebuild constructs the new table from
+    // `table.fields` and copies only the pre-existing columns (see `existingFields` below), so it
+    // already creates every added column — an incremental ADD COLUMN on top of it is redundant, and
+    // for a CHECK-bearing column it is the unrunnable statement described above.
+    const createStatements = [] as [string, string | undefined][]
+    const createdTempNames = [] as string[]
+    const createInsertAt = statements.length
 
     for (const field of changes.create) {
         if (!sqliteSupportedColumnAdd(field)) needsTableChange = true
         else {
-            const tempName = field.name + '_' + randomString(5)
-            toRename[tempName] = field.name;
-
-            statements.push([
-                `ALTER TABLE ${tableName}
-                    ADD COLUMN ${createFieldQuery({...field, name: tempName})};`,
-                `ALTER TABLE ${tableName} DROP COLUMN ${tempName};`,
-            ])
             logs.push(`✔ Field Added - ${tableName}.${field.name}`)
+
+            const needsTempName = occupiedAtAdd.has(field.name)
+            if (needsTempName && field.check) {
+                // Cannot be expressed incrementally: the name is taken, and a temporary name cannot
+                // carry the check. Let the rebuild create the column with its final name.
+                needsTableChange = true
+                continue
+            }
+
+            const addedName = needsTempName ? field.name + '_' + randomString(5) : field.name
+            if (needsTempName) {
+                toRename[addedName] = field.name;
+                createdTempNames.push(addedName)
+            }
+
+            createStatements.push([
+                `ALTER TABLE ${tableName}
+                    ADD COLUMN ${createFieldQuery({...field, name: addedName})};`,
+                `ALTER TABLE ${tableName} DROP COLUMN ${addedName};`,
+            ])
         }
     }
 
@@ -138,6 +170,15 @@ export function alterTable([table, lastTable, changes]: AlterTable, others: Tabl
         if (q1 !== q2) {
             needsTableChange = true
         }
+    }
+
+    // `needsTableChange` is final here — the alter loop above is the last thing that can set it.
+    // Emit the held-back ADD COLUMNs at their original position (right after the drops, before the
+    // rename-to-temp statements), or discard them and let the rebuild create those columns.
+    if (needsTableChange) {
+        for (const tempName of createdTempNames) delete toRename[tempName]
+    } else {
+        statements.splice(createInsertAt, 0, ...createStatements)
     }
 
     for (const [tempName, actualName] of Object.entries(toRename)) {
