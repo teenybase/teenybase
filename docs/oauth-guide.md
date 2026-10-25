@@ -1,5 +1,7 @@
 # OAuth & Google Login
 
+Teenybase signs users in with Google, GitHub, Discord, LinkedIn or any OAuth 2 provider you configure in `teenybase.ts`, and creates or links the user's row in your auth table.
+
 ## Setup Overview
 
 Teenybase supports three OAuth-related flows, all configured through `DatabaseSettings`:

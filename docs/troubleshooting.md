@@ -1,6 +1,6 @@
 # Troubleshooting
 
-Common issues and solutions when using Teenybase.
+Error messages and fixes for the teenybase CLI, local development, deploys to Cloudflare, auth and migrations. Search this page for the message you see.
 
 ---
 

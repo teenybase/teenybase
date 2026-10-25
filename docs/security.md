@@ -1,6 +1,6 @@
 # Security Policy
 
-Teenybase takes security seriously. This document covers how to report vulnerabilities, what we protect against, and what we're still working on. We believe in being transparent about both our strengths and our gaps — you deserve to know exactly what you're shipping.
+How to report a vulnerability in teenybase, what it protects against (access rules compiled to parameterized SQL, default-deny tables, admin-only auth fields, no SQL or secrets in error responses), and its known limitations.
 
 ## Reporting a Vulnerability
 

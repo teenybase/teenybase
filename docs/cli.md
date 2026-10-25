@@ -1,6 +1,6 @@
 # CLI Reference
 
-Teenybase ships a CLI called `teeny` (alias: `teenybase`).
+The `teenybase` npm package includes the CLI: run it as `npx teenybase <command>`, or install it globally (`npm i -g teenybase`) to get the `teeny` and `teenybase` commands. Never run `npx teeny`: that downloads an unrelated npm package.
 
 ```bash
 npx teenybase <command> [options]

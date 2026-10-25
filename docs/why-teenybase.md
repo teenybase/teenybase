@@ -1,10 +1,12 @@
 # Why Teenybase
 
+Teenybase gives you a database, REST API, auth, access rules, migrations, OpenAPI docs and an admin panel from one TypeScript file, running on your own Cloudflare account.
+
 ## The Problem
 
 Building a backend for a new project means setting up a database, writing an API layer, adding authentication, implementing access control, creating migrations, generating API docs, and deploying it somewhere. That's before you write a single line of your actual app.
 
-Most developers solve this by picking a BaaS (Supabase, Firebase) or cobbling together an ORM + auth library + migration tool + API framework. Either way: vendor lock-in, monthly bills, or a week of plumbing.
+Most developers solve this by picking a BaaS (Supabase, Firebase) or cobbling together an ORM + auth library + migration tool + API framework. Either way, you take on a hosted service's pricing and data location, or a week of wiring libraries together.
 
 ## The Idea
 

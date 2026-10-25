@@ -4,7 +4,7 @@ Teenybase is a backend on Cloudflare Workers and D1 that you define in one TypeS
 
 This guide takes you from an empty folder to a local API you can call with curl, then to a deploy on your own Cloudflare account. Start a new project with [Option A](#option-a-new-project), or add teenybase to an existing project with [Option B](#option-b-add-to-existing-project).
 
-**Prerequisites:** Node.js 22 or newer. You don't need a Cloudflare account for local development. The commands below use the `teeny` CLI: install it with `npm i -g teenybase`, or run each command as `npx teenybase <command>` instead of `teeny <command>`. Don't use `npx teeny`: it downloads an unrelated npm package named `teeny`.
+**Prerequisites:** Node.js 22 or newer. You don't need a Cloudflare account for local development. Run the CLI as `npx teenybase <command>`. With `npm i -g teenybase` it is also on your path as `teeny` (and `teenybase`), so `teeny <command>` in these docs means the same thing. Don't use `npx teeny`: it downloads an unrelated npm package named `teeny`.
 
 **Using an AI coding agent?** New projects include an `AGENTS.md` for it. Add the skills with `npx skills add teenybase/teenybase` (or, in Claude Code, `/plugin install teenybase --marketplace teenybase/teenybase`); `npx teenybase skills` lists the ones shipped in the package. The `teenybase` skill tells the agent how to work out what you are building before it edits `teenybase.ts`.
 
@@ -212,7 +212,7 @@ POST /auth/logout                                 Clears auth cookie only
 
 ---
 
-# Technical Appendix
+## Technical Appendix
 
 ## Testing the API with curl
 

@@ -2,7 +2,7 @@
 
 This guide walks through integrating Teenybase into a project that already uses Hono on Cloudflare Workers. By the end, you will have a working backend with auth, CRUD, row-level security, an admin panel, and auto-generated migrations — all driven by a single config file.
 
-> **Tip:** You can also run `teeny init` inside your existing project directory to auto-detect what's already set up and generate only the missing files (teenybase.ts, .dev.vars, etc.). This guide covers manual setup for full understanding.
+> **Tip:** You can also run `npx teenybase init` inside your existing project directory to auto-detect what's already set up and generate only the missing files (teenybase.ts, .dev.vars, etc.). This guide covers manual setup for full understanding.
 
 ## Prerequisites
 
