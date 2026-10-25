@@ -15,6 +15,8 @@ cd teenybase
 npm ci              # also builds dist/
 ```
 
+Working with a coding agent? `AGENTS.md` has the commands, layout and rules for this repo.
+
 ## Checks
 
 Run these before opening a PR. CI runs the same commands.

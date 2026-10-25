@@ -1,6 +1,6 @@
-# CLAUDE.md
+# AGENTS.md
 
-Guidance for AI coding agents (and people) working on the Teenybase source.
+Guidance for coding agents (and people) working on the Teenybase source.
 
 ## What this is
 
@@ -38,6 +38,6 @@ npm run linkcheck      # links and anchors in README and docs
 - Behaviour changes need tests. Run `check`, `test-check`, `vitest` and `vitest-worker` before you finish.
 - When a feature, option or CLI flag changes, update `docs/` and `skills/` in the same change, and add a line to `CHANGELOG.md` under `Unreleased`.
 - Don't commit placeholder values or TODOs for unfinished work; open an issue instead.
-- In generated projects, use the `teeny` CLI rather than calling `wrangler` directly; the CLI adds resource creation and migrations around it.
+- In generated projects, use the `teeny` CLI rather than calling `wrangler` directly; the CLI adds resource creation and migrations around it. `wrangler login`, `whoami` and `tail` are fine to run directly.
 - Security-sensitive code (auth, rules, SQL generation, error responses) gets extra care: never echo SQL or secrets in responses, keep queries parameterized.
 - Cloudflare docs are available as Markdown: https://developers.cloudflare.com/style-guide/ai-tooling/index.md
