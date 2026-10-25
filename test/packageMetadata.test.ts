@@ -1,5 +1,5 @@
 import {describe, expect, it} from 'vitest'
-import {readFileSync} from 'node:fs'
+import fs, {readFileSync} from 'node:fs'
 import path from 'node:path'
 import {fileURLToPath} from 'node:url'
 
@@ -10,7 +10,7 @@ describe('package metadata', () => {
     const pkg = readJson('package.json')
 
     it('plugin.json version matches package.json', () => {
-        expect(readJson('.claude-plugin/plugin.json').version).toBe(pkg.version)
+        expect(readJson('plugin/.claude-plugin/plugin.json').version).toBe(pkg.version)
     })
 
     it('has a real npm description (npm otherwise falls back to the README first line)', () => {
@@ -18,10 +18,13 @@ describe('package metadata', () => {
         expect(pkg.description).not.toMatch(/^</)
     })
 
-    it('publishes only the core skills', () => {
-        const skills = (pkg.files as string[]).filter(f => f.startsWith('skills'))
-        expect(skills).not.toContain('skills')
-        expect(skills.sort()).toEqual(['skills/teeny-migrate', 'skills/teeny-rules', 'skills/teenybase'])
+    it('publishes only the core skills, from the plugin folder', () => {
+        // the Claude Code plugin is plugin/ (marketplace source ./plugin), so an install copies only it
+        expect(pkg.files).toContain('plugin')
+        expect((pkg.files as string[]).filter(f => f.startsWith('skills'))).toEqual([])
+        const skills = fs.readdirSync(path.join(root, 'plugin', 'skills')).sort()
+        expect(skills).toEqual(['teeny-migrate', 'teeny-rules', 'teenybase'])
+        expect(readJson('.claude-plugin/marketplace.json').plugins[0].source).toBe('./plugin')
     })
 })
 

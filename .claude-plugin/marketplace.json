@@ -8,7 +8,7 @@
     "plugins": [
         {
             "name": "teenybase",
-            "source": "./",
+            "source": "./plugin",
             "description": "Skills for building backends with Teenybase on Cloudflare Workers + D1: config, auth, access rules, migrations and deployment"
         }
     ]

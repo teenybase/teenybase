@@ -39,18 +39,18 @@ npm run linkcheck      # relative links and anchors in README and docs (needs py
 | `src/types/` | Config types and zod schemas |
 | `test/` | Unit tests; `test/worker/` runs inside workerd |
 | `docs/` | User docs (shipped in the npm package) |
-| `skills/` | Agent skills (shipped in the npm package) |
+| `plugin/skills/` | Agent skills, shipped in the npm package and as the Claude Code plugin in `plugin/` |
 
 ## Pull requests
 
 - Keep PRs focused, one change per PR.
 - Add or update tests for behaviour changes.
-- Update `docs/` and `skills/` when a feature or config option changes.
+- Update `docs/` and `plugin/skills/` when a feature or config option changes.
 - Add a line under `Unreleased` in [CHANGELOG.md](CHANGELOG.md).
 - By contributing you agree that your contribution is licensed under [Apache-2.0](LICENSE).
 
 ## Releases
 
-Maintainers release by bumping `version` in `package.json`, `package-lock.json` and `.claude-plugin/plugin.json`, turning `Unreleased` in the changelog into the version heading (`## 0.1.1 - 2026-11-02`), and pushing to `main`. [`.github/workflows/publish.yml`](.github/workflows/publish.yml) runs [repalash/release-tools](https://github.com/repalash/release-tools): when the version is not on npm yet it builds, tests and packs the package, posts an approval link, and after a maintainer approves the `npm-publish` environment it publishes with npm trusted publishing (provenance, no npm token) and creates the `v<version>` tag and GitHub release. Prerelease versions (`0.2.0-beta.1`) are published under the `next` dist-tag.
+Maintainers release by bumping `version` in `package.json`, `package-lock.json` and `plugin/.claude-plugin/plugin.json`, turning `Unreleased` in the changelog into the version heading (`## 0.1.1 - 2026-11-02`), and pushing to `main`. [`.github/workflows/publish.yml`](.github/workflows/publish.yml) runs [repalash/release-tools](https://github.com/repalash/release-tools): when the version is not on npm yet it builds, tests and packs the package, posts an approval link, and after a maintainer approves the `npm-publish` environment it publishes with npm trusted publishing (provenance, no npm token) and creates the `v<version>` tag and GitHub release. Prerelease versions (`0.2.0-beta.1`) are published under the `next` dist-tag.
 
 One-time setup, from a clone of release-tools (needs `gh` with admin rights on the repository and `npm` logged in as a teenybase maintainer): `scripts/setup-repos.sh teenybase/teenybase:publish.yml:teenybase`. It creates the `npm-publish` environment with the maintainer as required reviewer, stores the optional Discord and review secrets, and registers the npm trusted publisher for `publish.yml`.

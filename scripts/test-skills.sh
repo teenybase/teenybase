@@ -50,9 +50,9 @@ assert_contains() {
 
 # ─── Test 1: Plugin manifest ─────────────────────────────────────────────────
 
-section "Plugin manifest (.claude-plugin/plugin.json)"
+section "Plugin manifest (plugin/.claude-plugin/plugin.json)"
 
-PLUGIN_JSON="$REPO_ROOT/.claude-plugin/plugin.json"
+PLUGIN_JSON="$REPO_ROOT/plugin/.claude-plugin/plugin.json"
 
 assert_file "$PLUGIN_JSON" "plugin.json"
 
@@ -79,9 +79,9 @@ fi
 section "SKILL.md files"
 
 SKILLS=(
-    "skills/teenybase/SKILL.md"
-    "skills/teeny-rules/SKILL.md"
-    "skills/teeny-migrate/SKILL.md"
+    "plugin/skills/teenybase/SKILL.md"
+    "plugin/skills/teeny-rules/SKILL.md"
+    "plugin/skills/teeny-migrate/SKILL.md"
 )
 
 for skill in "${SKILLS[@]}"; do
@@ -217,11 +217,8 @@ section "package.json files array"
 
 PKG="$REPO_ROOT/package.json"
 
-assert_contains "$PKG" '".claude-plugin"' "package.json files includes .claude-plugin"
-for skill in "${SKILLS[@]}"; do
-    dir=$(dirname "$skill")
-    assert_contains "$PKG" "\"$dir\"" "package.json files includes $dir"
-done
+assert_contains "$PKG" '"plugin"' "package.json files includes plugin/ (the skills ship from plugin/skills)"
+assert_contains "$REPO_ROOT/.claude-plugin/marketplace.json" '"./plugin"' "marketplace entry points at ./plugin, so an install copies only the plugin folder"
 
 # ─── Summary ──────────────────────────────────────────────────────────────────
 

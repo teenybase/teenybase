@@ -664,9 +664,9 @@ cli
     .command('skills', 'check available Teeny skills before doing complex workflows')
     .action(wrapAction(
         async (ctx) => {
-            const skillsDir = path.join(__pkgRoot, 'skills')
+            const skillsDir = path.join(__pkgRoot, 'plugin', 'skills')
             if (!fs.existsSync(skillsDir) || !fs.statSync(skillsDir).isDirectory()) {
-                throw new Error(`skills/ directory not found in installed package at ${skillsDir}`)
+                throw new Error(`plugin/skills/ directory not found in installed package at ${skillsDir}`)
             }
 
             const skills = fs.readdirSync(skillsDir, {withFileTypes: true})

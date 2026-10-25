@@ -28,7 +28,7 @@ npm run linkcheck      # links and anchors in README and docs
 | `src/node/` | CLI (`cli.ts`, `cli-utils.ts`, `init.ts`), config loading, wrangler integration |
 | `src/scaffolds/` | Reusable field and trigger definitions (`teenybase/scaffolds/fields`) |
 | `test/` | Node unit tests; `test/worker/` runs in workerd via `@cloudflare/vitest-pool-workers` |
-| `docs/`, `skills/` | User docs and agent skills; both ship in the npm package |
+| `docs/`, `plugin/skills/` | User docs and agent skills; both ship in the npm package. `plugin/` is also the Claude Code plugin (`.claude-plugin/marketplace.json` points at it) |
 
 `src/worker`, `src/sql` and `src/types` run inside workerd: no Node-only APIs there. `src/node` is Node-only, and nothing outside it imports it.
 
@@ -36,7 +36,7 @@ npm run linkcheck      # links and anchors in README and docs
 
 - Find and fix the cause; no workarounds or special cases that hide a bug. If something is a known limitation, document it.
 - Behaviour changes need tests. Run `check`, `test-check`, `vitest` and `vitest-worker` before you finish.
-- When a feature, option or CLI flag changes, update `docs/` and `skills/` in the same change, and add a line to `CHANGELOG.md` under `Unreleased`.
+- When a feature, option or CLI flag changes, update `docs/` and `plugin/skills/` in the same change, and add a line to `CHANGELOG.md` under `Unreleased`.
 - Don't commit placeholder values or TODOs for unfinished work; open an issue instead.
 - In generated projects, use the `teeny` CLI rather than calling `wrangler` directly; the CLI adds resource creation and migrations around it. `wrangler login`, `whoami` and `tail` are fine to run directly.
 - Security-sensitive code (auth, rules, SQL generation, error responses) gets extra care: never echo SQL or secrets in responses, keep queries parameterized.

@@ -265,7 +265,7 @@ Rules:
 - Quote user input in \`where\` expressions with \`JSON.stringify(value)\`.
 - \`RESPOND_WITH_ERRORS=true\` goes in \`.dev.vars\` only, never in \`.prod.vars\`.
 
-Docs for the installed version: \`node_modules/teenybase/docs/\` (\`npx teenybase docs\` lists them) and https://teenybase.com/docs. Agent skills: \`node_modules/teenybase/skills/\` (\`npx teenybase skills\`); start with \`teenybase/SKILL.md\`.
+Docs for the installed version: \`node_modules/teenybase/docs/\` (\`npx teenybase docs\` lists them) and https://teenybase.com/docs. Agent skills: \`node_modules/teenybase/plugin/skills/\` (\`npx teenybase skills\`); start with \`teenybase/SKILL.md\`.
 ${AGENTS_SECTION_END}
 `
 }
