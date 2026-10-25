@@ -132,16 +132,18 @@ assert_file "$DIR/worker-configuration.d.ts" "worker-configuration.d.ts"
 assert_file "$DIR/.dev.vars" ".dev.vars"
 assert_file "$DIR/.gitignore" ".gitignore"
 assert_dir  "$DIR/migrations" "migrations/"
-assert_file "$DIR/.claude/settings.json" ".claude/settings.json"
+assert_file "$DIR/AGENTS.md" "AGENTS.md"
+assert_file "$DIR/CLAUDE.md" "CLAUDE.md"
 
-# Claude settings content checks
-assert_contains "$DIR/.claude/settings.json" '"extraKnownMarketplaces"' "claude settings declares the teenybase marketplace"
-assert_contains "$DIR/.claude/settings.json" '"teenybase@teenybase-tools": true' "claude settings enables the teenybase plugin"
-assert_contains "$DIR/.claude/settings.json" 'node_modules/teenybase' "claude settings points to teenybase"
-assert_not_contains "$DIR/.claude/settings.json" '"rules"' "claude settings has no undocumented rules key"
-assert_file "$DIR/.claude/rules/teenybase.md" ".claude/rules/teenybase.md"
-assert_contains "$DIR/.claude/rules/teenybase.md" 'npx wrangler login' "claude rules allow npx wrangler login"
-assert_not_contains "$DIR/.claude/rules/teenybase.md" 'Never run npx wrangler directly' "claude rules don't forbid wrangler login"
+# Agent notes content checks
+assert_contains "$DIR/AGENTS.md" '<!-- teenybase -->' "AGENTS.md has the teenybase section marker"
+assert_contains "$DIR/AGENTS.md" 'npx teenybase deploy --local --yes' "AGENTS.md has the local deploy command"
+assert_contains "$DIR/AGENTS.md" 'npx wrangler login' "AGENTS.md allows npx wrangler login"
+assert_contains "$DIR/AGENTS.md" 'never `npx teeny`' "AGENTS.md warns about npx teeny"
+assert_contains "$DIR/AGENTS.md" 'migrations/' "AGENTS.md says not to edit migrations"
+assert_contains "$DIR/AGENTS.md" 'node_modules/teenybase/docs/' "AGENTS.md points to the docs"
+if [ "$(cat "$DIR/CLAUDE.md")" = "@AGENTS.md" ]; then pass "CLAUDE.md is the @AGENTS.md import"; else fail "CLAUDE.md is the @AGENTS.md import"; fi
+if [ ! -e "$DIR/.claude" ]; then pass "no .claude/ directory written"; else fail "no .claude/ directory written"; fi
 
 # Content checks
 assert_contains "$DIR/package.json" '"name": "my-app"' "package.json has correct name"
@@ -239,8 +241,8 @@ assert_file "$DIR/wrangler.jsonc" "wrangler.jsonc"
 assert_file "$DIR/teenybase.ts" "teenybase.ts"
 assert_file "$DIR/src/index.ts" "src/index.ts"
 assert_file "$DIR/worker-configuration.d.ts" "worker-configuration.d.ts"
-assert_file "$DIR/.claude/settings.json" ".claude/settings.json"
-assert_contains "$DIR/.claude/settings.json" 'node_modules/teenybase' "claude settings points to teenybase"
+assert_file "$DIR/AGENTS.md" "AGENTS.md"
+assert_file "$DIR/CLAUDE.md" "CLAUDE.md"
 
 # ─── Test 8: teeny init skips existing files ──────────────────────────────────
 
@@ -356,15 +358,32 @@ assert_not_contains "$C3_DIR/wrangler.jsonc" '"PRIMARY_DB"' "C3 wrangler.jsonc n
 # tsconfig should still be the C3 original
 assert_contains "$C3_DIR/tsconfig.json" 'virtual:teenybase' "C3 tsconfig updated with virtual:teenybase path alias"
 
-# ─── Test 14: teeny init preserves existing .claude/settings.json ─────────────
+# ─── Test 14: teeny init with existing AGENTS.md / CLAUDE.md ─────────────────
 
-section "Test 14: teeny init --yes preserves existing .claude/settings.json"
+section "Test 14: teeny init --yes appends to AGENTS.md once and never changes CLAUDE.md"
 
-mkdir -p "$TMP_DIR/init-claude-settings/.claude"
-echo '{"custom": true}' > "$TMP_DIR/init-claude-settings/.claude/settings.json"
-(cd "$TMP_DIR/init-claude-settings" && run_teeny init --yes --template blank 2>&1) || true
+DIR="$TMP_DIR/init-agent-files"
+mkdir -p "$DIR/.claude"
+printf '# Project notes\n\nUse pnpm.' > "$DIR/AGENTS.md"
+printf '# Claude notes\nbe brief\n' > "$DIR/CLAUDE.md"
+echo '{"custom": true}' > "$DIR/.claude/settings.json"
+OUT=$(cd "$DIR" && run_teeny init --yes --template blank --no-install 2>&1) || true
+assert_contains "$DIR/AGENTS.md" 'Use pnpm.' "existing AGENTS.md content kept"
+assert_contains "$DIR/AGENTS.md" '<!-- teenybase -->' "teenybase section appended to AGENTS.md"
+if [ "$(printf '# Claude notes\nbe brief\n')" = "$(cat "$DIR/CLAUDE.md")" ]; then pass "existing CLAUDE.md unchanged"; else fail "existing CLAUDE.md unchanged"; fi
+if echo "$OUT" | grep -q 'add the line "@AGENTS.md" to CLAUDE.md'; then pass "init prints how to import AGENTS.md"; else fail "init prints how to import AGENTS.md"; fi
+assert_contains "$DIR/.claude/settings.json" '"custom"' "existing .claude/settings.json preserved"
+(cd "$DIR" && run_teeny init --yes --template blank --no-install >/dev/null 2>&1) || true
+if [ "$(grep -c '<!-- teenybase -->' "$DIR/AGENTS.md")" = "1" ]; then pass "re-running init doesn't add the section twice"; else fail "re-running init doesn't add the section twice"; fi
 
-assert_contains "$TMP_DIR/init-claude-settings/.claude/settings.json" '"custom"' "existing .claude/settings.json preserved"
+DIR="$TMP_DIR/init-agent-symlink"
+mkdir -p "$DIR"
+printf '# Shared notes\n' > "$DIR/AGENTS.md"
+ln -s AGENTS.md "$DIR/CLAUDE.md"
+OUT=$(cd "$DIR" && run_teeny init --yes --template blank --no-install 2>&1) || true
+if [ -L "$DIR/CLAUDE.md" ]; then pass "CLAUDE.md symlink kept"; else fail "CLAUDE.md symlink kept"; fi
+if [ "$(grep -c '<!-- teenybase -->' "$DIR/AGENTS.md")" = "1" ]; then pass "section added once through the symlink"; else fail "section added once through the symlink"; fi
+if echo "$OUT" | grep -q 'same file as AGENTS.md'; then pass "init recognises CLAUDE.md -> AGENTS.md"; else fail "init recognises CLAUDE.md -> AGENTS.md"; fi
 
 # ─── Test 15: teeny init adds virtual:teenybase to existing tsconfig ──────────
 

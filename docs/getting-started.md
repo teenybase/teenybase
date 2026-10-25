@@ -6,7 +6,7 @@ This guide takes you from an empty folder to a local API you can call with curl,
 
 **Prerequisites:** Node.js 22 or newer. You don't need a Cloudflare account for local development. The commands below use the `teeny` CLI: install it with `npm i -g teenybase`, or run each command as `npx teenybase <command>` instead of `teeny <command>`. Don't use `npx teeny`: it downloads an unrelated npm package named `teeny`.
 
-**Using an AI coding agent?** Point it at the `teenybase` skill (`npx teenybase skills` lists it) or install the Claude Code plugin; the skill tells the agent how to work out what you are building before it edits `teenybase.ts`.
+**Using an AI coding agent?** New projects include an `AGENTS.md` for it. Add the skills with `npx skills add teenybase/teenybase` (or, in Claude Code, `/plugin install teenybase --marketplace teenybase/teenybase`); `npx teenybase skills` lists the ones shipped in the package. The `teenybase` skill tells the agent how to work out what you are building before it edits `teenybase.ts`.
 
 ## Non-Interactive Flags
 
@@ -46,6 +46,7 @@ teeny init -y
 | `.dev.vars` | Local secrets (JWT_SECRET, JWT_SECRET_USERS, ADMIN_JWT_SECRET, ADMIN_SERVICE_TOKEN, POCKET_UI_VIEWER_PASSWORD, POCKET_UI_EDITOR_PASSWORD). |
 | `.prod.vars` | Production secrets (same keys, strong values). Generated with random values on the first remote deploy. |
 | `migrations/` | Auto-generated SQL. Don't edit manually. |
+| `AGENTS.md`, `CLAUDE.md` | Notes for coding agents: commands, common mistakes, where the docs are. `CLAUDE.md` only imports `AGENTS.md`. |
 
 ## CLI Quick Reference
 

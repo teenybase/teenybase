@@ -37,7 +37,7 @@ npx teenybase deploy --remote --yes  # every deploy: applies new migrations, the
 
 The first deploy picks the account (`account_id` in `wrangler.jsonc`, then `CLOUDFLARE_ACCOUNT_ID`, then the login, saved to `wrangler.jsonc`), creates the D1 database (`"database_id": "TEENY_AUTO_CREATE"` is replaced by the real id: commit `wrangler.jsonc`), writes random secrets to `.prod.vars` and uploads them. Don't run `wrangler d1 create` or paste ids. `.prod.vars` is private: never commit or print it.
 
-After editing `.prod.vars`: `npx teenybase secrets --remote --upload`. Redeploy the worker without migrations: `npx teenybase deploy --remote --no-migrate`.
+After editing `.prod.vars`: `npx teenybase secrets --remote --upload`. Redeploy only the worker: `npx teenybase deploy --remote --no-migrate` (stops if there are unapplied migrations).
 
 ## Remote: no Cloudflare account
 

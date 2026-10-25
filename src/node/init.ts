@@ -20,7 +20,6 @@ interface ProjectState {
     hasDevVars: boolean
     hasGitignore: boolean
     hasMigrationsDir: boolean
-    hasClaudeSettings: boolean
     packageManager: 'npm' | 'pnpm' | 'yarn' | 'bun'
     projectName: string
 }
@@ -37,7 +36,6 @@ function detectProjectState(root: string): ProjectState {
     const hasDevVars = exists('.dev.vars')
     const hasGitignore = exists('.gitignore')
     const hasMigrationsDir = exists('migrations')
-    const hasClaudeSettings = exists('.claude/settings.json')
     const packageManager = detectPackageManager(root)
 
     let projectName = path.basename(root)
@@ -60,7 +58,6 @@ function detectProjectState(root: string): ProjectState {
         hasDevVars,
         hasGitignore,
         hasMigrationsDir,
-        hasClaudeSettings,
         packageManager,
         projectName,
     }
@@ -239,39 +236,92 @@ POCKET_UI_EDITOR_PASSWORD=editor
 `
 }
 
+/** Marks the teenybase section in AGENTS.md, so `init` can tell whether it was already added. */
+const AGENTS_SECTION_START = '<!-- teenybase -->'
+const AGENTS_SECTION_END = '<!-- /teenybase -->'
+
 /**
- * Claude Code project settings: the teenybase package (after install, in node_modules) is a plugin
- * marketplace (`.claude-plugin/marketplace.json`, "teenybase-tools") with one plugin, "teenybase",
- * that ships the skills. Only documented settings keys: `extraKnownMarketplaces` with a `directory`
- * source and `enabledPlugins` keyed `<plugin>@<marketplace>`. Claude Code applies them after the
- * user trusts the folder. Agent instructions go in `.claude/rules/` (see generateClaudeRules).
+ * Notes for coding agents, written to AGENTS.md (read by most agents; Claude Code reads it through the
+ * `@AGENTS.md` import in CLAUDE.md). Short on purpose: the docs and skills ship in node_modules/teenybase.
  */
-function generateClaudeSettings(): string {
-    const settings = {
-        extraKnownMarketplaces: {
-            'teenybase-tools': {
-                source: {source: 'directory', path: './node_modules/teenybase'},
-            },
-        },
-        enabledPlugins: {
-            'teenybase@teenybase-tools': true,
-        },
-    }
-    return JSON.stringify(settings, null, 4) + '\n'
+function generateAgentsSection(): string {
+    return `${AGENTS_SECTION_START}
+## Backend: teenybase
+
+The backend is defined in \`teenybase.ts\` (tables, fields, auth, access rules, actions) and runs on Cloudflare Workers + D1 through the teenybase CLI. Run it as \`npx teenybase <command>\`, never \`npx teeny\` (an unrelated npm package).
+
+- \`npx teenybase deploy --local --yes\`: after every change to \`teenybase.ts\`, generates the migrations and applies them to the local database.
+- \`npx teenybase dev\`: local server at http://localhost:8787 (Swagger UI at \`/api/v1/doc/ui\`, admin panel at \`/api/v1/pocket/\`). It reloads after each \`deploy --local\`.
+- \`npx wrangler login\` (once, by the user), then \`npx teenybase deploy --remote --yes\`: deploys to the user's Cloudflare account. Without an account: \`npx teenybase deploy --temporary --yes\` (give the user the claim URL privately; it must be claimed within 60 minutes).
+- \`npx teenybase secrets --remote --upload\`: uploads \`.prod.vars\` after editing it.
+- Run \`wrangler\` directly only for \`login\`, \`whoami\` and \`tail\`. Deploys, migrations, the dev server and secrets go through \`npx teenybase\`.
+
+Rules:
+
+- Never write or edit files in \`migrations/\`: they are generated from \`teenybase.ts\`.
+- Every table needs a \`rules\` extension or \`public: true\`. An omitted rule denies access.
+- In an \`updateRule\`, stop a column from changing with \`new.<col> == <col>\` (\`==\`, not \`=\`).
+- Only admins can write \`role\`, \`email_verified\` and \`password_salt\`. Sign-up needs \`passwordConfirm\` when the auth extension sets \`passwordConfirmSuffix\` (the with-auth template does).
+- Quote user input in \`where\` expressions with \`JSON.stringify(value)\`.
+- \`RESPOND_WITH_ERRORS=true\` goes in \`.dev.vars\` only, never in \`.prod.vars\`.
+
+Docs for the installed version: \`node_modules/teenybase/docs/\` (\`npx teenybase docs\` lists them) and https://teenybase.com/docs. Agent skills: \`node_modules/teenybase/skills/\` (\`npx teenybase skills\`); start with \`teenybase/SKILL.md\`.
+${AGENTS_SECTION_END}
+`
 }
 
-/** Project instructions for Claude Code (`.claude/rules/*.md` are loaded like CLAUDE.md). */
-function generateClaudeRules(): string {
-    return `# teenybase
+/**
+ * Writes the agent notes without overwriting anything:
+ * - AGENTS.md: created, or the teenybase section is appended once (found again by its marker).
+ * - CLAUDE.md: created as \`@AGENTS.md\` (Claude Code reads only CLAUDE.md when both exist). An existing
+ *   CLAUDE.md is never changed; if it doesn't import AGENTS.md (and isn't the same file), print how to.
+ */
+function writeAgentFiles(root: string, created: string[], skipped: string[]) {
+    const pathExists = (p: string) => {
+        try { fs.lstatSync(p); return true } catch { return false }
+    }
+    const realPath = (p: string) => {
+        try { return fs.realpathSync(p) } catch { return undefined }
+    }
+    const agentsPath = path.join(root, 'AGENTS.md')
+    const claudePath = path.join(root, 'CLAUDE.md')
+    const section = generateAgentsSection()
 
-The backend is defined in \`teenybase.ts\` and runs on Cloudflare Workers + D1 through the teenybase CLI.
+    if (!pathExists(agentsPath)) {
+        fs.writeFileSync(agentsPath, '# AGENTS.md\n\n' + section)
+        created.push('AGENTS.md')
+        console.log(`  ${colors.green('create')} AGENTS.md`)
+    } else if (!realPath(agentsPath)) {
+        skipped.push('AGENTS.md')
+        console.log(`  ${colors.dim('skip')} AGENTS.md (a symlink to a missing file)`)
+    } else {
+        const existing = fs.readFileSync(agentsPath, 'utf8')
+        if (existing.includes(AGENTS_SECTION_START)) {
+            skipped.push('AGENTS.md')
+            console.log(`  ${colors.dim('skip')} AGENTS.md (already has the teenybase section)`)
+        } else {
+            const separator = existing.length === 0 ? '' : existing.endsWith('\n\n') ? '' : existing.endsWith('\n') ? '\n' : '\n\n'
+            fs.writeFileSync(agentsPath, existing + separator + section)
+            console.log(`  ${colors.green('update')} AGENTS.md (added the teenybase section)`)
+        }
+    }
 
-- Migrate, deploy, upload secrets and run the dev server with \`npx teenybase\` (\`deploy --local\`, \`dev\`, \`deploy --remote\`, \`secrets --remote --upload\`), not \`npx wrangler deploy\`, \`wrangler dev\` or \`wrangler d1 migrations\`. teenybase generates the migrations from \`teenybase.ts\`, creates the D1 database and uploads the secrets.
-- \`npx wrangler login\` and \`npx wrangler whoami\` are expected: deploying to the user's Cloudflare account starts with \`npx wrangler login\`.
-- Don't edit files in \`migrations/\` by hand. Change \`teenybase.ts\` and run \`npx teenybase deploy --local\`.
-- Run it as \`npx teenybase\`, never \`npx teeny\` (an unrelated npm package).
-- Reference: \`npx teenybase docs\` lists the docs and \`npx teenybase skills\` the skills shipped in \`node_modules/teenybase\`.
-`
+    if (!pathExists(claudePath)) {
+        fs.writeFileSync(claudePath, '@AGENTS.md\n')
+        created.push('CLAUDE.md')
+        console.log(`  ${colors.green('create')} CLAUDE.md`)
+        return
+    }
+    skipped.push('CLAUDE.md')
+    const claudeReal = realPath(claudePath)
+    if (claudeReal && claudeReal === realPath(agentsPath)) {
+        console.log(`  ${colors.dim('skip')} CLAUDE.md (same file as AGENTS.md)`)
+    } else if (claudeReal && /(^|\s)@(\.\/)?AGENTS\.md(\s|$)/.test(fs.readFileSync(claudePath, 'utf8'))) {
+        console.log(`  ${colors.dim('skip')} CLAUDE.md (already imports AGENTS.md)`)
+    } else {
+        console.log(`  ${colors.dim('skip')} CLAUDE.md (already exists)`)
+        console.log(`  ${colors.yellow('note')} add the line "@AGENTS.md" to CLAUDE.md so Claude Code also reads the teenybase notes in AGENTS.md`)
+    }
 }
 
 const GITIGNORE_LINES = [
@@ -437,10 +487,7 @@ export async function runInit(root: string, options: InitOptions): Promise<void>
         writeFile('.dev.vars', generateDevVars())
     }
 
-    if (!state.hasClaudeSettings) {
-        writeFile('.claude/settings.json', generateClaudeSettings())
-    }
-    writeFile('.claude/rules/teenybase.md', generateClaudeRules())
+    writeAgentFiles(root, created, skipped)
 
     // .gitignore: append missing lines if it exists, create if it doesn't
     if (state.hasGitignore) {

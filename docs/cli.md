@@ -50,7 +50,7 @@ teeny create my-app --template blank --yes
 
 Creates a directory, scaffolds the project, and runs `npm install`. The generated `package.json` pins `teenybase` to the exact version of the CLI that created it. If the install fails, the command exits 1 and leaves the files in place so you can fix the problem and run `npm install` yourself.
 
-For Claude Code it also writes `.claude/settings.json`, which enables the `teenybase` plugin (the skills) from `node_modules/teenybase` once you trust the folder, and `.claude/rules/teenybase.md` with project instructions for the agent. `init` writes the same files; it never overwrites existing ones.
+For coding agents it also writes `AGENTS.md` (the commands, the rules agents get wrong, where the docs and skills are) and a one-line `CLAUDE.md` with `@AGENTS.md`, so Claude Code reads the same notes. `init` writes the same files without overwriting: it appends the teenybase section to an existing `AGENTS.md` once (marked `<!-- teenybase -->`), and leaves an existing `CLAUDE.md` alone, printing how to import `AGENTS.md` from it if it doesn't already.
 
 ### `init`
 
@@ -67,7 +67,7 @@ teeny init --template blank
 | `-y, --yes` | false | Skip prompts, use defaults |
 | `--no-install` | | Don't install dependencies after scaffolding |
 
-**Generated files:** `package.json`, `wrangler.jsonc`, `tsconfig.json`, `teenybase.ts`, `src/index.ts`, `worker-configuration.d.ts`, `.dev.vars`, `.gitignore`, `migrations/`
+**Generated files:** `package.json`, `wrangler.jsonc`, `tsconfig.json`, `teenybase.ts`, `src/index.ts`, `worker-configuration.d.ts`, `.dev.vars`, `.gitignore`, `migrations/`, `AGENTS.md`, `CLAUDE.md`
 
 **Templates:**
 - **`with-auth`** — Users table with auth (sign-up, login, JWT) and row-level security. Includes common fields (id, created, updated, username, email, password).
