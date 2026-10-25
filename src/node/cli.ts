@@ -362,11 +362,18 @@ cli
                 c.removeCustomTsconfig(DEV_SERVER_SNAPSHOT)
             }
 
-            // Relay signals to child so it shuts down gracefully,
-            // and register exit handler to ensure temp tsconfig is always cleaned up
+            // Relay SIGINT/SIGTERM to wrangler and keep running until it has exited (the 'close' handler
+            // below), so signalling only this process (a supervisor, `kill <pid>`, an IDE stop button)
+            // stops wrangler and its workerd too. A terminal Ctrl-C reaches both processes; wrangler
+            // shuts down once either way. Nothing loaded in this process may exit on these signals
+            // (see the lazy wrangler import in cli-utils.ts).
+            // On Windows the only signal Node delivers here is a console Ctrl-C/Ctrl-Break, which
+            // already reaches wrangler (it shares the console), and child.kill() there would
+            // terminate it without its own shutdown of workerd, so this only waits for it.
             const onSignal = (signal: NodeJS.Signals) => {
-                child.kill(signal)
+                if (process.platform !== 'win32') child.kill(signal)
             }
+            // The exit handler makes sure the temp tsconfig and config snapshot are always cleaned up
             process.on('SIGINT', onSignal)
             process.on('SIGTERM', onSignal)
             process.on('exit', doCleanup)

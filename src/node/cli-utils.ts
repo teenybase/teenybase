@@ -5,7 +5,10 @@ import fs from 'node:fs'
 import crypto from 'node:crypto'
 import {execFileSync} from 'node:child_process'
 import {createLogger, Logger, LogLevel} from './logger'
-import {unstable_dev, Unstable_DevOptions, Unstable_DevWorker} from 'wrangler'
+// Type-only: wrangler is imported lazily in startLocal(). Loading it registers SIGINT/SIGTERM handlers
+// that call process.exit() right away, so a static import made every command (including `teeny dev`,
+// which relays signals to its wrangler child) exit on a signal without stopping its children.
+import type {Unstable_DevOptions, Unstable_DevWorker} from 'wrangler'
 import {escapeRegExp, normalizePath, readableRelative, getErrorMessage} from './utils'
 import {loadConfigFromFile, loadWranglerConfigFromFile} from './config'
 import {DatabaseSettings} from '../types/config'
@@ -525,7 +528,7 @@ export class CliContext{
 
         if(this.options.local) this.logger.info('Setting up local database...')
         const entrypoint = path.resolve(this.root, this.wranglerConfig.config.config.main)
-        this._startingPromise = this.options.local ? unstable_dev(entrypoint, {
+        this._startingPromise = this.options.local ? import('wrangler').then(({unstable_dev}) => unstable_dev(entrypoint, {
             config: this.wranglerConfig.config.path,
             port: this.devServerPort,
             local: true,
@@ -537,7 +540,7 @@ export class CliContext{
             },
             // @ts-expect-error types are wrong
             tsconfig: this.createCustomTsconfigForWorker(localConfig, LOCAL_WORKER_SNAPSHOT),
-        }) : undefined
+        })) : undefined
         this.localWorker = await this._startingPromise
         if(this.localWorker) this.logger.debug('Local worker started')
         return this.localWorker

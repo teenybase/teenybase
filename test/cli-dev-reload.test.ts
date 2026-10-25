@@ -9,6 +9,9 @@
  * wrangler is replaced by a stand-in in the temp project (the CLI runs the project's own wrangler
  * first), so this checks the CLI side deterministically without starting workerd. The HTTP side
  * (new table answers 200 without a restart) is covered by the packed-path check.
+ *
+ * It also checks that signalling only the `teeny dev` pid (a supervisor, `kill <pid>`) stops the
+ * wrangler child before teeny exits, instead of orphaning it.
  */
 import {afterAll, beforeAll, describe, expect, it} from 'vitest'
 import {execFileSync, spawn, spawnSync, type ChildProcess} from 'node:child_process'
@@ -23,6 +26,8 @@ const teenyBin = path.join(repoRoot, 'bin', 'teeny.js')
 let projectDir: string
 let devProcess: ChildProcess | undefined
 let devLog = ''
+/** pids of every stand-in wrangler started, so teardown can stop any that are still running. */
+const wranglerPids: number[] = []
 
 const env = () => ({...process.env, FORCE_COLOR: '0', CLOUDFLARE_API_BASE_URL: '', CLOUDFLARE_API_TOKEN: ''})
 
@@ -75,16 +80,57 @@ async function waitFor(check: () => boolean, timeoutMs: number, what: string) {
     throw new Error(`Timed out waiting for ${what}\n--- dev output ---\n${devLog.slice(-4000)}`)
 }
 
-/** Stand-in for `wrangler dev`: reports its args and stays up until interrupted. */
+/**
+ * Stand-in for `wrangler dev`: reports its pid and args and stays up until interrupted. It also exits
+ * once its parent (`teeny dev`) is gone, so a failing run can't leave it behind; that check is slow
+ * (5 s) on purpose, so the "child is gone when teeny exits" assertions below can't pass because of it.
+ */
 const fakeWrangler = `#!/usr/bin/env node
 const args = process.argv.slice(2)
 if (args[0] !== 'dev') { console.error('fake wrangler: unsupported ' + args.join(' ')); process.exit(2) }
-console.log('fake wrangler dev ready ' + JSON.stringify(args))
+console.log('fake wrangler dev ready pid=' + process.pid + ' ' + JSON.stringify(args))
 const stop = () => process.exit(0)
 process.on('SIGINT', stop)
 process.on('SIGTERM', stop)
-setInterval(() => {}, 1000)
+const parent = process.ppid
+setInterval(() => {
+    try { process.kill(parent, 0) } catch { process.exit(0) }
+}, 5000)
 `
+
+function isRunning(pid: number) {
+    try {
+        process.kill(pid, 0)
+        return true
+    } catch (e: any) {
+        return e.code === 'EPERM'
+    }
+}
+
+/** Start `teeny dev` and wait until the stand-in wrangler is up; returns the stand-in's pid. */
+async function startDev() {
+    devLog = ''
+    // Own process group (POSIX), so teardown can stop teeny and anything it started in one call.
+    devProcess = spawn(process.execPath, [teenyBin, 'dev'], {cwd: projectDir, env: env(), stdio: ['ignore', 'pipe', 'pipe'], detached: process.platform !== 'win32'})
+    devProcess.stdout!.on('data', d => { devLog += d })
+    devProcess.stderr!.on('data', d => { devLog += d })
+    await waitFor(() => /fake wrangler dev ready pid=\d+/.test(devLog) && fs.existsSync(snapshotPath()), 60_000, 'teeny dev to start')
+    const pid = Number(/fake wrangler dev ready pid=(\d+)/.exec(devLog)![1])
+    wranglerPids.push(pid)
+    return pid
+}
+
+/** Send `signal` to the teeny dev pid only; resolves with its exit code once it has exited. */
+function signalDev(signal: NodeJS.Signals) {
+    const p = devProcess!
+    return new Promise<number | null>(resolve => {
+        p.once('exit', code => resolve(code))
+        p.kill(signal)
+    })
+}
+
+// Node can't deliver a catchable signal to another process on Windows (process.kill terminates it).
+const posixOnly = it.skipIf(process.platform === 'win32')
 
 describe('teeny dev follows deploy --local', () => {
     beforeAll(() => {
@@ -102,22 +148,26 @@ describe('teeny dev follows deploy --local', () => {
     }, 180_000)
 
     afterAll(async () => {
-        if (devProcess && devProcess.exitCode === null) {
-            devProcess.kill('SIGINT')
-            await new Promise<void>(resolve => {
+        if (devProcess && devProcess.exitCode === null && devProcess.signalCode === null) {
+            const exited = new Promise<void>(resolve => {
                 devProcess!.once('exit', () => resolve())
                 setTimeout(resolve, 10_000)
             })
+            if (process.platform !== 'win32') {
+                try { process.kill(-devProcess.pid!, 'SIGKILL') } catch { /* already gone */ }
+            } else {
+                devProcess.kill()
+            }
+            await exited
+        }
+        for (const pid of wranglerPids) {
+            if (isRunning(pid)) process.kill(pid, 'SIGKILL')
         }
         if (projectDir) fs.rmSync(projectDir, {recursive: true, force: true})
     })
 
     it('rewrites the dev config snapshot when .local-persist/config.json changes', async () => {
-        devProcess = spawn(process.execPath, [teenyBin, 'dev'], {cwd: projectDir, env: env(), stdio: ['ignore', 'pipe', 'pipe']})
-        devProcess.stdout!.on('data', d => { devLog += d })
-        devProcess.stderr!.on('data', d => { devLog += d })
-
-        await waitFor(() => devLog.includes('fake wrangler dev ready') && fs.existsSync(snapshotPath()), 60_000, 'teeny dev to start')
+        await startDev()
         expect(snapshotTables()).toEqual(['items'])
 
         applyLocalConfig(['items', 'notes'])
@@ -133,9 +183,22 @@ describe('teeny dev follows deploy --local', () => {
         expect(devProcess!.exitCode).toBeNull()
     }, 30_000)
 
-    it('removes the snapshot when dev stops', async () => {
-        devProcess!.kill('SIGINT')
-        await new Promise<void>(resolve => devProcess!.once('exit', () => resolve()))
+    posixOnly('stops wrangler and removes the snapshot when only the teeny pid gets SIGINT', async () => {
+        const wranglerPid = wranglerPids[wranglerPids.length - 1]
+        expect(isRunning(wranglerPid)).toBe(true)
+        const code = await signalDev('SIGINT')
+        // teeny waits for wrangler to exit before it exits itself
+        expect(isRunning(wranglerPid)).toBe(false)
+        expect(code).toBe(0)
         expect(fs.existsSync(snapshotPath())).toBe(false)
     }, 30_000)
+
+    posixOnly('stops wrangler when only the teeny pid gets SIGTERM', async () => {
+        applyLocalConfig(['items', 'notes']) // the previous test left an invalid config
+        const wranglerPid = await startDev()
+        const code = await signalDev('SIGTERM')
+        expect(isRunning(wranglerPid)).toBe(false)
+        expect(code).toBe(0)
+        expect(fs.existsSync(snapshotPath())).toBe(false)
+    }, 90_000)
 })
