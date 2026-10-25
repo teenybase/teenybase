@@ -434,6 +434,8 @@ Pick one per table:
 
 Rules use a JS-like expression language that compiles to **parameterized** SQL WHERE clauses. All string/number literals in expressions become `?` placeholders with bound values, and column names are validated against the table schema. This means string interpolation in expressions (e.g., `` where: `email == '${userInput}'` ``) is safe — it's the intended ORM-like query pattern, not raw SQL.
 
+String literals can hold text in any script, including combining marks, CJK punctuation and emoji (`name == '文件（一）.glb'`); control characters and invisible format characters (zero-width spaces and joiners, bidi overrides) are rejected with `Invalid expression`. Column and table names stay ASCII (`[a-zA-Z_][a-zA-Z0-9_]*`). The same applies to `where`, `select` and other expressions sent to the CRUD endpoints.
+
 **Available variables:**
 
 | Variable | Description |

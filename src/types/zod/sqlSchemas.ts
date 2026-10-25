@@ -1,6 +1,11 @@
 import {z} from 'zod';
 
-export const sqlExprSchema = z.string().max(1000).regex(/^[a-zA-Z0-9_=\s():.*~%'"><!+\-&|@,\/\\${}]*$/, 'Invalid expression')
+// \p{L}\p{M}\p{N}\p{P}\p{S} allow letters, combining marks, numbers, punctuation and symbols from any script (e.g. non-Latin
+// filenames, CJK full-width punctuation 文件（一）, emoji) inside string literals. \s keeps whitespace; control characters stay
+// rejected, so the filter is still meaningful. String literals are bound as SQL parameters (see literalToQuery in
+// sql/build/query.ts) and identifiers are checked against an allowlist (tableColumnNameSchema, intentionally ASCII), so this
+// regex is a coarse pre-filter, not the SQL-injection boundary. The explicit ASCII specials below are now redundant but kept for clarity.
+export const sqlExprSchema = z.string().max(1000).regex(/^[\p{L}\p{M}\p{N}\p{P}\p{S}_=\s():.*~%'"><!+\-&|@,\/\\$\{\}]*$/u, 'Invalid expression')
 export const sqlExprSchemaRecord = z.record(z.string(), sqlExprSchema)
 export const sqlValSchema = z.string().or(z.number()).or(z.boolean()).or(z.null())
 // z.any() for File — z.instanceof(File) is incompatible with OpenAPI schema generation,
