@@ -432,7 +432,7 @@ Pick one per table:
 
 #### Expression Syntax
 
-Rules use a JS-like expression language that compiles to **parameterized** SQL WHERE clauses. All string/number literals in expressions become `?` placeholders with bound values, and column names are validated against the table schema. This means string interpolation in expressions (e.g., `` where: `email == '${userInput}'` ``) is safe — it's the intended ORM-like query pattern, not raw SQL.
+Rules use a JS-like expression language that compiles to **parameterized** SQL WHERE clauses. All string/number literals in expressions become `?` placeholders with bound values, and column names are validated against the table schema. So an expression can never inject SQL, and table rules always apply on top of it. Building an expression from user input still needs quoting: a raw value like `` `email == '${userInput}'` `` can close the string literal and change what the expression means (`x' | email != '` adds an OR branch). Quote values with `JSON.stringify`, which produces a valid string literal for any text: `` where: `email == ${JSON.stringify(userInput)}` ``.
 
 String literals can hold text in any script, including combining marks, CJK punctuation and emoji (`name == '文件（一）.glb'`); control characters and invisible format characters (zero-width spaces and joiners, bidi overrides) are rejected with `Invalid expression`. Column and table names stay ASCII (`[a-zA-Z_][a-zA-Z0-9_]*`). The same applies to `where`, `select` and other expressions sent to the CRUD endpoints.
 
