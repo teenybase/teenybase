@@ -105,6 +105,24 @@ No Cloudflare account? `npx teenybase deploy --temporary` deploys to a temporary
 
 Details: [Deploy to production](docs/getting-started.md#deploy-to-production-your-cloudflare-account).
 
+## Using a Coding Agent?
+
+Projects made with `create` or `init` include an `AGENTS.md` with the commands and the mistakes agents usually make, and the npm package ships the docs and three agent skills (`teenybase`, `teeny-rules`, `teeny-migrate`).
+
+Add the skills to your agent (Claude Code, Codex, Cursor and others, via the [`skills`](https://github.com/vercel-labs/skills) CLI):
+
+```bash
+npx skills add teenybase/teenybase
+```
+
+Or, in Claude Code, install them as a plugin:
+
+```
+/plugin install teenybase --marketplace teenybase/teenybase
+```
+
+For the docs: `npx teenybase docs` lists the ones in your installed version (`node_modules/teenybase/docs/`), and [teenybase.com/llms.txt](https://teenybase.com/llms.txt) indexes the website docs.
+
 ## What You Get
 
 Stop building these from scratch. They're included:
