@@ -1,0 +1,35 @@
+name: Publish to npm
+
+# Releases teenybase through repalash/release-tools (npm trusted publishing, no npm token stored):
+# a push to main whose package.json version is not on npm yet builds and tests the package, packs it,
+# posts the approval link to Discord and waits on the `npm-publish` environment; after approval it
+# publishes the checked tarball with provenance and creates the v<version> tag and GitHub release.
+# Any other push stops after the version check. Setup (once): see CONTRIBUTING.md.
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+# Runs queue: a newer push waits; a running publish is never cancelled.
+concurrency:
+  group: publish
+  cancel-in-progress: false
+
+jobs:
+  release:
+    # Only the public repository publishes; forks and mirrors stop here.
+    if: github.repository == 'teenybase/teenybase'
+    permissions:
+      contents: write # tags and GitHub releases
+      id-token: write # npm trusted publishing
+    uses: repalash/release-tools/.github/workflows/npm-release.yml@v1
+    with:
+      build: npm ci && npm run check && npm run test-check && npm run vitest && npm run vitest-worker
+      require-changelog: true
+      tag-format: v{version}
+      github-release: true
+    secrets: inherit
