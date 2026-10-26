@@ -32,4 +32,9 @@ jobs:
       require-changelog: true
       tag-format: v{version}
       github-release: true
-    secrets: inherit
+    # Passed by name: `secrets: inherit` only reaches reusable workflows in the same organization,
+    # and release-tools lives in another account (repalash/release-tools).
+    secrets:
+      DISCORD_WEBHOOK_URL: ${{ secrets.DISCORD_WEBHOOK_URL }}
+      CLAUDE_REVIEW_FIRE_URL: ${{ secrets.CLAUDE_REVIEW_FIRE_URL }}
+      CLAUDE_REVIEW_TOKEN: ${{ secrets.CLAUDE_REVIEW_TOKEN }}
