@@ -77,8 +77,8 @@ That config gives you a full blog API — user auth, JWT login, foreign keys, dr
 ## Quick Start
 
 <picture>
-  <source media="(prefers-reduced-motion: reduce)" srcset="docs/images/quickstart.png">
-  <img src="docs/images/quickstart.gif" alt="Terminal recording of the quick start: npx teenybase create my-app --yes scaffolds the project and installs dependencies, npx teenybase deploy --local --yes generates and applies the users migration, npx teenybase dev starts the server. In a second pane, curl signs up a user, lists users with the returned token (one row), and lists them without a token (no rows).">
+  <source media="(prefers-reduced-motion: reduce)" srcset="https://raw.githubusercontent.com/teenybase/teenybase/main/docs/images/quickstart.png">
+  <img src="https://raw.githubusercontent.com/teenybase/teenybase/main/docs/images/quickstart.gif" alt="Terminal recording of the quick start: npx teenybase create my-app --yes scaffolds the project and installs dependencies, npx teenybase deploy --local --yes generates and applies the users migration, npx teenybase dev starts the server. In a second pane, curl signs up a user, lists users with the returned token (one row), and lists them without a token (no rows).">
 </picture>
 
 <sub>A real run of the commands below; the npm install, migration and server start-up waits are shortened.</sub>
@@ -138,22 +138,22 @@ Stop building these from scratch. They're included:
 - **Admin panel** — browse tables, view/edit records at `/api/v1/pocket/`. Two named roles (`viewer`, `editor`) with passwords in `.dev.vars` / `.prod.vars`; full admin by signing in with `ADMIN_SERVICE_TOKEN` as the password. The UI ([`@teenybase/pocket-ui`](https://www.npmjs.com/package/@teenybase/pocket-ui)) is a fork of the [PocketBase](https://github.com/pocketbase/pocketbase) admin dashboard (MIT, © Gani Georgiev)
 - **Local dev** — the API, database and auth run locally with no Cloudflare account; Swagger UI and the admin panel load their pinned UI files from jsDelivr
 
-<img src="docs/images/admin-panel.png" alt="The admin panel at /api/v1/pocket/ showing the users table of a project made with the with-auth template, with three signed-up users.">
+<img src="https://raw.githubusercontent.com/teenybase/teenybase/main/docs/images/admin-panel.png" alt="The admin panel at /api/v1/pocket/ showing the users table of a project made with the with-auth template, with three signed-up users.">
 
 <sub>The admin panel (<code>/api/v1/pocket/</code>) on a fresh with-auth project (the quick start template) after three sign-ups.</sub>
 
 <details>
 <summary>The generated Swagger UI (<code>/api/v1/doc/ui</code>) of that project</summary>
 
-<img src="docs/images/swagger-ui.png" alt="Swagger UI listing the generated endpoints of the users table: select, list, update, insert, delete, view, edit and the auth routes (login-token, google-login, oauth).">
+<img src="https://raw.githubusercontent.com/teenybase/teenybase/main/docs/images/swagger-ui.png" alt="Swagger UI listing the generated endpoints of the users table: select, list, update, insert, delete, view, edit and the auth routes (login-token, google-login, oauth).">
 
 </details>
 
 ## How It Works
 
 <picture>
-  <source media="(prefers-color-scheme: dark)" srcset="docs/images/one-file-backend-dark.svg">
-  <img src="docs/images/one-file-backend-light.svg" alt="Diagram: an excerpt of teenybase.ts (a users table with the auth and rules extensions) goes through teeny deploy and becomes a REST API, auth endpoints, rules compiled to SQL, generated migrations, an OpenAPI spec with Swagger UI and an admin panel, all running on your own Cloudflare account (Workers + D1).">
+  <source media="(prefers-color-scheme: dark)" srcset="https://raw.githubusercontent.com/teenybase/teenybase/main/docs/images/one-file-backend-dark.svg">
+  <img src="https://raw.githubusercontent.com/teenybase/teenybase/main/docs/images/one-file-backend-light.svg" alt="Diagram: an excerpt of teenybase.ts (a users table with the auth and rules extensions) goes through teeny deploy and becomes a REST API, auth endpoints, rules compiled to SQL, generated migrations, an OpenAPI spec with Swagger UI and an admin panel, all running on your own Cloudflare account (Workers + D1).">
 </picture>
 
 Your schema is your backend. Define tables, fields, auth, and access rules in `teenybase.ts`. Teenybase generates migrations, builds the API, handles auth, enforces security rules, and serves docs. You deploy with one command.

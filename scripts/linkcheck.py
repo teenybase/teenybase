@@ -18,6 +18,9 @@ HREF_RE = re.compile(r'href="([^"]+)"')
 # Images in HTML (<img src>, <picture><source srcset>): the first URL of the attribute.
 SRC_RE = re.compile(r'\b(?:src|srcset)="([^"\s]+)')
 # Placeholder hosts used in examples, plus sites that answer bots with 403 (npm, CF dashboard).
+# Files of this repository referenced by absolute URL (the README's images, so they also show on
+# npmjs.com, where docs/images isn't in the package): checked against the local tree like relative links.
+OWN_RAW = 'https://raw.githubusercontent.com/teenybase/teenybase/main/'
 SKIP_HOSTS = re.compile(r'^https?://([^/]*\.)?(localhost|127\.0\.0\.1|example\.com|myapp\.com|my-app\.com|yourdomain\.com|provider\.com|npmjs\.com|dash\.cloudflare\.com)([:/]|$)')
 
 
@@ -91,6 +94,11 @@ def main(argv):
         for link in links(f):
             checked += 1
             if link.startswith('mailto:'):
+                continue
+            if link.startswith(OWN_RAW):
+                tgt = os.path.normpath(os.path.join(root, link[len(OWN_RAW):].split('#')[0]))
+                if not os.path.exists(tgt):
+                    bad.append(f'MISSING {rel} -> {link}')
                 continue
             if link.startswith(('http://', 'https://')):
                 if external and not SKIP_HOSTS.match(link):

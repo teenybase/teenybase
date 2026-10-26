@@ -26,7 +26,8 @@ jobs:
     permissions:
       contents: write # tags and GitHub releases
       id-token: write # npm trusted publishing
-    uses: repalash/release-tools/.github/workflows/npm-release.yml@v1
+    # pinned to the commit release-tools v1 pointed to on 2026-10-26: a tag in another account can move; bump deliberately
+    uses: repalash/release-tools/.github/workflows/npm-release.yml@88b8bf258410968d4acf127b31c4c4ca81666962 # v1
     with:
       build: npm ci && npm run check && npm run test-check && npm run vitest && npm run vitest-worker
       require-changelog: true
