@@ -12,7 +12,7 @@ import {$Env, envBool} from '../env'
  * later publish (or a compromised publish) of the package can't change what runs in admin sessions
  * of existing deployments. Bump it deliberately after checking the new release.
  */
-export const POCKET_UI_VERSION = '0.0.5'
+export const POCKET_UI_VERSION = '0.0.6'
 
 /**
  * Pico CSS for the fallback login page, loaded by the browser from jsDelivr with Subresource
