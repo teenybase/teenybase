@@ -2,7 +2,7 @@
 
 All notable changes to the `teenybase` npm package. The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/); versions follow [semver](https://semver.org/) with the usual 0.x caveat that minor versions may break the API.
 
-## Unreleased
+## 0.1.0 - 2026-10-30
 
 Release 0.1.0. The last version on npm is 0.0.14; 0.0.15 and 0.0.16 were never published to npm (0.0.16 was the version on GitHub `main`), so upgrading from npm 0.0.14 also brings everything that was on that `main`. The entries below are the changes since that 0.0.16 tree.
 
