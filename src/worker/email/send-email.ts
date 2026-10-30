@@ -172,8 +172,7 @@ export class EmailSendClient<T extends $Env = $Env> implements $DBExtension<T> {
         if (!props.subject) throw new Error('subject is required')
         if (!props.from) throw new Error('from is required')
 
-        // todo make it a config parameter like mock emails.
-        if (this.mock || props.to.match(/^e2e-.*@teenybase\.work$/)) {
+        if (this.mock) {
             console.log(`[MockEmail] to=${props.to} subject="${props.subject}"`)
             this.db.c.header('X-Mock-Email', JSON.stringify({to: props.to, subject: props.subject, html: props.html, text: props.text}), {append: true})
             return

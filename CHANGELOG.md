@@ -18,6 +18,7 @@ Release 0.1.0. The last version on npm is 0.0.14; 0.0.15 and 0.0.16 were never p
 
 ### Security
 
+- Emails to any `e2e-*@teenybase.work` address took the mock path whatever `email.mock` was set to: the rendered verification or password-reset email, token included, came back in the `X-Mock-Email` response header, so anyone could verify such an address or reset an account that used one. Only `mock: true` uses the mock path now. (Also in 0.0.14 and earlier.)
 - Error responses never echo SQL, password hashes or salts: password, salt and `noSelect` values are redacted at bind time, and the debug query data is returned only when both `RESPOND_WITH_ERRORS` and `RESPOND_WITH_QUERY_LOG` are on.
 - `change-password` writes only the password and salt. It used to pass the whole request body to the update, so a signed-in user could also change their own `role`, `email` and other fields.
 - `OR REPLACE` could delete another user's row through a unique-key conflict without checking `deleteRule`/`updateRule`; now restricted as described under Breaking.

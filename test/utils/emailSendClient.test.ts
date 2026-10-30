@@ -204,3 +204,23 @@ describe('EmailSendClient provider precedence', () => {
         ).toThrow(/Email provider not configured/)
     })
 })
+
+describe('EmailSendClient mock routing', () => {
+    // The mock path returns the rendered email (with verify/reset tokens) in a response header,
+    // so only `mock: true` may take it; no recipient address can opt itself in.
+    test('with mock off, an e2e-*@teenybase.work recipient goes to the provider, not the header', async () => {
+        const send = vi.fn(async () => ({messageId: 'm1'}))
+        const {client, headerCalls} = makeClient({mock: false, cf: {binding: () => ({send})}})
+        await client.sendActionLink({to: 'e2e-attacker@teenybase.work', subject: 's', variables: linkVars})
+        expect(send).toHaveBeenCalledTimes(1)
+        expect(headerCalls.find(h => h.name === 'X-Mock-Email')).toBeUndefined()
+    })
+
+    test('with mock on, any recipient is captured in the header and no provider is called', async () => {
+        const send = vi.fn(async () => ({messageId: 'm1'}))
+        const {client, lastMockEmail} = makeClient({mock: true, cf: {binding: () => ({send})}})
+        await client.sendActionLink({to: 'u@x.com', subject: 's', variables: linkVars})
+        expect(send).not.toHaveBeenCalled()
+        expect(lastMockEmail().to).toBe('u@x.com')
+    })
+})
