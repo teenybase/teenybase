@@ -19,7 +19,7 @@ Release 0.1.0. The last version on npm is 0.0.14; 0.0.15 and 0.0.16 were never p
 ### Security
 
 - Emails to any `e2e-*@teenybase.work` address took the mock path whatever `email.mock` was set to: the rendered verification or password-reset email, token included, came back in the `X-Mock-Email` response header, so anyone could verify such an address or reset an account that used one. Only `mock: true` uses the mock path now. (Also in 0.0.14 and earlier.)
-- Error responses never echo SQL, password hashes or salts: password, salt and `noSelect` values are redacted at bind time, and the debug query data is returned only when both `RESPOND_WITH_ERRORS` and `RESPOND_WITH_QUERY_LOG` are on.
+- Error responses never echo SQL, password hashes or salts: password, salt and `noSelect` values are redacted at bind time, and the rendered statement (`data.input`) is returned only when both `RESPOND_WITH_ERRORS` and `RESPOND_WITH_QUERY_LOG` are on. The query log (`queries`) comes with `RESPOND_WITH_QUERY_LOG` alone; keep both off in production.
 - `change-password` writes only the password and salt. It used to pass the whole request body to the update, so a signed-in user could also change their own `role`, `email` and other fields.
 - `OR REPLACE` could delete another user's row through a unique-key conflict without checking `deleteRule`/`updateRule`; now restricted as described under Breaking.
 - security.md no longer lists an OAuth open redirect: the callback already validates the `redirect` target against `allowedRedirectUrls` or `appUrl`'s hostname. Now covered by tests, and the remaining hostname-vs-origin nuance is documented.
@@ -36,7 +36,7 @@ Release 0.1.0. The last version on npm is 0.0.14; 0.0.15 and 0.0.16 were never p
 - `database` config field and experimental storage adapters (`d1-rest`, `libsql`, `d1-http`) plus an R2 REST adapter. Only `d1-binding` (the default) is supported by the CLI and migrations; see [config-reference.md](docs/config-reference.md#database).
 - `db.registerExtension()`, `$Table.findExtension()`, and more exports from `teenybase/worker` (`MigrationHelper`, `$DatabaseRawImpl`, route types).
 - `TEENYBASE_VERSION` export.
-- The npm package now ships `docs/`, the agent skills (`skills/teenybase`, `teeny-rules`, `teeny-migrate`) and the Claude Code plugin manifest, so `teeny docs` and `teeny skills` work from an install.
+- The npm package now ships `docs/`, the agent skills (`plugin/skills/teenybase`, `teeny-rules`, `teeny-migrate`) and the Claude Code plugin manifest, so `teeny docs` and `teeny skills` work from an install.
 - Package metadata: description, keywords, repository and bug links.
 - `deploy --remote` with only `npx wrangler login`: the account comes from `account_id`, then `CLOUDFLARE_ACCOUNT_ID`, then the login (saved to `wrangler.jsonc`); the D1 database is created for `"database_id": "TEENY_AUTO_CREATE"` (the scaffold default) and missing secrets are generated into `.prod.vars`. The first deploy uploads secrets together with the worker (`wrangler deploy --secrets-file`, wrangler 4.74+) and retries the first admin API calls on 401/403/404, fixing the first-deploy migration 403.
 - `--temporary` (deploy, generate, secrets, backup): deploy to a Cloudflare temporary account with no login; prints the live URL, the claim URL and the expiry (60 minutes). Needs wrangler 4.102+; refuses R2, routes and other bindings temporary accounts don't support.
@@ -60,7 +60,7 @@ Release 0.1.0. The last version on npm is 0.0.14; 0.0.15 and 0.0.16 were never p
 
 - OAuth callback: a provider token/userinfo endpoint that can't be reached or answers with a non-JSON body (an HTML error page) returns 502 `OAuth provider token request failed` / `... response is not JSON (HTTP 500)` instead of a 500 with the raw error.
 - A multi-row insert whose rows set different fields returns 400 naming the row and field (`Every row in values must set the same fields: row 2 is missing published_at...`) instead of 500. Rows that set the same fields in a different order now insert instead of failing with 500.
-- `request-verification` and `request-password-reset` without an email provider return 501 `Email not configured: add an email provider...` instead of 500, and password reset answers the same whether or not the account exists.
+- `request-verification` and `request-password-reset` without an email provider return 501 `Email not configured: add an email provider...` instead of 500. That check runs before the account lookup, so without a provider the answer doesn't reveal whether the account exists. With a provider configured, `request-password-reset` for an unknown email still returns 400 `User not found`.
 
 - Duplicate sign-up returns a field-level error regardless of debug flags: `{"code":400,"message":"An account with this email already exists","data":{"email":{"_errors":[...]}}}` (same for username).
 - D1 errors from current workerd: the extended result code is parsed into `extendedCode` instead of producing `code: "SQLITE_CONSTRAINT_UNIQUE)"`; composite unique indexes report every column. This also revives the OAuth username-collision retry.
