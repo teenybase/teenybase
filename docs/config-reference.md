@@ -289,7 +289,7 @@ Adds authentication endpoints to a table — sign-up, login, password reset, ema
 |----------|------|---------|-------------|
 | `passwordType` | `'sha256'` | `'sha256'` | Password hashing algorithm. Currently only `sha256` supported. |
 | `passwordConfirmSuffix` | `string` | — | Suffix for password confirmation field (e.g., `'Confirm'` → `passwordConfirm`). When set, sign-up requires both fields to match. |
-| `passwordCurrentSuffix` | `string` | `'Current'` | Suffix for the current-password field (`passwordCurrent`) that `change-password` and non-admin record updates of the password must send. Unset means `'Current'`; `''` turns the check off (not recommended: any session could then set a new password). Users created by an OAuth/token sign-in have a random password, so they set one with password reset. On a table with a password salt column, a record update can't check it and answers 400: use `POST /auth/change-password`. |
+| `passwordCurrentSuffix` | `string` | `'Current'` | Suffix for current password field on update (e.g., `passwordCurrent`). Set to `''` to disable (not recommended). |
 
 **Email & verification:**
 
