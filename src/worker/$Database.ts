@@ -41,10 +41,59 @@ import {DefaultDatabaseAdapter} from './storage/DefaultDatabaseAdapter'
 import {httpMetaToHeaders} from './storage/R2RestAdapter'
 import {isFieldSelectable} from '../types/config/isFieldSelectable'
 
+/**
+ * What an {@link $Database.onSignIn} hook receives. A sign-in is any auth route that hands out a new session:
+ * login-password, sign-up, the OAuth callback, google-login, login-token, and the email links that sign in
+ * (confirm-verification without a session, confirm-password-reset). refresh-token renews an existing sign-in and
+ * does not run the hooks.
+ */
+export interface SignInEvent<T extends $Env = $Env> {
+    /** Name of the auth table the user signed in to. */
+    table: string
+    /** The user's record as the response returns it (`record`: the auth columns), plus `id`. */
+    user: Record<string, string | number | boolean | null> & {id: string}
+    /**
+     * How the user proved who they are:
+     * - `'password'`: login-password or sign-up
+     * - `'email'`: an emailed link (confirm-verification, confirm-password-reset)
+     * - the OAuth provider name for the OAuth callback (`'github'`, `'google'`, ...)
+     * - for login-token and google-login, the token's issuer: `'google'` for Google ID tokens, the `iss` URL otherwise
+     */
+    provider: string
+    /** True when this request created the user row. If a hook throws on that request, the row stays and the next sign-in has `created: false`. */
+    created: boolean
+    /**
+     * What the provider said about the user. OAuth: `{provider, providerId, email, name, avatar, username, verified,
+     * rawData}`, where `rawData` is the provider's profile (userinfo response or ID token claims). login-token and
+     * google-login: the verified token's claims. Never the provider's access or refresh tokens. Unset for
+     * `'password'` and `'email'`.
+     */
+    external?: Record<string, unknown>
+    /** This request's database. The user is not signed in on it yet, so table rules see an anonymous request: write with `db.rawSQL` (no rules). */
+    db: $Database<T>
+}
+/** A sign-in hook: see {@link $Database.onSignIn}. */
+export type SignInHook<T extends $Env = $Env> = (event: SignInEvent<T>) => void | Promise<void>
+
 export class $Database<T extends $Env = $Env> extends $DatabaseRawImpl/*<T>*/{
     protected readonly tables: Record<string, $Table<T>> = {}
     readonly settings: DatabaseSettings
     readonly queryLog: string[] = []
+
+    /**
+     * Hooks that run on every sign-in (see {@link SignInEvent} for which routes), after the user row is found or
+     * created and before the session and cookie are created. Register them where the `$Database` is created (the
+     * `teenyHono` callback), not in the config, which is JSON:
+     * ```ts
+     * db.onSignIn.push(async ({provider, user, db}) => {
+     *     if (provider === 'github') await db.rawSQL({q: 'UPDATE users SET handle_set = 1 WHERE id = ?', v: [user.id]}).run()
+     * })
+     * ```
+     * Hooks run in order and are awaited. One that throws fails the sign-in with that error (an `HTTPException`
+     * keeps its status) and no session or cookie is created. When any hook is registered, the user row is read
+     * again after the hooks, so changes to auth columns (role, meta, username) are in the new token and `record`.
+     */
+    readonly onSignIn: SignInHook<T>[] = []
 
     readonly email: EmailSendClient<T> | null
     // readonly notify: NotifyClient

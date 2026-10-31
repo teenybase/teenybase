@@ -16,3 +16,11 @@ describe('barrel exports', () => {
         expect(typeof worker.R2RestRPC).toBe('function')
     })
 })
+
+describe('auth exports (0.1.1)', () => {
+    it('exports TableAuthExtension and its OAuth exchange handler registry', async () => {
+        const worker = await import('../../src/worker')
+        expect(typeof worker.TableAuthExtension).toBe('function')
+        expect(typeof worker.TableAuthExtension.oauthExchangeHandlers.github).toBe('function')
+    })
+})

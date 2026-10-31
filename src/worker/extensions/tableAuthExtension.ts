@@ -31,6 +31,7 @@ import {deleteCookie, getCookie, setCookie} from 'hono/cookie'
 import {AuthProvider, OAuthExchangeResult} from '../../types/config'
 import {envBool} from '../env'
 import {isFieldSelectable} from '../../types/config/isFieldSelectable'
+import type {SignInEvent} from '../$Database'
 
 type OAuthPreset = Pick<AuthProvider, 'authorizeUrl' | 'tokenUrl' | 'userinfoUrl' | 'scopes' | 'mapping' | 'authorizeParams' | 'userinfoHeaders' | 'userinfoField' | 'trustEmailVerified'>
 
@@ -300,7 +301,8 @@ export class TableAuthExtension extends TableExtension<TableAuthExtensionData> {
     async signUp(data: Required<InsertParams>['values']){
         if(!this.mapping.username || !this.mapping.password) throw new HTTPException(500, {message: 'Invalid Configuration'})
 
-        const user = await this._createUser(data)
+        const created = await this._createUser(data)
+        const {user, session} = await this._signIn(created, {provider: 'password', created: true})
 
         const ret: {
             token: string,
@@ -308,7 +310,7 @@ export class TableAuthExtension extends TableExtension<TableAuthExtensionData> {
             record: Record<string, z.infer<typeof sqlValSchema>>,
             verified?: boolean,
         } = {
-            ...await this.createSession(user),
+            ...session,
             record: this._userToFields(user),
         }
         if(this.mapping.emailVerified) {
@@ -357,13 +359,16 @@ export class TableAuthExtension extends TableExtension<TableAuthExtensionData> {
         if(this.confirmRequiresAuth && (!auth || !auth.uid || !auth.sid)) throw new HTTPException(403, {message: 'Unauthorized'})
         const uid = this.confirmRequiresAuth ? auth!.uid! : undefined
 
-        const user = await this._confirmVerification(token, uid)
+        let user = await this._confirmVerification(token, uid)
+        // without a session the link signs the user in
+        let session: {token: string, refresh_token: string} | undefined
+        if(!auth?.sid) ({user, session} = await this._signIn(user, {provider: 'email', created: false}))
         const ret: {
             token?: string,
             refresh_token?: string,
             record: Record<string, z.infer<typeof sqlValSchema>>,
         } = {
-            ...(!auth?.sid && await this.createSession(user)),
+            ...session,
             record: this._userToFields(user),
         }
         return this.c.json(ret)
@@ -403,9 +408,9 @@ export class TableAuthExtension extends TableExtension<TableAuthExtensionData> {
         const password = await this._parsePasswordFieldsInsert(record)
         if(!password) throw new HTTPException(400, {message: 'Invalid password'})
 
-        const user = await this._confirmPasswordReset(token, record)
+        const {user, session} = await this._signIn(await this._confirmPasswordReset(token, record), {provider: 'email', created: false})
         const ret = {
-            ...await this.createSession(user),
+            ...session,
             record: this._userToFields(user),
         } as {
             token: string,
@@ -426,9 +431,9 @@ export class TableAuthExtension extends TableExtension<TableAuthExtensionData> {
             this._parseUsername(record)
 
         const invalid = ()=> new HTTPException(400, {message: 'Invalid username or password'})
-        const user = username ? await this.findUser(username, false, true) : null
+        const found = username ? await this.findUser(username, false, true) : null
 
-        const salt = user?.passwordSalt || ''
+        const salt = found?.passwordSalt || ''
 
         const password = await this._parsePasswordFieldsLogin(record as any, salt).catch(e=>{
             if (envBool(this.c.env?.RESPOND_WITH_ERRORS)) throw e
@@ -437,18 +442,19 @@ export class TableAuthExtension extends TableExtension<TableAuthExtensionData> {
             return null
         })
 
-        if(!user || !password || !user.password || !timingSafeEqual(password, user.password)) throw invalid()
+        if(!found || !password || !found.password || !timingSafeEqual(password, found.password)) throw invalid()
 
         // todo
         // if(this.mapping.emailVerified && !user.emailVerified) throw new HTTPException(400, {message: 'Email not verified'})
 
+        const {user, session} = await this._signIn(found, {provider: 'password', created: false})
         const ret: {
             token: string,
             record: Record<string, z.infer<typeof sqlValSchema>>,
             refresh_token: string,
             verified?: false
         } = {
-            ...await this.createSession(user),
+            ...session,
             record: this._userToFields(user),
         }
         if(this.mapping.emailVerified && !user.emailVerified) ret.verified = false
@@ -565,18 +571,19 @@ export class TableAuthExtension extends TableExtension<TableAuthExtensionData> {
 
         await this._saveIdentity(res.id, provider, external)
 
+        const {user, session} = await this._signIn(res, {provider, created, external})
         const ret: {
             token: string,
             refresh_token: string,
             record: Record<string, z.infer<typeof sqlValSchema>>,
             verified?: boolean,
         } = {
-            ...await this.createSession(res),
+            ...session,
             // we are not returning the user's `name` in the record, which is generally useful for any UI.
             // todo should we include it here if available?
-            record: this._userToFields(res),
+            record: this._userToFields(user),
         }
-        if(this.mapping.emailVerified && !res.emailVerified) ret.verified = false
+        if(this.mapping.emailVerified && !user.emailVerified) ret.verified = false
 
         return ret
     }
@@ -642,6 +649,30 @@ export class TableAuthExtension extends TableExtension<TableAuthExtensionData> {
         const providerId = external?.providerId ?? external?.sub ?? external?.id
         const rawData = external?.rawData ?? external
         await identities.insert(userId, provider, providerId !== undefined && providerId !== null ? String(providerId) : undefined, rawData)
+    }
+
+    /**
+     * The last step of every sign-in: runs the app's {@link $Database.onSignIn} hooks, then creates the session.
+     * A hook that throws leaves no session, and since the caller gets no token it sets no cookie either.
+     * After hooks the row is read again so their changes to auth columns are in the token and the response.
+     */
+    private async _signIn(user: UserFields, input: {provider: string, created: boolean, external?: Record<string, unknown>}) {
+        const hooks = this.table.$db.onSignIn
+        if(hooks.length) {
+            const event: SignInEvent = {
+                table: this.table.name,
+                user: {...this._userToFields(user), id: user.id},
+                provider: input.provider,
+                created: input.created,
+                external: input.external,
+                db: this.table.$db,
+            }
+            for (const hook of hooks) await hook(event)
+            const fresh = await this.getUser(user.id, true)
+            if(!fresh) throw new HTTPException(401, {message: 'Unauthorized'})
+            user = fresh
+        }
+        return {user, session: await this.createSession(user)}
     }
 
     // region OAuth
@@ -1046,14 +1077,15 @@ export class TableAuthExtension extends TableExtension<TableAuthExtensionData> {
         })?.run() ?? []
         return this._fieldsToUser(res[0], true)
     }
-    private async getUser(id: string) {
+    /** @param allFields - every auth column, including noSelect ones (e.g. a hidden role), for building a token. Never hash/salt in the result. */
+    private async getUser(id: string, allFields = false) {
         const res = await this.table.$db.rawSelect(this.table, {
             from: this.jc.tableName,
             where: {
                 q: `${ident(this.mapping.uid, this.jc)} = {:uid}`,
                 p: {uid: id}
             },
-            selects: this._userFields(),
+            selects: this._userFields(true, allFields),
             limit: 1,
             _readOnly: true,
         })?.run() ?? []

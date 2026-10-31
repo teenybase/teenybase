@@ -1,6 +1,14 @@
 export {teenyHono} from './honoApp'
 
 export {$Database} from './$Database'
+export type {SignInEvent, SignInHook} from './$Database'
+/**
+ * Advanced: the auth extension class, for custom OAuth exchange handlers (`TableAuthExtension.oauthExchangeHandlers`)
+ * and other extensions of the auth flow. Its members are internals that may change in minor versions; for reacting to
+ * sign-ins use `db.onSignIn` instead.
+ */
+export {TableAuthExtension} from './extensions/tableAuthExtension'
+export type {OAuthExchangeHandler} from './extensions/tableAuthExtension'
 
 export {$Table} from './$Table'
 export {parseRequestBody} from './util/parseRequestBody'
