@@ -782,9 +782,12 @@ export class TableAuthExtension extends TableExtension<TableAuthExtensionData> {
 
         const salt = res.passwordSalt || ''
 
-        if(this.data.passwordCurrentSuffix) {
-            let current = await this._parseCurrentPasswordField(record, salt)
-            if(current !== res.password) throw new HTTPException(400, {message: 'Invalid current password'})
+        if(this._currentPasswordField) {
+            const current = await this._parseCurrentPasswordField(record, salt)
+            // A user created by an OAuth/token sign-in has a random password nobody knows, so this fails for them too:
+            // the message says how they get one.
+            if(!res.password || !timingSafeEqual(current, res.password))
+                throw new HTTPException(400, {message: 'Invalid current password. An account created by signing in with a provider has no password of its own: set one with password reset.'})
         }
 
         const password = await this._parsePasswordFieldsInsert(record)
@@ -1411,11 +1414,23 @@ export class TableAuthExtension extends TableExtension<TableAuthExtensionData> {
         return val
     }
 
+    /**
+     * The request field that carries the current password (`password` + passwordCurrentSuffix, e.g. `passwordCurrent`),
+     * or null when the check is off. The suffix defaults to 'Current' (tableAuthDataSchema also fills it in); only an
+     * explicit '' turns the check off. Used by change-password and by record updates that set the password.
+     */
+    private get _currentPasswordField(): string | null {
+        const suffix = this.data.passwordCurrentSuffix ?? 'Current'
+        return suffix && this.mapping.password ? this.mapping.password + suffix : null
+    }
+
     private async _parseCurrentPasswordField(record: Record<string, SQLLiteral>, salt: string) {
-        let current = record[this.mapping.password! + this.data.passwordCurrentSuffix!]?.l
-        if (!current || typeof current !== 'string') throw new HTTPException(400, {message: `${this.mapping.password! + this.data.passwordCurrentSuffix!} is required`})
-        current = zParseWithPath(defaultSchema.password, current, [this.mapping.password! + this.data.passwordCurrentSuffix!])
-        delete record[this.mapping.password! + this.data.passwordCurrentSuffix!]
+        const field = this._currentPasswordField
+        if (!field) throw new HTTPException(500, {message: 'Invalid Configuration - current password check is off'})
+        let current = record[field]?.l
+        if (!current || typeof current !== 'string') throw new HTTPException(400, {message: `${field} is required`})
+        current = zParseWithPath(defaultSchema.password, current, [field])
+        delete record[field]
         return await this._hashPassword(current, salt)
     }
 
@@ -1430,7 +1445,7 @@ export class TableAuthExtension extends TableExtension<TableAuthExtensionData> {
         }
 
         const isAdmin = this.jc.globals.auth?.admin
-        if (this.data.passwordCurrentSuffix && !isAdmin) {
+        if (this._currentPasswordField && !isAdmin) {
             if (!this.mapping.passwordSalt || salt) { // todo get the current salt from the db
                 let current = await this._parseCurrentPasswordField(record, salt || '')
                 const currentQ = literalToQuery({l: current, redact: true})
@@ -1443,7 +1458,9 @@ export class TableAuthExtension extends TableExtension<TableAuthExtensionData> {
                 // query.where = query.where ? applyBinaryOperator(query.where, where, 'AND', simplify) : where
                 appendWhere(query, where)
             } else {
-                throw new HTTPException(400, {message: 'Not supported, use change-password route(TBD)'})
+                // The check above compares the hash in SQL, which needs the row's salt. On a table with a salt column the
+                // password changes through change-password (one row, current password checked there).
+                throw new HTTPException(400, {message: `To change the password use POST /auth/change-password (a record update can't check ${this._currentPasswordField} on this table)`})
             }
         }
         await this._parsePasswordFieldsInsert(record)
