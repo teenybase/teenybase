@@ -672,7 +672,7 @@ The worker fetches the UI files and serves them from your API's own origin, so t
 |----------|-------------|
 | `POCKET_UI_VIEWER_PASSWORD` | Password for viewer role (read-only). The viewer and editor logins are admin tokens: they read every row and every `noSelect` column, but never password hashes or salts. |
 | `POCKET_UI_EDITOR_PASSWORD` | Password for editor role (read + write) |
-| `ADMIN_SERVICE_TOKEN` | Also accepted as superadmin password |
+| `ADMIN_SERVICE_TOKEN` | Also accepted as superadmin password. Sent as `Authorization: Bearer <token>` it is a superadmin login, and the CLI uses it to set up the database and apply migrations through the deployed Worker. Use a long random value (`openssl rand -hex 32`). Empty or `not-set` counts as not set (no token login); a value shorter than 12 characters works but logs an error. |
 
 **Cookie behavior:**
 - Session cookies expire after 1 hour

@@ -35,7 +35,7 @@ export type PocketUiEnv = $Env & {
 export class PocketUIExtension<T extends PocketUiEnv = PocketUiEnv> implements $DBExtension<T> {
 
     async getAuthToken(): Promise<string | undefined> {
-        return (await getSignedCookie(this.db.c, this.db.c.env.ADMIN_SERVICE_TOKEN || 'admin', cookieName)) || undefined
+        return (await getSignedCookie(this.db.c, (await this.db.adminServiceToken()) || 'admin', cookieName)) || undefined
     }
 
     // private async _initAuth(){
@@ -115,10 +115,11 @@ export class PocketUIExtension<T extends PocketUiEnv = PocketUiEnv> implements $
                     let {username, password} = (await this.db.getRequestBody()) ?? {}
                     if (!password) return this.loginPage('Password required', 400, iframe)
 
+                    const adminToken = await this.db.adminServiceToken()
                     if(username === 'viewer' && password === this.db.c.env['POCKET_UI_VIEWER_PASSWORD'])
-                        password = this.db.c.env['ADMIN_SERVICE_TOKEN']
+                        password = adminToken
                     if(username === 'editor' && password === this.db.c.env['POCKET_UI_EDITOR_PASSWORD'])
-                        password = this.db.c.env['ADMIN_SERVICE_TOKEN']
+                        password = adminToken
 
                     let err = 'Invalid password'
 
@@ -134,7 +135,7 @@ export class PocketUIExtension<T extends PocketUiEnv = PocketUiEnv> implements $
 
                     const data: any = decode(token).payload
                     data.email = data.sub
-                    await setSignedCookie(this.db.c, cookieName, token, this.db.c.env.ADMIN_SERVICE_TOKEN || 'admin', {
+                    await setSignedCookie(this.db.c, cookieName, token, adminToken || 'admin', {
                         httpOnly: true,
                         secure: this.db.c.req.raw.url.startsWith('https://'),
                         sameSite: 'Strict',

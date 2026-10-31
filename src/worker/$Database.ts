@@ -41,6 +41,9 @@ import {DefaultDatabaseAdapter} from './storage/DefaultDatabaseAdapter'
 import {httpMetaToHeaders} from './storage/R2RestAdapter'
 import {isFieldSelectable} from '../types/config/isFieldSelectable'
 
+// ADMIN_SERVICE_TOKEN length warning is logged once per isolate, not on every request.
+let shortAdminTokenLogged = false
+
 /**
  * What an {@link $Database.onSignIn} hook receives. A sign-in is any auth route that hands out a new session:
  * login-password, sign-up, the OAuth callback, google-login, login-token, and the email links that sign in
@@ -283,8 +286,7 @@ export class $Database<T extends $Env = $Env> extends $DatabaseRawImpl/*<T>*/{
 
         let jwtSecret = this.adminJwtSecret
 
-        // todo hack, remove
-        const adminToken = await this.secretResolver.resolve('$ADMIN_SERVICE_TOKEN')
+        const adminToken = await this.adminServiceToken()
         if (adminToken && tok === adminToken) { // todo timingSafeEqual here? not really required
             tok = await this.generateAdminToken("superadmin", tok)
         }
@@ -348,8 +350,24 @@ export class $Database<T extends $Env = $Env> extends $DatabaseRawImpl/*<T>*/{
         this.c.set('auth', this.auth)
     }
 
+    /**
+     * The `ADMIN_SERVICE_TOKEN` secret, or '' when it is not set. An empty value or the placeholder `not-set`
+     * counts as not set, so a deployment that keeps the placeholder never accepts `Bearer not-set` as superadmin.
+     * A value shorter than 12 characters still works but logs an error (once per isolate): it grants superadmin.
+     */
+    async adminServiceToken(): Promise<string> {
+        const token = (await this.secretResolver.resolve('$ADMIN_SERVICE_TOKEN')).trim()
+        if (!token || token.toLowerCase() === 'not-set') return ''
+        if (token.length < 12 && !shortAdminTokenLogged) {
+            shortAdminTokenLogged = true
+            console.error('ADMIN_SERVICE_TOKEN is shorter than 12 characters. It grants superadmin access: set a long random value (for example `openssl rand -hex 32`).')
+        }
+        return token
+    }
+
     async generateAdminToken(role: string, tok?: string) {
-        if((tok !== await this.secretResolver.resolve('$ADMIN_SERVICE_TOKEN')) && !this.auth.superadmin) throw new HTTPException(401, {message: 'Unauthorized'})
+        const adminToken = await this.adminServiceToken()
+        if(!this.auth.superadmin && (!adminToken || tok !== adminToken)) throw new HTTPException(401, {message: 'Unauthorized'})
         const adminJwtSecret = await this.adminJwtSecret()
         if (!adminJwtSecret) throw new HTTPException(500, {message: 'Invalid configuration - ADMIN_JWT_SECRET not set'})
         const tokenDuration = 3 * 60 * 60 // 3 hours
