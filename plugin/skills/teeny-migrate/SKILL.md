@@ -64,7 +64,7 @@ Give the claim URL to the user privately (anyone with it can take the account) a
 | `You are not logged in to Cloudflare` | Ask the user to run `npx wrangler login` (or set `CLOUDFLARE_API_TOKEN` + `CLOUDFLARE_ACCOUNT_ID`), or use `--temporary`. |
 | `Your Cloudflare login has N accounts` | Set `account_id` in `wrangler.jsonc` (or `CLOUDFLARE_ACCOUNT_ID`) to one of the listed ids. |
 | `--temporary can't be used` | The user is logged in: use `--remote`. |
-| `can't be deployed to a temporary Cloudflare account` | Remove the listed bindings (R2, routes) or deploy with `--remote`. |
+| `can't be deployed to a temporary Cloudflare account` | Remove the listed bindings (R2, routes, cron triggers) or deploy with `--remote`. |
 | Config validation error | Read the field path in the message; `npx teenybase inspect --validate` reproduces it. |
 
 More: `node_modules/teenybase/docs/cli.md` (every command and flag, https://teenybase.com/docs/reference/cli), `docs/troubleshooting.md` (https://teenybase.com/docs/reference/troubleshooting), deploy walkthrough in `docs/getting-started.md`.

@@ -269,6 +269,12 @@ describe('temporary account parsing', () => {
         expect(problems.some(p => p.startsWith('ai'))).toBe(true)
         expect(problems.some(p => p.includes('2 databases'))).toBe(true)
         expect(findTemporaryAccountConfigProblems({...ok, r2_buckets: []})).toEqual([])
+        // cron triggers: refused by Cloudflare after the worker is deployed (code 10072), so checked up front
+        expect(findTemporaryAccountConfigProblems({...ok, triggers: {crons: ['17 3 * * *']}})).toEqual([
+            'triggers.crons: temporary accounts allow no cron triggers (Cloudflare: "limit of 0 cron triggers per account", code 10072)',
+        ])
+        expect(findTemporaryAccountConfigProblems({...ok, env: {prod: {triggers: {crons: ['0 * * * *']}}}})[0]).toMatch(/^env\.prod\.triggers\.crons/)
+        expect(findTemporaryAccountConfigProblems({...ok, triggers: {crons: []}})).toEqual([])
     })
 
     it('detects credentials in the environment the way wrangler does', () => {

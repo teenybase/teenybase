@@ -199,8 +199,8 @@ function present(value: any): boolean {
  * What in a wrangler config can't be deployed to a temporary account, checked before any API call.
  * Supported (per Cloudflare's docs): Workers on workers.dev, static assets, KV, one D1 database
  * (100 MB), Durable Objects, Hyperdrive, Queues, mTLS/CA certificates. R2 is verified unsupported
- * (the API refuses it with code 10000); the rest of {@link UNSUPPORTED_KEYS} is simply not on
- * Cloudflare's list.
+ * (the API refuses it with code 10000), and so are cron triggers (code 10072); the rest of
+ * {@link UNSUPPORTED_KEYS} is simply not on Cloudflare's list.
  */
 export function findTemporaryAccountConfigProblems(config: any): string[] {
     const problems: string[] = []
@@ -214,6 +214,11 @@ export function findTemporaryAccountConfigProblems(config: any): string[] {
         }
         if (present(scope.routes) || present(scope.route)) {
             problems.push(`${prefix}${present(scope.routes) ? 'routes' : 'route'}: temporary accounts only serve on workers.dev (no custom domains or routes)`)
+        }
+        // Seen 2026-10-31: wrangler deploys the worker, then setting the schedules fails with
+        // "This account has reached the Workers Free limit of 0 cron triggers per account [code: 10072]"
+        if (present(scope.triggers?.crons)) {
+            problems.push(`${prefix}triggers.crons: temporary accounts allow no cron triggers (Cloudflare: "limit of 0 cron triggers per account", code 10072)`)
         }
         for (const d of scope.d1_databases ?? []) d1Names.add(String(d?.database_name ?? d?.database_id ?? d?.binding))
     }
