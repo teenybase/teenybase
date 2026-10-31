@@ -205,6 +205,22 @@ describe('tables without an email_verified field', () => {
         expect((await refresh(s, a.token, a.refresh_token)).status).toEqual(401)
     })
 
+    test('with saveIdentities but an email users can change, the identity proves nothing: taken over again', async () => {
+        // an identity proves the address the row had when it was recorded; without noUpdate on email the owner could
+        // have switched the row to someone else's address since then (nothing un-verifies it without email_verified)
+        const s = withSettings(x => {
+            noVerified(x); authExt(x).saveIdentities = true
+            const users = usersTable(x)
+            users.fields = users.fields.map((f: any) => f.name === 'email' ? {...f, noUpdate: false} : f)
+        })
+        const first = await loginToken(s, {sub: 'nv3', email: 'nov-mutable@example.com', email_verified: true})
+        expect(first.status).toEqual(200)
+        const f = await first.json() as any
+        const second = await loginToken(s, {sub: 'nv3', email: 'nov-mutable@example.com', email_verified: true})
+        expect(second.status).toEqual(200)
+        expect((await refresh(s, f.token, f.refresh_token)).status).toEqual(401)
+    })
+
     test('with saveIdentities, a row an external sign-in already owns links without ending sessions', async () => {
         const s = withSettings(x => { noVerified(x); authExt(x).saveIdentities = true })
         const first = await loginToken(s, {sub: 'nv2', email: 'nov-owner@example.com', email_verified: true})

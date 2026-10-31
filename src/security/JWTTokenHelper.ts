@@ -211,7 +211,9 @@ export class JWTTokenHelper{
         const json = await res.json().catch(_=>({})) as any
         // console.log(json)
         // todo use zod for validation
-        if(!res.ok || !json || json.error || !json.email || !json.email_verified) throw new HTTPException(401, {message: 'Invalid google token, unable to find email'})
+        if(!res.ok || !json || json.error || !json.email) throw new HTTPException(401, {message: 'Invalid google token, unable to find email'})
+        // tokeninfo returns every value as a string: "false" is truthy, so read it like a claim
+        if(readVerifiedClaim(json.email_verified) !== true) throw new HTTPException(400, {message: 'Email not verified'})
         if((payload as any).email !== json.email) throw new HTTPException(401, {message: 'Unknown error, Invalid email from google verification'})
 
         // Verify client ID (audience)
@@ -238,10 +240,15 @@ export class JWTTokenHelper{
         await checkAudience((payload as any).aud, issuerConfig.clientId ?? SUPABASE_DEFAULT_AUDIENCE, v => this.resolveValue(v), 'Invalid audience for supabase token')
 
         const payloadAny = payload as any
-        const email = payloadAny.email || payloadAny.user_metadata?.email
-        // Supabase puts the verification in user_metadata (email_verified, set when the user confirms). Without a claim,
-        // only trustEmailVerified (e.g. a project with "Confirm email" on, which issues no session before confirmation).
-        const verified = readVerifiedClaim(payloadAny.email_verified ?? payloadAny.user_metadata?.email_verified) ?? (issuerConfig.trustEmailVerified === true)
+        // Anonymous Supabase users have no email of their own; they must not sign in by email.
+        if (payloadAny.is_anonymous === true) throw new HTTPException(401, {message: 'Anonymous supabase users cannot sign in'})
+        // Only the top-level claims: user_metadata is writable by the user (supabase.auth.updateUser({data})), so
+        // user_metadata.email / email_verified would let anyone claim any address.
+        const email = payloadAny.email
+        // Supabase access tokens carry no verification claim of their own (a custom access token hook can add
+        // email_verified). Otherwise only trustEmailVerified, e.g. a project with "Confirm email" on, which issues no
+        // session before confirmation.
+        const verified = readVerifiedClaim(payloadAny.email_verified) ?? (issuerConfig.trustEmailVerified === true)
         const fullName = payloadAny.user_metadata?.full_name || ''
         const userName = payloadAny.user_metadata?.username || ''
 
@@ -299,9 +306,10 @@ export class JWTTokenHelper{
         }
 
         // Users are keyed by email. 'login'/'partial' tokens come from third-party IdPs whose `sub` is their own user
-        // id (auth0|123, user_2abc): never an email, so it is never used as one. 'full'/'admin' take teenybase's own
-        // token format, where `sub` is the user's email.
-        const email = identityOnly ? (p.email || p.user_metadata?.email) : (p.email || p.sub)
+        // id (auth0|123, user_2abc): never an email, so it is never used as one; and never user_metadata.email, which
+        // Supabase and Auth0 let the user edit. 'full'/'admin' take teenybase's own token format, where `sub` is the
+        // user's email.
+        const email = identityOnly ? p.email : (p.email || p.sub)
         if (!email || typeof email !== 'string') throw new HTTPException(401, {
             message: identityOnly
                 ? 'External token has no email claim. teenybase signs users in by email: add an `email` claim to the token (Clerk: a JWT template with "email": "{{user.primary_email_address}}"; Auth0: a custom claim set in an Action), or send the provider\'s ID token, which has one'

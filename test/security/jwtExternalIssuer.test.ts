@@ -1,4 +1,4 @@
-import {describe, expect, it} from 'vitest'
+import {afterEach, describe, expect, it, vi} from 'vitest'
 import * as jwt from '@tsndr/cloudflare-worker-jwt'
 import {JWTTokenHelper} from '../../src/security/JWTTokenHelper'
 import {authProviderSchema} from '../../src/types/zod/jwtSchemas'
@@ -53,9 +53,9 @@ describe('external issuer: email claim', () => {
         expect(e.message).toContain('Auth0')
     })
 
-    it('`email` wins over `sub`; `user_metadata.email` is accepted', async () => {
+    it('`email` wins over `sub`; `user_metadata.email` (user-editable in Supabase/Auth0) is never used', async () => {
         expect((await decode(h, await sign({aud: 'app', sub: 'auth0|123', email: 'b@example.com', email_verified: true}))).sub).toEqual('b@example.com')
-        expect((await decode(h, await sign({aud: 'app', sub: 'x', user_metadata: {email: 'c@example.com'}, email_verified: true}))).sub).toEqual('c@example.com')
+        expect((await rejects(decode(h, await sign({aud: 'app', sub: 'x', user_metadata: {email: 'c@example.com'}, email_verified: true})))).status).toEqual(401)
     })
 
     it('partial mode follows the same rules', async () => {
@@ -118,19 +118,45 @@ describe('supabase preset', () => {
         expect((await rejects(decode(supa({clientId: 'custom'}), await supaToken({})))).status).toEqual(401)
     })
 
-    it('verified from user_metadata.email_verified, else trustEmailVerified (was always true)', async () => {
+    it('verified only from a top-level claim or trustEmailVerified, never user_metadata (was always true)', async () => {
         expect((await decode(supa(), await supaToken({}))).verified).toEqual(false)
-        expect((await decode(supa(), await supaToken({user_metadata: {email_verified: true}}))).verified).toEqual(true)
+        // user_metadata is writable by the user (supabase.auth.updateUser({data}))
+        expect((await decode(supa(), await supaToken({user_metadata: {email_verified: true}}))).verified).toEqual(false)
+        expect((await decode(supa(), await supaToken({email_verified: true}))).verified).toEqual(true)
         expect((await decode(supa({trustEmailVerified: true}), await supaToken({}))).verified).toEqual(true)
-        expect((await decode(supa({trustEmailVerified: true}), await supaToken({user_metadata: {email_verified: false}}))).verified).toEqual(false)
+        expect((await decode(supa({trustEmailVerified: true}), await supaToken({email_verified: false}))).verified).toEqual(false)
+    })
+
+    it('the email is the top-level claim only; anonymous users are refused', async () => {
+        const anon = await supaToken({email: '', is_anonymous: true, user_metadata: {email: 'victim@example.com', email_verified: true}})
+        expect((await rejects(decode(supa({trustEmailVerified: true}), anon))).status).toEqual(401)
+        const noEmail = await supaToken({email: '', user_metadata: {email: 'victim@example.com'}})
+        expect((await rejects(decode(supa({trustEmailVerified: true}), noEmail))).message).toEqual('Invalid supabase token, unable to find email')
     })
 })
 
 describe('google preset', () => {
+    afterEach(() => vi.unstubAllGlobals())
+
     it('without clientId every Google ID token is refused (before any network call)', async () => {
         const h = new JWTTokenHelper('global-secret', '$db', 'HS256', [{name: 'google'}])
         const token = await sign({iss: 'https://accounts.google.com', aud: 'someone-elses-app', email: 'g@example.com'})
         expect(await rejects(decode(h, token))).toEqual({status: 401, message: 'Google issuer has no clientId configured'})
+    })
+
+    // tokeninfo answers with strings: email_verified "false" used to pass a truthiness check
+    const tokeninfo = (body: Record<string, string>) => vi.stubGlobal('fetch', vi.fn(async () => new Response(JSON.stringify(body), {status: 200, headers: {'content-type': 'application/json'}})))
+    const googleToken = () => sign({iss: 'https://accounts.google.com', aud: 'g-app', email: 'g@example.com'})
+    const google = () => new JWTTokenHelper('global-secret', '$db', 'HS256', [{name: 'google', clientId: 'g-app'}])
+
+    it('tokeninfo email_verified "false" is unverified and refused', async () => {
+        tokeninfo({email: 'g@example.com', email_verified: 'false', aud: 'g-app', azp: 'g-app'})
+        expect(await rejects(decode(google(), await googleToken()))).toEqual({status: 400, message: 'Email not verified'})
+    })
+
+    it('tokeninfo email_verified "true" signs in', async () => {
+        tokeninfo({email: 'g@example.com', email_verified: 'true', aud: 'g-app', azp: 'g-app'})
+        expect(await decode(google(), await googleToken())).toMatchObject({sub: 'g@example.com', verified: true, iss: 'google'})
     })
 })
 
@@ -146,6 +172,11 @@ describe('config validation', () => {
         expect(e[0]).toMatch(/^clientId: clientId is required for the JWT issuer https:\/\/ext\.example\.com: tokens are accepted only when their aud/)
         expect(issues({issuer: ISS, secret: SECRET, bearerMode: 'partial'})).toHaveLength(1)
         expect(issues({name: 'google'})).toHaveLength(1)
+        // the Google verifier needs it whatever the bearerMode
+        expect(issues({name: 'google', bearerMode: 'full'})).toHaveLength(1)
+        // an empty client ID list or string would accept nothing / aud: ""
+        expect(issues({issuer: ISS, secret: SECRET, clientId: []})).toHaveLength(1)
+        expect(issues({issuer: ISS, secret: SECRET, clientId: ''})).toHaveLength(1)
     })
 
     it('valid without clientId: full/admin issuers, hosted supabase, OAuth-only providers', () => {

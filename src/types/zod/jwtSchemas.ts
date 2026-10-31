@@ -18,7 +18,9 @@ export const SUPABASE_DEFAULT_AUDIENCE = 'authenticated'
 function refineIssuerClientId(data: {name?: string, issuer?: string, clientId?: string | string[], bearerMode?: string}, ctx: z.RefinementCtx) {
     const isIssuer = !!data.issuer || data.name === 'google'
     if (!isIssuer || data.clientId !== undefined) return
-    if (data.bearerMode === 'full' || data.bearerMode === 'admin') return
+    // Google ID tokens always go through the Google verifier, which needs the client ID whatever the bearerMode
+    const isGoogle = data.name === 'google' || (!!data.issuer && GOOGLE_ISSUER_PATTERN.test(data.issuer))
+    if (!isGoogle && (data.bearerMode === 'full' || data.bearerMode === 'admin')) return
     if (data.issuer && SUPABASE_ISSUER_PATTERN.test(data.issuer)) return
     ctx.addIssue({
         code: 'custom',
@@ -49,7 +51,7 @@ export const issuerConfigSchema = z.object({
     secret: z.union([z.string(), jwkSchema]).optional(),
     jwksUrl: z.url().optional(),
     algorithm: z.string().optional(),
-    clientId: z.union([z.string(), z.array(z.string())]).optional(),
+    clientId: z.union([z.string().min(1), z.array(z.string().min(1)).nonempty()]).optional(),
     trustEmailVerified: z.boolean().optional(),
     bearerMode: z.enum(['login', 'partial', 'full', 'admin']).optional(),
 }).superRefine(refineIssuerClientId);
@@ -75,7 +77,7 @@ export const authProviderSchema = z.object({
     issuer: z.string().optional(),
 
     // OAuth redirect fields
-    clientId: z.union([z.string().min(1), z.array(z.string().min(1))]).optional(),
+    clientId: z.union([z.string().min(1), z.array(z.string().min(1)).nonempty()]).optional(),
     clientSecret: z.string().min(1).optional(),
     scopes: z.array(z.string()).optional(),
     authorizeUrl: z.url().optional(),

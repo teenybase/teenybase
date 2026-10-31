@@ -315,7 +315,7 @@ An OAuth, `google-login` or `login-token` sign-in finds the user by email, and o
 
 - **The row's `email_verified` is true:** the user is signed in to it.
 - **The row's email was never verified** (for example a password sign-up with that address): the provider has just proven who owns the address, so teenybase takes the account over for them. In one update it marks the email verified and replaces the password with a random one (so a password set by whoever created the row stops working), ends every existing session of the user, then signs in. The owner sets a password with password reset if they want one. Access tokens already issued stay valid until they expire (`jwtTokenDuration`); they can't be refreshed.
-- **The table has no `email_verified` field:** teenybase can't know whether the row's email was proven. Without a password field there is nothing to take over and the user is signed in. With one, the row is taken over as above unless `_auth_identities` already has an identity for the user (`saveIdentities: true`, recorded by an earlier external sign-in). Without `saveIdentities` every external sign-in to such a row replaces the password and ends the user's other sessions again. Add an `email_verified` field (it is in `authFields`) to avoid this.
+- **The table has no `email_verified` field:** teenybase can't know whether the row's email was proven. Without a password field there is nothing to take over and the user is signed in. With one, the row is taken over as above unless `_auth_identities` already has an identity for the user (`saveIdentities: true`, recorded by an earlier external sign-in) and the email field is `noUpdate` (as in `authFields`), so the user can't have switched the row to another address since. Otherwise every external sign-in to such a row replaces the password and ends the user's other sessions again. Add an `email_verified` field (it is in `authFields`) to avoid this.
 
 A new row created by an external sign-in has `email_verified` true.
 
@@ -1045,8 +1045,9 @@ Configure external authentication providers — OAuth redirect flows, JWT/Bearer
         { name: 'github', clientId: '$GITHUB_CLIENT_ID', clientSecret: '$GITHUB_CLIENT_SECRET' },
 
         // Supabase (JWT only). aud is checked against 'authenticated' unless clientId says otherwise.
-        // trustEmailVerified: true if the project has "Confirm email" on (no session before confirmation).
-        { name: 'supabase', issuer: 'https://xyz.supabase.co/auth/v1', secret: '$SUPABASE_JWT_SECRET' },
+        // Supabase tokens carry no email_verified claim: set trustEmailVerified only if the project has
+        // "Confirm email" on (no session before confirmation). Anonymous users are refused.
+        { name: 'supabase', issuer: 'https://xyz.supabase.co/auth/v1', secret: '$SUPABASE_JWT_SECRET', trustEmailVerified: true },
 
         // Custom issuer with HMAC secret. clientId = the aud its tokens carry.
         { issuer: 'https://other.example.com', secret: '$OTHER_SECRET', clientId: 'my-app' },
@@ -1146,7 +1147,7 @@ The `verified` mapping reads a truthy/falsy flag from the provider response. Tru
 For `'login'` (the default, `/auth/login-token`) and `'partial'` issuers:
 
 - **`aud` (or `azp`)** matching `clientId`.
-- **`email`** (or `user_metadata.email`). Users are keyed by email, and `sub` is the provider's own user id (`auth0|123`, `user_2abc`), so it is never used as one. A token without an email claim gets a 401 saying so. Clerk: add `"email": "{{user.primary_email_address}}"` in a JWT template. Auth0: add the claim in an Action, or send the ID token.
+- **`email`** (top-level; `user_metadata.email` is ignored because Supabase and Auth0 let users edit it). Users are keyed by email, and `sub` is the provider's own user id (`auth0|123`, `user_2abc`), so it is never used as one. A token without an email claim gets a 401 saying so. Clerk: add `"email": "{{user.primary_email_address}}"` in a JWT template. Auth0: add the claim in an Action, or send the ID token.
 - **`email_verified: true`** (or `verified`; `true`, `'true'` and `1` count), unless the issuer has `trustEmailVerified: true`. Unverified tokens are rejected with 400 and never create or sign in to an account.
 
 `'full'`/`'admin'` issuers take teenybase's own token format (from another teenybase instance): `sub` is the email and `verified` the verification flag.

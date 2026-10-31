@@ -594,16 +594,19 @@ export class TableAuthExtension extends TableExtension<TableAuthExtensionData> {
      * - no password column: rows can only be created by external sign-ins (or an admin), nobody can hold a
      *   password for them, so there is nothing to take over;
      * - otherwise proven only if `_auth_identities` (saveIdentities) has an identity for the user, i.e. an earlier
-     *   verified external sign-in created or took over the row. Without that record every external sign-in to a
-     *   password row takes it over again: that ends other sessions and replaces the password each time, but never
-     *   locks the user out (they are signed in, and password reset sets a new password). Documented in
-     *   docs/security.md "Account linking"; adding an email_verified field avoids it.
+     *   verified external sign-in created or took over the row, AND the email column is `noUpdate`: an identity
+     *   proves the address the row had then, so if users can change the email (nothing un-verifies it without an
+     *   email_verified column) the record proves nothing about the current one.
+     *   Otherwise every external sign-in to a password row takes it over again: that ends other sessions and
+     *   replaces the password each time, but never locks the user out (they are signed in, and password reset sets a
+     *   new password). Documented in docs/config-reference.md "Signing in to an existing account"; adding an
+     *   email_verified field avoids it.
      */
     private async _isEmailOwnershipProven(user: UserFields) {
         if(this.mapping.emailVerified) return !!user.emailVerified
         if(!this.mapping.password) return true
         const identities = this.data.saveIdentities ? this.table.$db.identities : null
-        if(!identities) return false
+        if(!identities || !this.table.fields[this.mapping.email!]?.noUpdate) return false
         return (await identities.findByUserId(user.id)).length > 0
     }
 
