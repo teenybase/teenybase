@@ -102,13 +102,16 @@ function generatePackageJson(name: string): string {
 }
 
 function generateWranglerJsonc(name: string): string {
-    const today = new Date().toISOString().slice(0, 10)
+    // A week back, not today: a workerd release supports dates only up to about its own release day, so today's date
+    // fails in local dev whenever the newest workerd is older than the calendar ("This Worker requires compatibility
+    // date ..., but the newest date supported by this server binary is ..."). Any past date is valid.
+    const compatibilityDate = new Date(Date.now() - 7 * 24 * 60 * 60 * 1000).toISOString().slice(0, 10)
     return `{
     // Deploy, migrate and run the dev server with 'npx teenybase' (it wraps wrangler: generates migrations, creates the D1 database, uploads secrets). 'npx wrangler login' / 'whoami' are fine to run directly.
     "$schema": "node_modules/wrangler/config-schema.json",
     "name": ${JSON.stringify(name)},
     "main": "src/index.ts",
-    "compatibility_date": "${today}",
+    "compatibility_date": "${compatibilityDate}",
     "compatibility_flags": ["nodejs_compat"],
     "observability": {
         "enabled": true,
