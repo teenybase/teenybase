@@ -19,8 +19,10 @@ export type CFSendEmailProps = {
 export interface CloudflareSendEmailBinding {
     send(options: {
         to: string
-        from: {email: string, name?: string}
-        replyTo?: {email: string, name?: string}
+        // An object needs both fields: workerd rejects `{email}` without a name ("Incorrect type for the 'name'
+        // field on 'EmailAddress'"). A bare address is passed as a plain string.
+        from: string | {email: string, name: string}
+        replyTo?: string | {email: string, name: string}
         subject: string
         html?: string
         text?: string
@@ -34,14 +36,15 @@ export interface CloudflareEmailProps extends Omit<CloudflareEmailBindings, 'bin
     bindingName: string
 }
 
-function parseFromAddress(from: string): {email: string, name?: string} {
+/** "Name <addr>" → {name, email}; a bare "addr" stays a string (the binding requires `name` whenever it gets an object). */
+function parseFromAddress(from: string): string | {email: string, name: string} {
     const m = from.match(/^\s*(.+?)\s*<\s*([^<>\s]+@[^<>\s]+)\s*>\s*$/)
     if (m) return {name: m[1], email: m[2]}
     const bare = from.trim()
     if (!bare.includes('@')) {
         throw new HTTPException(400, {message: `Invalid from address: ${from}`})
     }
-    return {email: bare}
+    return bare
 }
 
 export class CloudflareEmailHelper {

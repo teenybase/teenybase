@@ -40,13 +40,12 @@ describe('CloudflareEmailHelper', () => {
     test('accepts bare email (no name)', async () => {
         const bind = okBinding()
         const h = new CloudflareEmailHelper({binding: () => bind, bindingName: 'EMAIL'})
-        await h.sendEmail({...baseSendArgs, from: 'bare@example.com'})
+        await h.sendEmail({...baseSendArgs, from: '  bare@example.com '})
+        // A plain string, not {email}: the real binding rejects an EmailAddress object without a string `name`
+        // ("Incorrect type for the 'name' field on 'EmailAddress'"), seen on a deployed worker 2026-10-14.
         expect(bind.send).toHaveBeenCalledWith(expect.objectContaining({
-            from: {email: 'bare@example.com'},
+            from: 'bare@example.com',
         }))
-        // No `name` key when not provided.
-        const call = (bind.send as any).mock.calls[0][0]
-        expect(call.from).not.toHaveProperty('name')
     })
 
     test('rejects invalid from address (no @)', async () => {
