@@ -17,10 +17,13 @@ export function makeD1Binding(c: CliContext) {
                 if (!body) throw new Error('Request body is required to execute SQL command')
                 const url1 = typeof input === 'string' ? input : input instanceof URL ? input.toString() : input.url
                 const url = new URL(url1)
-                if (!url.pathname.endsWith('/execute')) throw new Error('Only /execute endpoint is supported in D1 fetcher')
+                if (url.origin !== 'http://d1') throw new Error('Only http://d1 origin is supported in D1 fetcher')
+                // `run()` sends one statement to /execute. `batch()` (an array of statements) and
+                // first()/all()/raw() use /query: not supported, see issues/open/cli-direct-d1-batch-unsupported.md.
+                if (Array.isArray(body)) throw new Error(`Batches (${body.length} statements) are not supported by the CLI's direct D1 path (wrangler d1 execute): it runs single statements only`)
+                if (!url.pathname.endsWith('/execute')) throw new Error(`Only single statements through run() (/execute) are supported by the CLI's direct D1 path (wrangler d1 execute), not ${url.pathname}`)
                 const resultsFormat = (url.searchParams.get('resultsFormat') || 'NONE') as ResultsFormat
                 if (resultsFormat !== 'NONE') throw new Error('Only resultsFormat=NONE is supported in D1 fetcher')
-                if (url.origin !== 'http://d1') throw new Error('Only http://d1 origin is supported in D1 fetcher')
 
                 // Replace ? placeholders with actual parameter values for command line execution
                 const sql = (body.params && Array.isArray(body.params) && body.params.length > 0)
@@ -78,7 +81,7 @@ export function makeD1Binding(c: CliContext) {
                         }
                     } catch (e1) {
                         const err = [e?.stderr, e?.stdout].filter(Boolean).join('\n') || e?.message || 'unknown error'
-                        c.logger.debug(`Error executing D1 command, status - ${e.status}. ${err}`)
+                        c.logger.debug(`Error executing D1 command, status - ${e?.status}. ${err}`)
                         throw new Error(`Error executing D1 command: ${err}`)
                     }
                     // {
@@ -116,12 +119,11 @@ export function makeD1Binding(c: CliContext) {
                 //   body: '{"sql":"SELECT id, name, sql, sql_revert FROM _db_migrations","params":[]}'
                 // }
 
-                // executeSql({
-                //     local: c.isLocal,
-                //     remote: !c.isLocal,
-                //     accountId: '',
-                //
-                // })
+                // Response: `wrangler d1 execute --json` prints an array with one
+                // `{results, success, meta}` per statement, the same shape the D1 service answers
+                // /execute with (miniflare's D1 object returns `queries.map(...)` for one statement
+                // too), so it is passed through; d1-api.ts takes the first entry for run(). A wrangler
+                // error is turned into one `{success: false, error}` above.
                 return new Response(JSON.stringify(result), {
                     headers: {
                         'Content-Type': 'application/json',

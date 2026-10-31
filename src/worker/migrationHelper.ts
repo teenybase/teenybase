@@ -45,20 +45,20 @@ export class MigrationHelperRaw<T extends $DatabaseRaw = $DatabaseRaw>{
         }
     }
 
-    // Batched read: $settings (config JSON) + $settings_version (monotonic counter)
-    // returned from a single D1 batch. Callers compute the `lastVersion` CAS token
-    // they later pass to apply() from the `version` field here.
+    // $settings (config JSON) + $settings_version (monotonic counter) read together by one SELECT,
+    // so both come from the same snapshot. Callers compute the `lastVersion` CAS token they later
+    // pass to apply() from the `version` field here. One statement, not a batch: the CLI's direct D1
+    // path (make-d1-binding.ts) can run it, and can't run batches.
     async dbSettings(): Promise<{settings: DatabaseSettings | undefined, version: number | null}> {
         if (!this.db.auth.superadmin) throw new HTTPException(403, {message: 'Forbidden'})
-        const res = await this.db.rawSQLTransaction<{value: string}>([
-            this.kv.getQuery('$settings'),
-            this.kv.getQuery('$settings_version'),
-        ]).run() ?? [[], []]
+        const rows = await this.db.rawSQL<{key: string, value: string}>(
+            this.kv.getManyQuery(['$settings', '$settings_version']),
+        ).run() ?? []
         let settings: DatabaseSettings | undefined
         let version: number | null = null
-        const sv = res[0]?.[0]?.value
+        const sv = rows.find(r => r.key === '$settings')?.value
         if (sv) { try { settings = JSON.parse(sv) as DatabaseSettings } catch {} }
-        const vv = res[1]?.[0]?.value
+        const vv = rows.find(r => r.key === '$settings_version')?.value
         if (vv) { const n = parseInt(vv, 10); if (Number.isFinite(n)) version = n }
         return {settings, version}
     }

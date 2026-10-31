@@ -910,6 +910,17 @@ export async function fetchWorker(c: CliContext, fPath: string, reqOptions?: Req
     }
 }
 
+/**
+ * The message of an error from the direct D1 path ($DatabaseNode over make-d1-binding.ts). A D1Error's
+ * `message` is the generic "SQL Error"; the driver's text is in `errorMessage` and the statement in `input`.
+ */
+export function directD1ErrorMessage(e: any): string {
+    if (e && typeof e.errorMessage === 'string' && e.errorMessage) {
+        return e.errorMessage + (e.input ? ` (statement: ${e.input})` : '')
+    }
+    return getErrorMessage(e)
+}
+
 export async function fetchDeployedMigrations(c: CliContext, settings: DatabaseSettings) {
     c.logger.debug(`Fetching deployed migrations from ${c.isLocal ? 'local' : 'remote'} deployment`)
 
@@ -918,7 +929,7 @@ export async function fetchDeployedMigrations(c: CliContext, settings: DatabaseS
         const db = c.getDb(settings)
         let noMigrationTable = false
         migrations = await db.migrationHelper.list().catch(e=>{
-            c.logger.debug(e)
+            c.logger.debug(`Direct D1: ${directD1ErrorMessage(e)}`)
             // setup not done yet
             if (((e as D1Error).errorMessage || e.cause?.message || e.message)?.includes(`no such table: ${db.migrationHelper.tableName}`)) {
                 c.logger.info('No migrations found in deployment')
@@ -931,8 +942,7 @@ export async function fetchDeployedMigrations(c: CliContext, settings: DatabaseS
             return {settings: null, migrations, version: null}
         }
         // Nothing applied yet (e.g. an earlier deploy stopped after creating the tables): apply records its
-        // rows in the same batch that writes $settings, so there are no settings either. Checked before
-        // dbSettings(), which needs a batch that the direct path can't run (cli-direct-d1-batch-unsupported).
+        // rows in the same batch that writes $settings, so there are no settings either.
         if (!migrations.length) return {settings: null, migrations, version: null}
         const dbState = await db.migrationHelper.dbSettings()
         if (!dbState.settings) {
@@ -940,10 +950,11 @@ export async function fetchDeployedMigrations(c: CliContext, settings: DatabaseS
         }
         return {...dbState, migrations}
     }catch (e) {
-        c.logger.debug(e as any)
+        // A D1Error's message is the generic "SQL Error"; the driver's text is in errorMessage
+        c.logger.debug(`Reading the deployed migrations with direct D1 commands failed: ${directD1ErrorMessage(e)}`)
         if (c.databaseIdChanged) {
             // The deployed worker is still bound to the previous database, so its API can't answer for this one
-            throw new Error(`Couldn't read the deployed migrations from the database ${c.wranglerConfig.db.database_id} (${getErrorMessage(e)}), and the deployed worker is still bound to the previous database, so its API can't be used for it. Point database_id at an empty database (or TEENY_AUTO_CREATE) and deploy again.`)
+            throw new Error(`Couldn't read the deployed migrations from the database ${c.wranglerConfig.db.database_id} (${directD1ErrorMessage(e)}), and the deployed worker is still bound to the previous database, so its API can't be used for it. Point database_id at an empty database (or TEENY_AUTO_CREATE) and deploy again.`)
         }
         c.logger.debug('Fallback to fetch migrations and settings through API.')
         // throw e

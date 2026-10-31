@@ -35,12 +35,23 @@ export class InternalKV/*<T extends $Env = $Env>*/ {
         return res?.[0] ? res[0][rnd] as T : null
     }
 
-    // Returns the SELECT as a D1Query so callers can batch reads (see MigrationHelperRaw.dbSettings).
+    // Returns the SELECT as a D1Query so callers can batch reads.
     // Column alias is `value` for direct row-shape consumption.
     getQuery(key: string, field = 'value'): D1Query {
         return {
             q: `SELECT ${field} AS value FROM ${this.tn} WHERE key = ? AND (expiry IS NULL OR expiry > unixepoch(CURRENT_TIMESTAMP))`,
             v: [key],
+        }
+    }
+
+    // One SELECT for several keys, rows `{key, value}` (missing/expired keys have no row). A single
+    // statement reads one snapshot, as a batch would, and also runs where batches can't: the CLI's
+    // direct D1 path (issues/open/cli-direct-d1-batch-unsupported.md). See MigrationHelperRaw.dbSettings.
+    getManyQuery(keys: string[]): D1Query {
+        if (!keys.length) throw new Error('getManyQuery: no keys')
+        return {
+            q: `SELECT key, value FROM ${this.tn} WHERE key IN (${keys.map(() => '?').join(', ')}) AND (expiry IS NULL OR expiry > unixepoch(CURRENT_TIMESTAMP))`,
+            v: keys,
         }
     }
 
