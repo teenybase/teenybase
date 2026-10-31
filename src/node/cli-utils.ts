@@ -785,6 +785,11 @@ export function isDeploymentWarmupError(e: any, networkErrors = true, serverErro
     return e instanceof TypeError && /fetch failed/i.test(e.message) // undici network error (DNS, TLS, reset)
 }
 
+/** Client timeouts for the worker calls that do real work: other worker requests keep fetchWorker's 5 s. Setup is a few
+ * CREATE TABLE IF NOT EXISTS; applying migrations can take minutes on a big table, and must not be cut short and resent. */
+export const SETUP_DB_TIMEOUT_MS = 30_000
+export const APPLY_MIGRATIONS_TIMEOUT_MS = 5 * 60_000
+
 /** Waits before each retry of {@link fetchWorkerAfterDeploy}: about a minute in total. */
 export const DEPLOY_WARMUP_RETRY_DELAYS_MS = [1000, 2000, 3000, 5000, 8000, 10000, 15000, 15000]
 
@@ -793,11 +798,11 @@ export const DEPLOY_WARMUP_RETRY_DELAYS_MS = [1000, 2000, 3000, 5000, 8000, 1000
  * {@link isDeploymentWarmupError} failures with backoff (one line of output, not one per attempt),
  * then rethrows the last error.
  */
-export async function fetchWorkerAfterDeploy(c: CliContext, fPath: string, reqOptions?: RequestInit, opts: {delaysMs?: number[], networkErrors?: boolean, serverErrors?: boolean} = {}) {
+export async function fetchWorkerAfterDeploy(c: CliContext, fPath: string, reqOptions?: RequestInit, opts: {delaysMs?: number[], networkErrors?: boolean, serverErrors?: boolean, timeoutMs?: number} = {}) {
     const delaysMs = opts.delaysMs ?? DEPLOY_WARMUP_RETRY_DELAYS_MS
     for (let attempt = 0; ; attempt++) {
         try {
-            return await fetchWorker(c, fPath, reqOptions, false)
+            return await fetchWorker(c, fPath, reqOptions, false, true, opts.timeoutMs)
         } catch (e: any) {
             if (!isDeploymentWarmupError(e, opts.networkErrors ?? true, opts.serverErrors ?? false) || attempt >= delaysMs.length) throw e
             if (attempt === 0) c.logger.info('Waiting for the new deployment to go live...')
@@ -807,7 +812,7 @@ export async function fetchWorkerAfterDeploy(c: CliContext, fPath: string, reqOp
     }
 }
 
-export async function fetchWorker(c: CliContext, fPath: string, reqOptions?: RequestInit, logging = false, parseJson = true) {
+export async function fetchWorker(c: CliContext, fPath: string, reqOptions?: RequestInit, logging = false, parseJson = true, timeoutMs = 5000) {
     const {adminToken} = readSecretsFile(c, true)
     let apiRoute: string | undefined
     if (c.isLocal) {
@@ -822,7 +827,7 @@ export async function fetchWorker(c: CliContext, fPath: string, reqOptions?: Req
             'Authorization': `Bearer ${adminToken}`,
             ...reqOptions?.headers,
         } as any,
-        signal: reqOptions?.signal ?? AbortSignal.timeout(5000) // 5 second timeout
+        signal: reqOptions?.signal ?? AbortSignal.timeout(timeoutMs)
     }
     let _fetch = fetch
     if (c.isLocal) {
@@ -884,7 +889,14 @@ export async function fetchWorker(c: CliContext, fPath: string, reqOptions?: Req
             : fOptions.body
         c.logger.debug(`Fetching ${fOptions.method} ${fPath}${debugBody ? ` [body: ${debugBody}]` : ''}`)
     }
-    const res = await _fetch(fPath, fOptions)
+    const res = await _fetch(fPath, fOptions).catch((e: any) => {
+        // undici only says "fetch failed" (or "aborted due to timeout"): name the request and the cause. Keeps the error's
+        // type and the "fetch failed" text, which isDeploymentWarmupError matches.
+        const code = e?.cause?.code
+        e.message = `${fOptions.method} ${fPath}: ${e?.message}${code || e?.cause?.message ? ` (${code || e.cause.message})` : ''}`
+        if (code === 'ENOTFOUND' || code === 'EAI_AGAIN') e.message += '. If this hostname was just created, this machine\'s DNS may still have it cached as missing: wait a few minutes (or flush the DNS cache) and run the command again'
+        throw e
+    })
     const rest = await res.text()
     if(!res.ok) {
         // An HTML error page (e.g. Cloudflare's 404 while a new route propagates): show its title, not the page
@@ -1226,11 +1238,23 @@ export async function generateMigrationsDir(c: CliContext, clean = false, write 
 }
 
 /**
- * `wrangler deploy` with the given settings bundled. Returns the workers.dev route on a first deploy.
+ * The addresses `wrangler deploy` reports for the worker: the workers.dev URL, then `https://<host>` for each custom domain.
+ * Each is a line on its own; cron schedules and zone routes are other lines in the same list, so nothing is assumed
+ * about what comes before or after them.
+ */
+export function deployedAddresses(output: string): string[] {
+    const lines = output.replace(/\x1B\[[0-9;]*[a-zA-Z]/g, '').split(/\r?\n/).map(l => l.trim())
+    const workersDev = lines.filter(l => /^https:\/\/[a-z0-9.-]+\.workers\.dev$/i.test(l))
+    const customDomains = lines.map(l => l.match(/^([a-z0-9.-]+) \(custom domain/i)?.[1]).filter(Boolean).map(d => `https://${d}`)
+    return [...workersDev, ...customDomains]
+}
+
+/**
+ * `wrangler deploy` with the given settings bundled. Returns the worker's addresses ({@link deployedAddresses}).
  * `secretsFile` (a JSON file of name → value) uploads secrets as part of the same deployment
  * (`wrangler deploy --secrets-file`), so the new version never runs without them.
  */
-export async function wranglerDeploy(c: CliContext, config: DatabaseSettings, first = false, secretsFile?: string): Promise<string | undefined> {
+export async function wranglerDeploy(c: CliContext, config: DatabaseSettings, secretsFile?: string): Promise<string[]> {
     if(c.isLocal) throw new Error('Cannot deploy with --local')
 
     try {
@@ -1240,17 +1264,7 @@ export async function wranglerDeploy(c: CliContext, config: DatabaseSettings, fi
             ...(secretsFile ? [`--secrets-file=${secretsFile}`] : []),
         ])
 
-        if (!first) return undefined
-
-        // c.logger.info(resB)
-        // setup-db is done just before migrations
-
-        // find deployment route (strip ANSI escape codes first — wrangler adds formatting)
-        const cleanOutput = resB.replace(/\x1B\[[0-9;]*[a-zA-Z]/g, '')
-        let route = cleanOutput.match(/https:\/\/[a-zA-Z0-9-.]+\.workers\.dev\r?\n.*Current Version ID:/gm)?.[0].split('\n')[0]
-        // if(!route) route = resB.match(/\n[a-zA-Z0-9-.]+ (custom domain)\n*Current Version ID:/gm)?.[0].split('\n').map(r=>'https://'+r)[0]
-
-        return route
+        return deployedAddresses(resB)
     }catch (e: any) {
         const err = e instanceof WranglerCommandError ? e.output : (e.message || String(e))
 
@@ -1732,7 +1746,7 @@ export async function migrateAndDeploy(c: CliContext, clean: boolean, doMigrate:
                             let route: string | undefined
                             try {
                                 if (secretsWithDeploy) writeTempSecretsFile(tempSecretsPath, envSec.secrets!)
-                                route = await wranglerDeploy(c, configNoTables, true, secretsWithDeploy ? tempSecretsPath : undefined)
+                                route = (await wranglerDeploy(c, configNoTables, secretsWithDeploy ? tempSecretsPath : undefined))[0]
                             } finally {
                                 if (fs.existsSync(tempSecretsPath)) fs.unlinkSync(tempSecretsPath)
                             }
@@ -1832,8 +1846,8 @@ export async function migrateAndDeploy(c: CliContext, clean: boolean, doMigrate:
                         c.logger.debug('Setting up the database through the worker API')
                         const setupRequest: RequestInit = {method: 'POST', headers: {'Content-Type': 'application/json'}}
                         // A worker deployed seconds ago may not serve the new version (with its secrets) everywhere yet.
-                        if (!c.isLocal && deployRoute) await fetchWorkerAfterDeploy(c, '/api/v1/setup-db', setupRequest, {serverErrors: rebindWorker})
-                        else await fetchWorker(c, '/api/v1/setup-db', setupRequest, false)
+                        if (!c.isLocal && deployRoute) await fetchWorkerAfterDeploy(c, '/api/v1/setup-db', setupRequest, {serverErrors: rebindWorker, timeoutMs: SETUP_DB_TIMEOUT_MS})
+                        else await fetchWorker(c, '/api/v1/setup-db', setupRequest, false, true, SETUP_DB_TIMEOUT_MS)
                     } else {
                         c.logger.debug('No worker route available, setting up the database with direct D1 commands')
                         await c.getDb(deploySettings).setup()
@@ -1856,8 +1870,8 @@ export async function migrateAndDeploy(c: CliContext, clean: boolean, doMigrate:
                         }
                         // Still warming up after a fresh deploy: retry only answers that prove the worker didn't apply anything
                         const json = !c.isLocal && deployRoute
-                            ? await fetchWorkerAfterDeploy(c, '/api/v1/migrations', applyRequest, {networkErrors: false, serverErrors: rebindWorker})
-                            : await fetchWorker(c, '/api/v1/migrations', applyRequest, false)
+                            ? await fetchWorkerAfterDeploy(c, '/api/v1/migrations', applyRequest, {networkErrors: false, serverErrors: rebindWorker, timeoutMs: APPLY_MIGRATIONS_TIMEOUT_MS})
+                            : await fetchWorker(c, '/api/v1/migrations', applyRequest, false, true, APPLY_MIGRATIONS_TIMEOUT_MS)
                         applied = json.applied || []
                     } else {
                         applied = await c.getDb(deploySettings).migrationHelper.apply(migrations, deploySettings, lastVersion ?? null)
@@ -1904,15 +1918,17 @@ export async function migrateAndDeploy(c: CliContext, clean: boolean, doMigrate:
                     if(config) {
                         c.logger.section?.('Deploying')
                         try {
-                            const finalRoute = await wranglerDeploy(c, config, !deployRoute)
+                            const addresses = await wranglerDeploy(c, config)
                             // Post-deploy: ensure apiRoute is set in infra.jsonc
-                            if (finalRoute || deployRoute) {
-                                const reportedRoute = finalRoute || deployRoute
+                            if (addresses[0] || deployRoute) {
+                                const reportedRoute = addresses[0] || deployRoute
                                 const existingApiRoute = await c.getApiRoute(true)
-                                if (!existingApiRoute && reportedRoute) {
-                                    // apiRoute not set yet — save the deploy route
+                                // A saved workers.dev URL the deploy no longer reports is dead (workers_dev turned off, or the
+                                // worker renamed): replace it. Other saved addresses may be zone routes, which deploy output doesn't list.
+                                const deadWorkersDev = !!existingApiRoute && /\.workers\.dev\/?$/i.test(existingApiRoute) && !addresses.includes(existingApiRoute.replace(/\/$/, ''))
+                                if ((!existingApiRoute || deadWorkersDev) && reportedRoute) {
                                     c.setApiRoute(reportedRoute!)
-                                    c.logger.info(`Saved ${apiRouteKey}=${reportedRoute} to ${projectConfigFile}. Commit this file to version control.`)
+                                    c.logger.info(`Saved ${apiRouteKey}=${reportedRoute} to ${projectConfigFile}${deadWorkersDev ? ` (replaced ${existingApiRoute}, which this deploy no longer serves)` : ''}. Commit this file to version control.`)
                                 } else if (existingApiRoute && reportedRoute && existingApiRoute !== reportedRoute) {
                                     c.logger.warn(`Deploy reported route ${reportedRoute} but ${projectConfigFile} has ${existingApiRoute}`)
                                 }

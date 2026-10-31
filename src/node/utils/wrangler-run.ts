@@ -10,6 +10,8 @@ import {resolveWranglerPackage} from './wrangler-bin'
 export const WRANGLER_MIN_TEMPORARY = '4.102.0'
 /** `wrangler deploy --secrets-file` (secrets uploaded with the deployment) needs this wrangler or newer. */
 export const WRANGLER_MIN_SECRETS_FILE = '4.74.0'
+/** `wrangler dev --infer-origin-from-routes` exists from this version (4.152.0 doesn't have it, 4.153.0 does). */
+export const WRANGLER_MIN_INFER_ORIGIN_FROM_ROUTES = '4.153.0'
 /** `wrangler whoami --json` needs this wrangler or newer. */
 export const WRANGLER_MIN_WHOAMI_JSON = '4.65.0'
 

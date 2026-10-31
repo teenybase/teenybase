@@ -37,7 +37,8 @@ import {ask} from './prompts'
 import {findTeenybasePackageRoot} from './utils/package-root'
 import {prepareTemporaryAccount, printTemporaryDeployment} from './temporary-account'
 import {resolveDeployAccountId} from './cloudflare-account'
-import {nodeVersionError} from './utils/wrangler-run'
+import {nodeVersionError, versionAtLeast, WRANGLER_MIN_INFER_ORIGIN_FROM_ROUTES} from './utils/wrangler-run'
+import {resolveWranglerPackage} from './utils/wrangler-bin'
 
 process.env.WRANGLER_SEND_METRICS = 'false'
 process.env.WRANGLER_HIDE_BANNER = 'true'
@@ -362,6 +363,11 @@ cli
             // Allow overriding the workerd inspector port (default 9229) to run multiple dev servers
             if (process.env.TEENY_INSPECTOR_PORT) {
                 wranglerArgs.push(`--inspector-port=${process.env.TEENY_INSPECTOR_PORT}`)
+            }
+            // With routes in wrangler.jsonc, wrangler dev otherwise gives the worker the first route's host as request.url and
+            // Host (e.g. https://app.example.com), which breaks links, Origin checks and cookies locally.
+            if (versionAtLeast(resolveWranglerPackage(c.root).version, WRANGLER_MIN_INFER_ORIGIN_FROM_ROUTES)) {
+                wranglerArgs.push('--infer-origin-from-routes=false')
             }
             const devUrl = `http://localhost:${c.devServerPort}`
             await printEndpointInfo(devUrl, true, c.logger)

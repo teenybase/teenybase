@@ -172,6 +172,8 @@ Leave `dev` running while you change `teenybase.ts`: each successful `teeny depl
 
 > `dev` always runs locally. Passing `--remote` will error.
 
+With `routes` in `wrangler.jsonc`, the worker still sees `http://localhost:<port>` as the request URL and `Host` (teeny passes `--infer-origin-from-routes=false` to wrangler 4.153.0 and newer), so links, Origin checks and cookies work locally.
+
 Stop it with Ctrl-C, or send SIGINT/SIGTERM to the `teeny dev` process (a process manager, `kill <pid>`): it stops wrangler and workerd, waits for them to exit, then exits.
 
 ### `build`
