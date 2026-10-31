@@ -219,10 +219,10 @@ describe('role (auth_audience) is admin-only', () => {
     })
 
     test('OAuth/token sign-up does not take a role from the external token', async () => {
-        const s = {...scaffold, authProviders: [{issuer: EXT_ISS, secret: EXT_SECRET, algorithm: 'HS256'}]} as DatabaseSettings
+        const s = {...scaffold, authProviders: [{issuer: EXT_ISS, secret: EXT_SECRET, algorithm: 'HS256', clientId: 'ext-app'}]} as DatabaseSettings
         const now = Math.floor(Date.now() / 1000)
         const ext = await jwt.sign({iss: EXT_ISS, sub: 'ext1@example.com', email: 'ext1@example.com', email_verified: true,
-            role: 'admin', aud: 'admin', iat: now, exp: now + 3600}, EXT_SECRET, {algorithm: 'HS256'})
+            role: 'admin', aud: ['ext-app', 'admin'], iat: now, exp: now + 3600}, EXT_SECRET, {algorithm: 'HS256'})
         const res = await call('table/users/auth/login-token', {method: 'POST', headers: {Authorization: `Bearer ${ext}`}}, undefined, s)
         expect(res.status).toEqual(200)
         const json = await res.json() as any

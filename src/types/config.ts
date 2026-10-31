@@ -198,7 +198,7 @@ export type OAuthExchangeResult = {
 }
 
 /** @deprecated Use AuthProvider instead */
-export type AllowedIssuer = string | ({ issuer: string } & Pick<AuthProvider, 'secret' | 'jwksUrl' | 'algorithm' | 'clientId' | 'bearerMode'>)
+export type AllowedIssuer = string | ({ issuer: string } & Pick<AuthProvider, 'secret' | 'jwksUrl' | 'algorithm' | 'clientId' | 'bearerMode' | 'trustEmailVerified'>)
 
 /**
  * Database adapter configuration. Selects the backend and carries connection info.

@@ -1,4 +1,4 @@
-import {SELF} from "cloudflare:test";
+import {env, SELF} from "cloudflare:test";
 import {beforeAll, expect, test} from "vitest";
 import {setup} from '../data/drive2/setup'
 import * as jwt from '@tsndr/cloudflare-worker-jwt';
@@ -15,11 +15,12 @@ import * as jwt from '@tsndr/cloudflare-worker-jwt';
 
 const EXT_ISS = 'https://ext.example.com'
 const EXT_SECRET = 'ext-shared-secret-0123456789'
+const EXT_AUD = 'ext-app'
 
 let settings: any
 beforeAll(async () => {
     const s = await setup()
-    settings = {...s, authProviders: [{issuer: EXT_ISS, secret: EXT_SECRET, algorithm: 'HS256'}]}
+    settings = {...s, authProviders: [{issuer: EXT_ISS, secret: EXT_SECRET, algorithm: 'HS256', clientId: EXT_AUD}]}
 })
 
 const fetch = (input: RequestInfo, init?: RequestInit) => {
@@ -35,7 +36,7 @@ const fetch = (input: RequestInfo, init?: RequestInit) => {
 const extToken = async (email: string, extra: Record<string, any> = {}) => {
     const now = Math.floor(Date.now() / 1000)
     return await jwt.sign({
-        iss: EXT_ISS, sub: email, email, email_verified: true,
+        iss: EXT_ISS, aud: EXT_AUD, sub: email, email, email_verified: true,
         iat: now, exp: now + 3600, ...extra,
     }, EXT_SECRET, {algorithm: 'HS256'})
 }
@@ -138,4 +139,47 @@ test('duplicate sign-up returns a readable message for email and for username', 
     const dupUser = await signUp({username: 'dupe', email: 'dupe-other@example.com'})
     expect(dupUser.status).toEqual(400)
     expect(((await dupUser.json()) as any).message).toEqual('This username is already taken')
+})
+
+// 0.1.1 B3: issues/resolved/auth-external-issuer-trust-defaults.md
+const rawLogin = async (claims: Record<string, any>, s = settings) => {
+    const now = Math.floor(Date.now() / 1000)
+    const tok = await jwt.sign({iss: EXT_ISS, aud: EXT_AUD, iat: now, exp: now + 3600, ...claims}, EXT_SECRET, {algorithm: 'HS256'})
+    return SELF.fetch('https://example.com/api/v1/table/users/auth/login-token', {
+        method: 'POST',
+        headers: {Authorization: `Bearer ${tok}`, '$DB_TEST_DATABASE_SETTINGS': JSON.stringify(s), 'Content-Type': 'text/plain'},
+    })
+}
+const userCount = async (email: string) => (await env.PRIMARY_DB.prepare('SELECT count(*) AS n FROM users WHERE email = ?').bind(email).first<{n: number}>())!.n
+
+test('a token without an email claim is refused; its sub is never used as the email', async () => {
+    const res = await rawLogin({sub: 'user_2abc', email_verified: true})
+    expect(res.status).toEqual(401)
+    expect(((await res.json()) as any).message).toContain('External token has no email claim')
+    expect(await userCount('user_2abc')).toEqual(0)
+})
+
+test('a token without an email_verified claim signs in nobody, unless the issuer has trustEmailVerified', async () => {
+    const res = await rawLogin({sub: 'u1', email: 'noclaim@example.com'})
+    expect(res.status).toEqual(400)
+    expect(((await res.json()) as any).message).toContain('Email not verified')
+    expect(await userCount('noclaim@example.com')).toEqual(0)
+
+    const trusted = {...settings, authProviders: [{...settings.authProviders[0], trustEmailVerified: true}]}
+    const ok = await rawLogin({sub: 'u1', email: 'noclaim@example.com'}, trusted)
+    expect(ok.status).toEqual(200)
+    expect(((await ok.json()) as any).record.email_verified).toEqual(true)
+})
+
+test('a token for another audience is refused', async () => {
+    const res = await rawLogin({sub: 'u1', email: 'otheraud@example.com', email_verified: true, aud: 'another-app'})
+    expect(res.status).toEqual(401)
+    expect(await userCount('otheraud@example.com')).toEqual(0)
+})
+
+test('an issuer config without clientId is rejected by settings validation', async () => {
+    const bad = {...settings, authProviders: [{issuer: EXT_ISS, secret: EXT_SECRET, algorithm: 'HS256'}]}
+    const res = await rawLogin({sub: 'u1', email: 'cfg@example.com', email_verified: true}, bad)
+    expect(res.status).toBeGreaterThanOrEqual(400)
+    expect(await res.text()).toContain('clientId is required for the JWT issuer')
 })

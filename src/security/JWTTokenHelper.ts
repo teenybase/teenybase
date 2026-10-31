@@ -3,6 +3,26 @@ import {JWTPayload, JWTPayload2, JWTPayloadOp} from '../types/jwt'
 import {HTTPException} from 'hono/http-exception'
 import {AuthProvider} from '../types/config'
 import {SecretResolver} from '../worker/secretResolver'
+import {GOOGLE_ISSUER_PATTERN, SUPABASE_DEFAULT_AUDIENCE, SUPABASE_ISSUER_PATTERN} from '../types/zod/jwtSchemas'
+
+/**
+ * Reads an email-verification claim the way the OAuth path reads its `verified` field: true / 'true' / 1 is verified,
+ * false / 'false' / 0 is not, anything else (usually: no claim) is undefined and falls back to the issuer's
+ * `trustEmailVerified`.
+ */
+function readVerifiedClaim(v: unknown): boolean | undefined {
+    if (v === true || v === 'true' || v === 1) return true
+    if (v === false || v === 'false' || v === 0) return false
+    return undefined
+}
+
+/** 401 for a token whose `aud`/`azp` is not one of the configured client IDs. */
+async function checkAudience(aud: unknown, clientId: string | string[], resolve: (v: string) => Promise<string>, message: string) {
+    const audList = Array.isArray(aud) ? aud : [aud]
+    const rawIds = Array.isArray(clientId) ? clientId : [clientId]
+    const allowedIds = await Promise.all(rawIds.map(id => resolve(id)))
+    if (!audList.some(a => typeof a === 'string' && allowedIds.includes(a))) throw new HTTPException(401, {message})
+}
 
 /** Preset issuer and JWKS config for known providers.
  *  issuer: fixed string for providers with a single issuer (google), RegExp for project-specific issuers (supabase).
@@ -13,7 +33,7 @@ const PROVIDER_JWT_PRESETS: Record<string, { issuer: string | RegExp, jwksUrl: s
         jwksUrl: 'https://www.googleapis.com/oauth2/v3/certs',
     },
     supabase: {
-        issuer: /^https:\/\/[^/]+\.supabase\.co\/auth\/v1$/,
+        issuer: SUPABASE_ISSUER_PATTERN,
         jwksUrl: (iss: string) => `${iss}/.well-known/jwks.json`,
     },
     // todo: add auth0, firebase, clerk presets
@@ -181,6 +201,9 @@ export class JWTTokenHelper{
         // ideally we should issue our own token from google's token and verify that easily.
 
         const issuerConfig = this.issuerMap.get(payload.iss)
+        // Without a client ID any Google ID token would do, including one Google issued to another app for this user.
+        // Config validation requires it; this guards settings that skipped validation.
+        if (issuerConfig?.clientId === undefined) throw new HTTPException(401, {message: 'Google issuer has no clientId configured'})
 
         // doing first way. todo do it properly in DO or when we figure out public cert caching in cf workers, till then this is better
         // todo use this instead https://developers.google.com/identity/gsi/web/guides/verify-google-id-token
@@ -191,13 +214,8 @@ export class JWTTokenHelper{
         if(!res.ok || !json || json.error || !json.email || !json.email_verified) throw new HTTPException(401, {message: 'Invalid google token, unable to find email'})
         if((payload as any).email !== json.email) throw new HTTPException(401, {message: 'Unknown error, Invalid email from google verification'})
 
-        // Verify client ID (audience) if configured
-        if (issuerConfig?.clientId !== undefined) {
-            const aud = json.azp || (payload as any).azp || (payload as any).aud
-            const rawIds = Array.isArray(issuerConfig.clientId) ? issuerConfig.clientId : [issuerConfig.clientId]
-            const allowedIds = await Promise.all(rawIds.map(id => this.resolveValue(id)))
-            if (!allowedIds.includes(aud)) throw new HTTPException(401, {message: 'Invalid Google OAuth client ID'})
-        }
+        // Verify client ID (audience)
+        await checkAudience(json.azp || (payload as any).azp || (payload as any).aud, issuerConfig.clientId, v => this.resolveValue(v), 'Invalid Google OAuth client ID')
 
         // todo: mark this token as "used" (e.g. store token hash in KV with TTL) so it cannot be replayed to create multiple sessions
         return {issData: payload, verified: true, sub: json.email, iss: 'google'} as JWTPayloadOp
@@ -216,12 +234,16 @@ export class JWTTokenHelper{
 
         if (!valid) throw new HTTPException(401, {message: 'Invalid supabase token'})
 
+        // Supabase user access tokens carry aud 'authenticated'; the preset supplies it when clientId isn't set.
+        await checkAudience((payload as any).aud, issuerConfig.clientId ?? SUPABASE_DEFAULT_AUDIENCE, v => this.resolveValue(v), 'Invalid audience for supabase token')
+
         const payloadAny = payload as any
         const email = payloadAny.email || payloadAny.user_metadata?.email
-        const emailVerified = payloadAny.user_metadata?.email_verified ?? false // todo this is always false?
+        // Supabase puts the verification in user_metadata (email_verified, set when the user confirms). Without a claim,
+        // only trustEmailVerified (e.g. a project with "Confirm email" on, which issues no session before confirmation).
+        const verified = readVerifiedClaim(payloadAny.email_verified ?? payloadAny.user_metadata?.email_verified) ?? (issuerConfig.trustEmailVerified === true)
         const fullName = payloadAny.user_metadata?.full_name || ''
         const userName = payloadAny.user_metadata?.username || ''
-        const userId = payloadAny.sub || email
 
         if (!email) throw new HTTPException(401, {message: 'Invalid supabase token, unable to find email'})
 
@@ -232,9 +254,7 @@ export class JWTTokenHelper{
                 username: userName,
                 ...payload
             },
-            // todo email_verified is false, maybe we can check for payload.amr
-            // verified: emailVerified,
-            verified: true,
+            verified,
             sub: email, iss: payload.iss
         } as JWTPayloadOp
     }
@@ -264,27 +284,35 @@ export class JWTTokenHelper{
         })
         if (!valid) throw new HTTPException(401, {message: 'Invalid external token'})
 
-        // Audience/clientId validation (same pattern as Google handler)
+        const p = payload as any
+        const mode = issuerConfig.bearerMode || 'login'
+        const identityOnly = mode === 'login' || mode === 'partial'
+
+        // Audience/clientId validation (same pattern as Google handler). Required for 'login'/'partial' (validated
+        // in config, guarded here): without it a token the issuer made for any other app on the same tenant would
+        // sign in here. 'full'/'admin' take teenybase's own token format, where `aud` carries the user's roles, so
+        // the trust there is the issuer's key; checked only when configured.
         if (issuerConfig.clientId !== undefined) {
-            const aud = (payload as any).aud || (payload as any).azp
-            const audList = Array.isArray(aud) ? aud : [aud]
-            const rawIds = Array.isArray(issuerConfig.clientId) ? issuerConfig.clientId : [issuerConfig.clientId]
-            const allowedIds = await Promise.all(rawIds.map(id => this.resolveValue(id)))
-            if (!audList.some(a => allowedIds.includes(a))) {
-                throw new HTTPException(401, {message: 'Invalid audience for external issuer'})
-            }
+            await checkAudience(p.aud || p.azp, issuerConfig.clientId, v => this.resolveValue(v), 'Invalid audience for external issuer')
+        } else if (identityOnly) {
+            throw new HTTPException(401, {message: 'External issuer has no clientId configured'})
         }
 
-        // Extract email — support common claim locations across providers
-        const p = payload as any
-        const email = p.email || p.sub || p.user_metadata?.email
-        if (!email) throw new HTTPException(401, {message: 'External token missing identity claim (email or sub)'})
+        // Users are keyed by email. 'login'/'partial' tokens come from third-party IdPs whose `sub` is their own user
+        // id (auth0|123, user_2abc): never an email, so it is never used as one. 'full'/'admin' take teenybase's own
+        // token format, where `sub` is the user's email.
+        const email = identityOnly ? (p.email || p.user_metadata?.email) : (p.email || p.sub)
+        if (!email || typeof email !== 'string') throw new HTTPException(401, {
+            message: identityOnly
+                ? 'External token has no email claim. teenybase signs users in by email: add an `email` claim to the token (Clerk: a JWT template with "email": "{{user.primary_email_address}}"; Auth0: a custom claim set in an Action), or send the provider\'s ID token, which has one'
+                : 'External token missing identity claim (email or sub)',
+        })
 
-        const verified = p.email_verified ?? p.verified ?? true
-        const mode = issuerConfig.bearerMode || 'login'
+        // Verified only when the token says so, or when the issuer is configured to be trusted (trustEmailVerified).
+        const verified = readVerifiedClaim(p.email_verified ?? p.verified) ?? (issuerConfig.trustEmailVerified === true)
 
         // 'partial' / 'login': identity fields only
-        if (mode === 'login' || mode === 'partial') {
+        if (identityOnly) {
             return { issData: payload, verified, sub: email, iss: payload.iss } as JWTPayloadOp
         }
 
@@ -383,7 +411,7 @@ export class JWTTokenHelper{
     }
 
     // Issuer patterns for different providers
-    static GOOGLE_ISSUER_PATTERN = /^https:\/\/accounts\.google\.com$/
-    static SUPABASE_ISSUER_PATTERN = /^https:\/\/[^\/]+\.supabase\.co\/auth\/v1$/
+    static GOOGLE_ISSUER_PATTERN = GOOGLE_ISSUER_PATTERN
+    static SUPABASE_ISSUER_PATTERN = SUPABASE_ISSUER_PATTERN
 
 }

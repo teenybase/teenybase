@@ -488,8 +488,12 @@ export class TableAuthExtension extends TableExtension<TableAuthExtensionData> {
     }
 
     private async _loginWithToken(tok: string) {
-        const payload = await this.table.$db.jwt.decodeAuth(tok, await this.jwtSecret(), false).catch(() => null)
-        // payload will be null when sign not valid or expired etc
+        // The verifier's own errors say what is wrong with the token (unknown issuer, bad signature, wrong audience, no
+        // email claim), which is what an integrator needs; anything else (a token that doesn't even decode) is a plain 401.
+        const payload = await this.table.$db.jwt.decodeAuth(tok, await this.jwtSecret(), false).catch((e) => {
+            if (e instanceof HTTPException) throw e
+            return null
+        })
         if (!payload) throw new HTTPException(401, {message: 'Unauthorized'})
 
         if(payload.iss === this.table.$db.jwt.issuer){
@@ -498,8 +502,10 @@ export class TableAuthExtension extends TableExtension<TableAuthExtensionData> {
             throw new HTTPException(400, {message: 'Use refresh-token endpoint instead'})
         }
 
-        // todo why this false and 0 check? because it can be 'true'?
-        if(payload.verified === false || (payload as any).verified === 0) throw new HTTPException(400, {message: 'Not verified'})
+        // JWTTokenHelper returns a boolean: the token's email_verified/verified claim, or the issuer's trustEmailVerified.
+        // An email the issuer doesn't vouch for must not sign in: it could be anyone's address (pre-account takeover).
+        if(payload.verified !== true) throw new HTTPException(400, {message: 'Email not verified: the token must carry email_verified: true, or the issuer must be configured with trustEmailVerified: true'})
+        if(!payload.iss) throw new HTTPException(401, {message: 'Unauthorized'})
 
         return this._loginWithExternalUser(payload.sub, payload?.issData, payload.iss)
     }
