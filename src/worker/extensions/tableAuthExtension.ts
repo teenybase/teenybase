@@ -507,14 +507,29 @@ export class TableAuthExtension extends TableExtension<TableAuthExtensionData> {
         if(payload.verified !== true) throw new HTTPException(400, {message: 'Email not verified: the token must carry email_verified: true, or the issuer must be configured with trustEmailVerified: true'})
         if(!payload.iss) throw new HTTPException(401, {message: 'Unauthorized'})
 
-        return this._loginWithExternalUser(payload.sub, payload?.issData, payload.iss)
+        return this._loginWithExternalUser(payload.sub, payload.issData ?? {}, payload.iss)
     }
 
-    private async _loginWithExternalUser(email: string, issData: any, provider?: string) {
+    /**
+     * Signs in the owner of a provider-verified email: OAuth callback, google-login, login-token. Callers refuse
+     * unverified emails first, so `email` is proven to belong to whoever is signing in.
+     * - No row with that email: create one, email_verified true.
+     * - A row whose email is verified, or that an earlier external sign-in owns: sign in to it, as before.
+     * - A row whose email was never proven (a password sign-up with that address): take it over, see
+     *   {@link _takeOverUnprovenUser}. Linking it as-is would let whoever signed up with the address first keep
+     *   using the account (pre-account takeover).
+     * The identity is recorded in `_auth_identities` (when `saveIdentities` is on) on every one of these paths.
+     */
+    private async _loginWithExternalUser(email: string, external: Record<string, any>, provider: string) {
         // Normalize email from external provider (OAuth, JWT) — same rules as password sign-up
         if (this.data.normalizeEmail !== false) {
             try { email = normalizeEmail(email) } catch { /* non-fatal */ }
         }
+        // The account key is the email. A provider that sends something else (e.g. an opaque user id) can't sign
+        // in: matching it against the email column could reach the wrong row. Kept loose on purpose: password
+        // sign-up's stricter check rejects non-Latin local parts, which providers do send.
+        if (typeof email !== 'string' || !/^[^\s@]+@[^\s@]+$/.test(email))
+            throw new HTTPException(401, {message: 'The sign-in provider did not supply a valid email address'})
         // Check disposable email domains (same as password sign-up)
         try {
             checkBlocklist(email, this.table.$db.c.env?.EMAIL_BLOCKLIST)
@@ -522,10 +537,12 @@ export class TableAuthExtension extends TableExtension<TableAuthExtensionData> {
             if (e instanceof HTTPException) throw e
         }
         let res = await this.findUser(email, true)
+        let created = false
         // todo make a setting in this.data to control whether a new user should be created on new token or should it be explicit
         if(!res) {
             try {
-                res = await this._createUserToken(email, true, issData, undefined, undefined, provider)
+                res = await this._createUserToken(email, true, external)
+                created = true
             } catch (e: any) {
                 // Concurrent first login: another in-flight request for this same new email won the INSERT
                 // between our findUser() and ours. _createUserToken deliberately does not retry an email
@@ -542,6 +559,12 @@ export class TableAuthExtension extends TableExtension<TableAuthExtensionData> {
         if(!res) throw new HTTPException(401, {message: 'Unauthorized'})
         if(res.email !== email) throw new HTTPException(400, {message: 'Invalid email'})
 
+        // A row this request didn't create, including one a concurrent request created above (it gets the same check:
+        // a verified row passes, and the race can't be used to slip an unproven row through).
+        if(!created && !(await this._isEmailOwnershipProven(res))) res = await this._takeOverUnprovenUser(res)
+
+        await this._saveIdentity(res.id, provider, external)
+
         const ret: {
             token: string,
             refresh_token: string,
@@ -556,6 +579,69 @@ export class TableAuthExtension extends TableExtension<TableAuthExtensionData> {
         if(this.mapping.emailVerified && !res.emailVerified) ret.verified = false
 
         return ret
+    }
+
+    /**
+     * Whether the existing row's email is known to belong to its owner, so a verified external sign-in may simply
+     * sign in to it. With an email_verified column that is the column. Without one nothing records it, so:
+     * - no password column: rows can only be created by external sign-ins (or an admin), nobody can hold a
+     *   password for them, so there is nothing to take over;
+     * - otherwise proven only if `_auth_identities` (saveIdentities) has an identity for the user, i.e. an earlier
+     *   verified external sign-in created or took over the row. Without that record every external sign-in to a
+     *   password row takes it over again: that ends other sessions and replaces the password each time, but never
+     *   locks the user out (they are signed in, and password reset sets a new password). Documented in
+     *   docs/security.md "Account linking"; adding an email_verified field avoids it.
+     */
+    private async _isEmailOwnershipProven(user: UserFields) {
+        if(this.mapping.emailVerified) return !!user.emailVerified
+        if(!this.mapping.password) return true
+        const identities = this.data.saveIdentities ? this.table.$db.identities : null
+        if(!identities) return false
+        return (await identities.findByUserId(user.id)).length > 0
+    }
+
+    /**
+     * Takes over a row whose email was never proven, for the provider-verified owner of that email: in one UPDATE
+     * mark the email verified and replace the password with a random one nobody knows (fresh salt), so a password
+     * set by whoever created the row stops working; then end every session of the user. The real owner can set a
+     * password with password reset. Access tokens already issued stay valid until they expire (jwtTokenDuration);
+     * they can't be refreshed.
+     * The UPDATE matches the email too: if the row's email changed since it was read, nothing is taken over.
+     */
+    private async _takeOverUnprovenUser(user: UserFields): Promise<UserFields> {
+        if(!this.mapping.email || !user.email) throw new HTTPException(500, {message: 'Invalid Configuration - email field required'})
+        const set: Record<string, SQLLiteral> = {}
+        if(this.mapping.emailVerified) set[this.mapping.emailVerified] = {l: true}
+        if(this.data.passwordType && this.mapping.password) {
+            const salt = this.mapping.passwordSalt ? randomString(SALT_LENGTH) : ''
+            set[this.mapping.password] = {l: await this._hashPassword(generateUid() + generateUid(), salt), redact: true}
+            if(this.mapping.passwordSalt) set[this.mapping.passwordSalt] = {l: salt, redact: true}
+        }
+        let updated: UserFields | null = user
+        if(Object.keys(set).length) {
+            const res = await this.table.$db.rawUpdate(this.table, {
+                table: this.jc.tableName,
+                where: {
+                    q: `${ident(this.mapping.uid, this.jc)} = {:uid} AND ${ident(this.mapping.email, this.jc)} = {:email}`,
+                    p: {uid: user.id, email: user.email},
+                },
+                set,
+                returning: this._userFields(),
+            })?.run() ?? []
+            updated = this._fieldsToUser(res[0])
+            if(!updated) throw new HTTPException(409, {message: 'The account changed during sign-in, try again'})
+        }
+        await this._invalidateAllUserSessions(user.id)
+        return updated
+    }
+
+    /** Records the external identity in `_auth_identities` when saveIdentities is on. Idempotent per (user, provider). */
+    private async _saveIdentity(userId: string, provider: string, external: Record<string, any>) {
+        const identities = this.data.saveIdentities ? this.table.$db.identities : null
+        if(!identities) return
+        const providerId = external?.providerId ?? external?.sub ?? external?.id
+        const rawData = external?.rawData ?? external
+        await identities.insert(userId, provider, providerId !== undefined && providerId !== null ? String(providerId) : undefined, rawData)
     }
 
     // region OAuth
@@ -669,7 +755,7 @@ export class TableAuthExtension extends TableExtension<TableAuthExtensionData> {
         if (!result.email) throw new HTTPException(400, {message: 'Email not available from provider'})
         if (result.verified === false) throw new HTTPException(400, {message: 'Email not verified'})
 
-        const ret = await this._loginWithExternalUser(result.email, result, providerName)
+        const ret = await this._loginWithExternalUser(result.email, result as Record<string, any>, providerName)
         this._setAuthCookie(ret.token)
 
         const redirectUrl = this._validateRedirectUrl(state.r) || provider.redirectUrl || this.table.$db.settings.appUrl
@@ -1015,7 +1101,7 @@ export class TableAuthExtension extends TableExtension<TableAuthExtensionData> {
     }
 
     // this should only be used for auto user creation
-    private async _createUserToken(email: string|undefined, verified: boolean, externalData: any, record?:Record<string, SQLLiteral>, values2 ?:Record<string, SQLLiteral>, provider?: string) {
+    private async _createUserToken(email: string|undefined, verified: boolean, externalData: any, record?:Record<string, SQLLiteral>, values2 ?:Record<string, SQLLiteral>) {
         if(!this.table.data.autoSetUid) throw new HTTPException(500, {message: 'Invalid Configuration - autoSetUid required for auth extension'})
         const values: Record<string, SQLLiteral> = {
             ...record,
@@ -1074,16 +1160,8 @@ export class TableAuthExtension extends TableExtension<TableAuthExtensionData> {
                     values: {...values},
                     returning: this._userFields(),
                 })?.run() ?? []
-                const user = this._fieldsToUser(res[0])
-                if (user && provider && this.data.saveIdentities && this.table.$db.identities) {
-                    const providerId = externalData?.providerId ?? externalData?.sub ?? externalData?.id
-                    const rawData = externalData?.rawData ?? externalData
-                    this.c.executionCtx.waitUntil(
-                        // todo batch this with the previous query, or use triggers?
-                        this.table.$db.identities.insert(user.id, provider, providerId ? String(providerId) : undefined, rawData)
-                    )
-                }
-                return user
+                // the identity is recorded by the caller (_loginWithExternalUser), for created and existing rows alike
+                return this._fieldsToUser(res[0])
             } catch (error: any) {
                 lastError = error
                 // Retry ONLY a username collision: a fresh username cannot resolve an email collision,
