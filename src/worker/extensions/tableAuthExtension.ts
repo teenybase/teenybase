@@ -1148,8 +1148,10 @@ export class TableAuthExtension extends TableExtension<TableAuthExtensionData> {
 
     /** Validates a user-supplied redirect URL after OAuth login.
      *  - Relative paths (e.g., '/dashboard') are resolved against appUrl.
-     *  - If allowedRedirectUrls is configured, checks exact match against that list only.
-     *  - If not configured, allows URLs matching appUrl hostname.
+     *  - If allowedRedirectUrls is configured, checks exact match against that list only (the way to allow app
+     *    deep links like `myapp://callback` and other origins).
+     *  - If not configured, allows URLs with appUrl's origin: same scheme, host and port. Comparing the hostname only
+     *    let `javascript://<host>/%0a...`, `intent://<host>/...`, `http://` for an https app, and other ports through.
      *  Returns the validated absolute URL, or undefined if rejected. */
     private _validateRedirectUrl(url?: string): string | undefined {
         if (!url) return undefined
@@ -1157,20 +1159,21 @@ export class TableAuthExtension extends TableExtension<TableAuthExtensionData> {
         const appUrl = this.table.$db.settings.appUrl
 
         // Resolve relative paths against appUrl (e.g., '/dashboard' → 'https://myapp.com/dashboard')
-        let resolved: string
+        let resolved: URL
         try {
-            resolved = new URL(url, appUrl).href
+            resolved = new URL(url, appUrl)
         } catch { return undefined }
 
         const allowed = this.table.$db.settings.allowedRedirectUrls
         if (allowed && allowed.length > 0) {
-            return allowed.includes(resolved) ? resolved : undefined
+            return allowed.includes(resolved.href) ? resolved.href : undefined
         }
 
-        // No allowlist configured — allow appUrl hostname only
+        // No allowlist configured — allow appUrl's origin only. Non-http(s) URLs have the opaque origin 'null'.
         try {
-            if (new URL(resolved).hostname === new URL(appUrl).hostname) return resolved
-        } catch { /* invalid URL */ }
+            const appOrigin = new URL(appUrl).origin
+            if (appOrigin !== 'null' && resolved.origin === appOrigin) return resolved.href
+        } catch { /* invalid appUrl */ }
 
         return undefined
     }

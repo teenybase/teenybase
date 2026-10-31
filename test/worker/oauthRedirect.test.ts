@@ -5,7 +5,7 @@ import {DatabaseSettings} from '../../src'
 
 // Where the OAuth callback sends the browser after login: the `redirect` query of the authorize call travels in
 // `state` and is validated by TableAuthExtension._validateRedirectUrl. Without allowedRedirectUrls only appUrl's
-// hostname is accepted (drive2 appUrl: https://localhost); anything else falls back to provider.redirectUrl/appUrl.
+// origin is accepted (drive2 appUrl: https://localhost); anything else falls back to provider.redirectUrl/appUrl.
 // The provider is a fake one, its token and userinfo endpoints are answered by fetchMock (the outbound-fetch mock of
 // cloudflare:test). Files that replace globalThis.fetch must restore it (vi.stubGlobal + vi.unstubAllGlobals): the
 // pool runs every file in one worker, and a leftover vi.fn() fetch made every callback here a 500.
@@ -78,18 +78,33 @@ describe('OAuth redirect after login', () => {
         expect(await landing(target)).toEqual('https://localhost')
     })
 
-    test('the check is on the hostname: another port or scheme on the appUrl host is followed (current behaviour)', async () => {
-        // pinned on purpose: tightening this to appUrl's origin is an open decision (lets a frontend on another
-        // localhost port work without allowedRedirectUrls). See docs/security.md "OAuth redirects".
-        expect(await landing('http://localhost:5173/after-login')).toEqual('http://localhost:5173/after-login')
+    // 0.1.1: the check is on appUrl's origin (scheme + host + port). Before, only the hostname was compared, so every
+    // one of these was followed. issues/resolved/auth-oauth-redirect-origin-and-scheme.md
+    test.each([
+        'javascript://localhost/%0aalert(document.cookie)',
+        'intent://localhost/#Intent;scheme=https;end',
+        'http://localhost/after-login',
+        'http://localhost:5173/after-login',
+        'https://localhost:8443/after-login',
+        'myapp://localhost/callback',
+    ])('same hostname, different origin falls back to appUrl: %s', async (target) => {
+        expect(await landing(target)).toEqual('https://localhost')
     })
 
     test('with allowedRedirectUrls only exact matches are followed', async () => {
-        const s = withProvider({allowedRedirectUrls: ['https://localhost/dashboard', 'https://app.example.com/welcome']})
+        const s = withProvider({allowedRedirectUrls: ['https://localhost/dashboard', 'https://app.example.com/welcome', 'http://localhost:5173/after-login']})
         expect(await landing('/dashboard', s)).toEqual('https://localhost/dashboard')
         expect(await landing('https://app.example.com/welcome', s)).toEqual('https://app.example.com/welcome')
+        expect(await landing('http://localhost:5173/after-login', s)).toEqual('http://localhost:5173/after-login')
         expect(await landing('/settings', s)).toEqual('https://localhost')
         expect(await landing('https://app.example.com/welcome/../admin', s)).toEqual('https://localhost')
+    })
+
+    test('a custom-scheme deep link is followed only through allowedRedirectUrls', async () => {
+        expect(await landing('myapp://callback')).toEqual('https://localhost')
+        const s = withProvider({allowedRedirectUrls: ['myapp://callback']})
+        expect(await landing('myapp://callback', s)).toEqual('myapp://callback')
+        expect(await landing('myapp://callback/other', s)).toEqual('https://localhost')
     })
 })
 
