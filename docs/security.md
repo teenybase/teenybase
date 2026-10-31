@@ -43,6 +43,8 @@ Teenybase is early (v0.1). Security fixes are applied to the latest version only
 
 **Refresh tokens:** Generated as UUID v4 (base64-encoded), stored in KV with TTL. New refresh token issued on every refresh (rotation). Session has a configurable max duration and max refresh count.
 
+**Changing the password:** `change-password` and non-admin record updates of the password require the current password (`passwordCurrent`) unless `passwordCurrentSuffix` is set to `''`. Changing it ends the user's other sessions.
+
 **Token secrets:** JWT signing uses a composite secret (`baseSecret + tableSecret`). The database-level `jwtSecret` is the base; the auth table's `jwtSecret` provides the second portion. Both should be strong, random, and stored in environment variables (`.prod.vars` or Cloudflare secrets).
 
 ### SQL Injection Prevention
@@ -103,7 +105,7 @@ Default configuration allows all origins (`origin: '*'`), all methods, and all h
 
 OAuth users are matched to existing teenybase accounts by email. An attacker who can convince an OAuth provider to issue a token for `victim@example.com` — without controlling that inbox — could otherwise sign in as the victim or pre-create an account that the victim later inherits when they sign up legitimately. This is called *pre-account-takeover*.
 
-To block it, teenybase rejects any OAuth callback where the provider doesn't confirm email verification. The callback responds `400 Email not verified` and no user record is created or modified.
+To block it, teenybase rejects any OAuth callback where the provider doesn't confirm email verification. The callback responds `400 Email not verified` and no user record is created or modified. External issuer tokens (`/auth/login-token`) follow the same rule: verified only when the token carries `email_verified: true` (or `verified`), or the issuer has `trustEmailVerified: true`; the hosted `supabase` preset reads `user_metadata.email_verified`.
 
 - **Trusted presets** (`google`, `linkedin`) carry `trustEmailVerified: true` — they verify email at account creation, so a missing field is safe to trust.
 - **`discord`** reads the explicit `verified` field from the user object.
@@ -112,9 +114,19 @@ To block it, teenybase rejects any OAuth callback where the provider doesn't con
 
 See [OAuth Guide → Email Verification Trust](oauth-guide.md#email-verification-trust) for setup details.
 
+### Account Linking
+
+A verified email can still meet an existing row created by someone else: an attacker signs up with a password using `victim@example.com` (unverified, they can't read that inbox), then the victim signs in with Google. Since 0.1.1 the verified external sign-in takes such a row over: the email is marked verified, the password is replaced with a random one, every existing session of the user is ended, and the identity is recorded (`saveIdentities`). The attacker's password no longer works and their session can't be refreshed; an access token they already hold stays valid until it expires (`jwtTokenDuration`, keep it short). Rows whose email is verified are signed in to as before.
+
+Tables without an `email_verified` field can't tell a proven email from an unproven one, so a row with a password counts as unproven unless an earlier external sign-in is recorded in `_auth_identities` (`saveIdentities: true`). Without that, every external sign-in to such a row replaces its password and ends the other sessions; add an `email_verified` field to avoid it. See [Signing in to an existing account](config-reference.md#signing-in-to-an-existing-account).
+
+### External Issuer Tokens
+
+A JWT issuer in `'login'` (default) or `'partial'` bearerMode must have `clientId` (a config validation error otherwise): the token's `aud`/`azp` must be one of those values, so a token the issuer made for another app on the same tenant (another Google client, another Auth0 application) is refused. Users are keyed by email, so these tokens need an `email` claim; `sub` (the provider's own user id) is never used as the email. `'full'`/`'admin'` issuers are other teenybase instances whose tokens carry roles in `aud`; their key is the trust, and `clientId` is checked only when set.
+
 ### OAuth Redirects
 
-After an OAuth login the callback redirects the browser to the `redirect` query of the authorize call. The target is parsed as a URL (relative paths resolve against `appUrl`) and followed only if it is in `allowedRedirectUrls` (exact match) or, when that list is not set, if its hostname is `appUrl`'s hostname. Anything else (another host, `//host`, `user@host` tricks, `javascript:`/`data:` URLs) falls back to the provider's `redirectUrl`, then `appUrl`. The check is on the hostname, not the full origin: a different port or `http://` on the same host is accepted. If other services share your app's hostname on other ports, set `allowedRedirectUrls`.
+After an OAuth login the callback redirects the browser to the `redirect` query of the authorize call. The target is parsed as a URL (relative paths resolve against `appUrl`) and followed only if it is in `allowedRedirectUrls` (exact match) or, when that list is not set, if it has `appUrl`'s origin: the same scheme, host and port. Anything else (another host, `//host`, `user@host` tricks, `javascript:`/`intent:`/`data:` URLs even with the app's hostname, `http://` for an `https://` app, another port) falls back to the provider's `redirectUrl`, then `appUrl`. To redirect to an app deep link (`myapp://callback`) or a frontend on another origin (a dev server on another port), list the exact URL in `allowedRedirectUrls`.
 
 ### Encryption
 

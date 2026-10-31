@@ -80,8 +80,10 @@ export interface AuthProvider {
     issuer?: string
 
     // OAuth redirect flow (enabled when clientSecret is present)
-    /** OAuth client ID (literal or $ENV_VAR). Also used for JWT audience validation.
-     *  Supports multiple IDs (e.g., Google ios/web/android clients). Required when clientSecret is set. */
+    /** OAuth client ID (literal or $ENV_VAR). Also the JWT audience: a token is accepted only when its `aud` (or
+     *  `azp`) is one of these. Supports multiple IDs (e.g., Google ios/web/android clients). Required when clientSecret
+     *  is set, and for every JWT issuer (`issuer` set, or the `google` preset) in 'login'/'partial' bearerMode; not for
+     *  'full'/'admin' (teenybase tokens carry roles in `aud`) or the hosted supabase preset (defaults to 'authenticated'). */
     clientId?: string | string[]
     /** OAuth client secret ($ENV_VAR). When present, enables the OAuth redirect flow. */
     clientSecret?: string
@@ -112,7 +114,7 @@ export interface AuthProvider {
     /**
      * URL to redirect the user to after OAuth completes. This is the frontend URL,
      * not the OAuth callback URL (which is handled internally).
-     * Validated against `allowedRedirectUrls` or `appUrl` hostname.
+     * Not validated (it comes from the config); the `redirect` query is validated against `allowedRedirectUrls` or `appUrl`'s origin.
      * @default appUrl
      */
     redirectUrl?: string
@@ -156,12 +158,13 @@ export interface AuthProvider {
         verified?: string
     }
     /**
-     * Trust this provider's email as verified when the verification field is missing or the
-     * mapping is not set. Use only for providers where email verification is intrinsic to the
-     * account (e.g., Google, Apple, LinkedIn). For untrusted providers (custom IdPs, providers
-     * that don't validate email at signup), leave unset — unverified emails should never be
-     * auto-linked to an existing account by email, as that enables pre-account-takeover.
-     * Set explicitly per provider; the framework defaults to `false`.
+     * Trust this provider's email as verified when the verification field is missing: the OAuth
+     * response's `mapping.verified` field, or a JWT issuer token's `email_verified` / `verified`
+     * claim. An explicit false is never overridden. Use only for providers where email verification
+     * is intrinsic to the account (e.g., Google, Apple, LinkedIn, a Supabase project with "Confirm
+     * email" on). For untrusted providers (custom IdPs, providers that don't validate email at
+     * signup), leave unset: unverified emails never sign in, since linking them to an existing
+     * account by email enables pre-account-takeover.
      * @default false
      */
     trustEmailVerified?: boolean
@@ -306,8 +309,9 @@ export interface DatabaseSettings {
 
     /** Allowed redirect URLs after OAuth login (exact match).
      *  Relative paths in the redirect param are resolved against appUrl before matching.
-     *  When not set, any URL matching appUrl hostname is allowed.
-     *  Example: ['https://myapp.com/dashboard', 'https://staging.myapp.com/callback'] */
+     *  When not set, only URLs with appUrl's origin (same scheme, host and port) are allowed. List app deep links
+     *  (`myapp://callback`) and other origins here.
+     *  Example: ['https://myapp.com/dashboard', 'https://staging.myapp.com/callback', 'myapp://callback'] */
     allowedRedirectUrls?: string[]
 
     /**

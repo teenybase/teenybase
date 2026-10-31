@@ -66,7 +66,7 @@ export default {
 | `jwtIssuer` | `string` | No | `'$db'` | JWT `iss` claim value for tokens created by this instance. |
 | `jwtAlgorithm` | `string` | No | `'HS256'` | JWT signing algorithm. |
 | `authProviders` | `AuthProvider[]` | No | `[]` | External auth provider configurations — OAuth redirect flows, JWT verification, or both. See [Auth Providers](#auth-providers). |
-| `allowedRedirectUrls` | `string[]` | No | — | Allowed redirect URLs after OAuth login (exact match). When not set, URLs matching `appUrl` hostname are allowed. See [OAuth Guide](oauth-guide.md). |
+| `allowedRedirectUrls` | `string[]` | No | — | Allowed redirect URLs after OAuth login (exact match). When not set, only URLs with `appUrl`'s origin (same scheme, host and port) are allowed. List app deep links (`myapp://callback`) and other origins here. See [OAuth Guide](oauth-guide.md#redirect-url-validation). |
 | `authCookie` | `AuthCookieConfig` | No | — | Cookie-based auth for SSR and OAuth flows. See [Auth Cookie](#auth-cookie). |
 | `email` | `EmailSettings` | No | — | Email provider config for verification/reset emails. See [Email Configuration](#email-configuration). |
 | `actions` | `SQLAction[]` | No | `[]` | Server-side actions callable via API. See [Actions Guide](actions-guide.md). |
@@ -289,7 +289,7 @@ Adds authentication endpoints to a table — sign-up, login, password reset, ema
 |----------|------|---------|-------------|
 | `passwordType` | `'sha256'` | `'sha256'` | Password hashing algorithm. Currently only `sha256` supported. |
 | `passwordConfirmSuffix` | `string` | — | Suffix for password confirmation field (e.g., `'Confirm'` → `passwordConfirm`). When set, sign-up requires both fields to match. |
-| `passwordCurrentSuffix` | `string` | `'Current'` | Suffix for current password field on update (e.g., `passwordCurrent`). Set to `''` to disable (not recommended). |
+| `passwordCurrentSuffix` | `string` | `'Current'` | Suffix for the current-password field (`passwordCurrent`) that `change-password` and non-admin record updates of the password must send. Unset means `'Current'`; `''` turns the check off (not recommended: any session could then set a new password). Users created by an OAuth/token sign-in have a random password, so they set one with password reset. On a table with a password salt column, a record update can't check it and answers 400: use `POST /auth/change-password`. |
 
 **Email & verification:**
 
@@ -307,7 +307,50 @@ Adds authentication endpoints to a table — sign-up, login, password reset, ema
 
 | Property | Type | Default | Description |
 |----------|------|---------|-------------|
-| `saveIdentities` | `boolean` | `false` | Save OAuth provider identity data in `_auth_identities` table. |
+| `saveIdentities` | `boolean` | `false` | Save the provider identity (provider, provider user id, profile) in the `_auth_identities` table on every OAuth/token sign-in. On a table without an `email_verified` field it also tells teenybase that an external sign-in already owns a row (see [Signing in to an existing account](#signing-in-to-an-existing-account)). |
+
+#### Signing in to an existing account
+
+An OAuth, `google-login` or `login-token` sign-in finds the user by email, and only with an email the provider verified (see [Auth Providers](#auth-providers)). What happens when a row with that email already exists:
+
+- **The row's `email_verified` is true:** the user is signed in to it.
+- **The row's email was never verified** (for example a password sign-up with that address): the provider has just proven who owns the address, so teenybase takes the account over for them. In one update it marks the email verified and replaces the password with a random one (so a password set by whoever created the row stops working), ends every existing session of the user, then signs in. The owner sets a password with password reset if they want one. Access tokens already issued stay valid until they expire (`jwtTokenDuration`); they can't be refreshed.
+- **The table has no `email_verified` field:** teenybase can't know whether the row's email was proven. Without a password field there is nothing to take over and the user is signed in. With one, the row is taken over as above unless `_auth_identities` already has an identity for the user (`saveIdentities: true`, recorded by an earlier external sign-in). Without `saveIdentities` every external sign-in to such a row replaces the password and ends the user's other sessions again. Add an `email_verified` field (it is in `authFields`) to avoid this.
+
+A new row created by an external sign-in has `email_verified` true.
+
+#### Sign-in hook (`db.onSignIn`)
+
+To run code when a user signs in (record which provider was used, copy data from the provider's profile, refuse some users), register a hook on the `$Database` in your worker entry. It can't go in `teenybase.ts`: the config is stored and shipped as JSON, so it can't hold functions.
+
+```ts
+// src/index.ts
+const app = teenyHono<Env>(async (c) => {
+    const db = new $Database(c, config, new D1Adapter(c.env.PRIMARY_DB))
+    db.onSignIn.push(async ({provider, user, external, db}) => {
+        // A user whose handle is still pending signs in with GitHub: take the GitHub login as the handle.
+        if (provider !== 'github') return
+        await db.rawSQL({
+            q: 'UPDATE users SET username = ?, handle_set = 1 WHERE id = ? AND handle_set = 0',
+            v: [external?.username, user.id],
+        }).run()
+    })
+    return db
+})
+```
+
+| Argument | Description |
+|---|---|
+| `table` | The auth table's name. |
+| `user` | The user's `record` as the response returns it (the auth columns), plus `id`. |
+| `provider` | `'password'` (login-password, sign-up), `'email'` (an emailed link signed in: confirm-verification, confirm-password-reset), the OAuth provider name (`'github'`, `'google'`, ...), or for `login-token` / `google-login` the token's issuer (`'google'` for Google ID tokens, the `iss` URL otherwise). |
+| `created` | `true` when this request created the user row. |
+| `external` | OAuth: `{provider, providerId, email, name, avatar, username, verified, rawData}` with the provider's profile in `rawData`. `login-token` / `google-login`: the verified token's claims. Never the provider's access or refresh tokens. Unset for `'password'` and `'email'`. |
+| `db` | This request's `$Database`. The user isn't signed in on it yet, so write with `db.rawSQL` (table rules would see an anonymous request). |
+
+Hooks run in order and are awaited, after the user row is found or created and before the session is created. A hook that throws fails the sign-in with that error (throw an `HTTPException` from `hono/http-exception` to pick the status) and no session or cookie is created; a row created on that request stays, so the next attempt has `created: false`. After the hooks the row is read again, so changes to auth columns (role, meta, username) are in the token. `refresh-token` renews an existing sign-in and does not run hooks.
+
+> **Advanced:** `TableAuthExtension` is exported from `teenybase/worker` for custom OAuth exchange handlers (`TableAuthExtension.oauthExchangeHandlers`, see the [OAuth Guide](oauth-guide.md#custom-exchange-handlers)) and other extensions of the auth flow. Its members are internals and may change in minor versions; prefer `db.onSignIn`.
 
 #### Email Templates
 
@@ -1001,13 +1044,14 @@ Configure external authentication providers — OAuth redirect flows, JWT/Bearer
         // GitHub (OAuth only)
         { name: 'github', clientId: '$GITHUB_CLIENT_ID', clientSecret: '$GITHUB_CLIENT_SECRET' },
 
-        // Supabase (JWT only, JWKS auto-detected)
-        { name: 'supabase', issuer: 'https://xyz.supabase.co/auth/v1' },
+        // Supabase (JWT only). aud is checked against 'authenticated' unless clientId says otherwise.
+        // trustEmailVerified: true if the project has "Confirm email" on (no session before confirmation).
+        { name: 'supabase', issuer: 'https://xyz.supabase.co/auth/v1', secret: '$SUPABASE_JWT_SECRET' },
 
-        // Custom issuer with HMAC secret
-        { issuer: 'https://other.example.com', secret: '$OTHER_SECRET' },
+        // Custom issuer with HMAC secret. clientId = the aud its tokens carry.
+        { issuer: 'https://other.example.com', secret: '$OTHER_SECRET', clientId: 'my-app' },
 
-        // JWKS URL (Auth0, Clerk, Okta, Keycloak, etc.)
+        // JWKS URL (Auth0, Clerk, Okta, Keycloak, etc.). The token needs an `email` claim.
         {
             issuer: 'https://myapp.auth0.com/',
             jwksUrl: 'https://myapp.auth0.com/.well-known/jwks.json',
@@ -1039,6 +1083,7 @@ Configure external authentication providers — OAuth redirect flows, JWT/Bearer
         {
             issuer: 'https://internal-service.example.com',
             secret: '$INTERNAL_SERVICE_SECRET',
+            clientId: 'my-app',
             bearerMode: 'partial',
         },
 
@@ -1065,7 +1110,7 @@ Configure external authentication providers — OAuth redirect flows, JWT/Bearer
 |----------|------|---------|---------|-------------|
 | `name` | `string` | No | — | Provider name. Built-in presets: `'google'`, `'github'`, `'discord'`, `'linkedin'`, `'supabase'`. Any other string uses manual configuration. |
 | `issuer` | `string` | No | — | JWT `iss` claim to trust. Required for JWT/Bearer verification when not using a known preset. |
-| `clientId` | `string \| string[]` | No | — | OAuth client ID and/or expected JWT `aud`/`azp` claim(s). Prefix with `$` for env var. |
+| `clientId` | `string \| string[]` | For JWT issuers | — | OAuth client ID and/or the JWT `aud`/`azp` value(s) to accept. Prefix with `$` for env var. **Required** (validation error) for every JWT issuer in `'login'`/`'partial'` bearerMode, including the `google` preset: without it a token the issuer made for any other app would sign in here. Not required for `'full'`/`'admin'` issuers (teenybase tokens carry roles in `aud`; checked when set) or the hosted `supabase` preset (defaults to `'authenticated'`). |
 | `clientSecret` | `string` | No | — | OAuth client secret. When present, enables OAuth redirect flow. Always use `$` env var in production. |
 | `secret` | `string \| JsonWebKey` | No | — | HMAC shared secret, PEM public key string, or JWK public key object for JWT verification. Strings support `$ENV_VAR` syntax. |
 | `jwksUrl` | `string` | No | — | JWKS endpoint URL. Keys are fetched and cached (10 min TTL), matched by `kid` header. |
@@ -1080,7 +1125,7 @@ Configure external authentication providers — OAuth redirect flows, JWT/Bearer
 | `userinfoField` | `string` | No | — | Extract nested field from userinfo response (e.g., `'user'` for Discord). |
 | `authorizeParams` | `Record<string, string>` | No | — | Additional query params for authorization URL. |
 | `mapping` | `object` | No | Defaults | Map provider fields to teenybase user fields. See below. |
-| `trustEmailVerified` | `boolean` | No | `false` | When the provider response omits the verification field, treat the email as verified anyway. Built-in `google` and `linkedin` opt in. For custom providers, set `true` only when you know the provider verifies email at signup. Otherwise the OAuth login is rejected with `400 Email not verified`. See [OAuth Guide → Email Verification Trust](oauth-guide.md#email-verification-trust). |
+| `trustEmailVerified` | `boolean` | No | `false` | When the provider response (OAuth) or the token (JWT issuer) has no verification field, treat the email as verified anyway. An explicit `false` is never overridden. Built-in OAuth `google` and `linkedin` opt in. Set `true` only when you know the provider verifies email before issuing a token. Otherwise the sign-in is rejected with `400 Email not verified`. See [OAuth Guide → Email Verification Trust](oauth-guide.md#email-verification-trust). |
 
 #### Field Mapping
 
@@ -1095,6 +1140,16 @@ mapping: {
 ```
 
 The `verified` mapping reads a truthy/falsy flag from the provider response. Truthy (`true` / `1` / `'true'`) → user marked verified. Falsy → OAuth login rejected. Missing → falls back to `trustEmailVerified` (default `false` → rejected). See [Email Verification Trust](oauth-guide.md#email-verification-trust).
+
+#### What a JWT issuer's token must carry
+
+For `'login'` (the default, `/auth/login-token`) and `'partial'` issuers:
+
+- **`aud` (or `azp`)** matching `clientId`.
+- **`email`** (or `user_metadata.email`). Users are keyed by email, and `sub` is the provider's own user id (`auth0|123`, `user_2abc`), so it is never used as one. A token without an email claim gets a 401 saying so. Clerk: add `"email": "{{user.primary_email_address}}"` in a JWT template. Auth0: add the claim in an Action, or send the ID token.
+- **`email_verified: true`** (or `verified`; `true`, `'true'` and `1` count), unless the issuer has `trustEmailVerified: true`. Unverified tokens are rejected with 400 and never create or sign in to an account.
+
+`'full'`/`'admin'` issuers take teenybase's own token format (from another teenybase instance): `sub` is the email and `verified` the verification flag.
 
 #### Two ways to provide the JWT verification key:
 - **`secret`** — HMAC shared secret string (`$ENV_VAR` supported), PEM public key string, or JWK public key object

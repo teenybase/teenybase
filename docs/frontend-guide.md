@@ -146,6 +146,8 @@ const response = await fetch(`${API}/table/users/auth/change-password`, {
 
 This invalidates all other sessions for the user.
 
+`passwordCurrent` is required unless the auth extension sets `passwordCurrentSuffix: ''`: without it the answer is `400 passwordCurrent is required`, with a wrong one `400 Invalid current password...`. Send `passwordConfirm` too when `passwordConfirmSuffix` is set. A user who signed up with Google/GitHub/a token never had a password they know: offer them password reset instead. The user's email must be verified (an unverified session gets 401 here).
+
 ### 6. Password Reset (Forgot Password)
 
 Two-step flow: request a reset email, then confirm with the token from the email.
@@ -640,7 +642,7 @@ Redirect the user to the OAuth authorization endpoint:
 window.location.href = `${API}/table/users/auth/oauth/google?redirect=${encodeURIComponent(window.location.origin + '/auth/callback')}`
 ```
 
-The `redirect` query parameter tells teenybase where to send the user after authentication. Relative paths are resolved against `appUrl`. By default, only URLs matching the `appUrl` hostname are allowed — configure `allowedRedirectUrls` for other domains. See [OAuth Guide — Redirect URL validation](oauth-guide.md) for details.
+The `redirect` query parameter tells teenybase where to send the user after authentication. Relative paths are resolved against `appUrl`. By default, only URLs with `appUrl`'s origin (same scheme, host and port) are allowed: list other origins, a dev server on another port, or an app deep link (`myapp://callback`) in `allowedRedirectUrls` (exact match). See [OAuth Guide — Redirect URL validation](oauth-guide.md#redirect-url-validation) for details.
 
 If `authCookie` is configured, the auth token will be set as a cookie. Otherwise, you'll need to extract it from the callback.
 
@@ -659,6 +661,10 @@ const response = await fetch(`${API}/table/users/select`, {
 })
 const [user] = await response.json()
 ```
+
+If the email already has an account, the user is signed in to it. If that account's email was never verified (for example someone signed up with a password using this address), the OAuth sign-in takes it over: its password is replaced and its sessions end, so a user who had set a password uses password reset to set it again.
+
+To know on the backend which provider a user signed in with, or to copy data from the provider's profile, use the worker-side [sign-in hook](config-reference.md#sign-in-hook-dbonsignin) (`db.onSignIn`).
 
 ### Supported Providers
 

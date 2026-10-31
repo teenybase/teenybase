@@ -60,10 +60,10 @@ export interface TableAuthExtensionData extends TableExtensionData {
     /**
      * Suffix appended to the password field name to create an additional request body field
      * for current password verification. For example, if the password field is `password` and
-     * suffix is `'Current'`, the update request body must include `passwordCurrent` containing
-     * the user's existing password. Verified against the stored hash before allowing the change.
-     * Only enforced for non-admin users.
-     * Set to empty string to disable (not recommended).
+     * suffix is `'Current'`, `POST /auth/change-password` (and a non-admin record update that sets
+     * the password) must include `passwordCurrent` containing the user's existing password.
+     * Verified against the stored hash before allowing the change. Only enforced for non-admin users.
+     * Unset means `'Current'`. Set to empty string to disable (not recommended).
      * @default 'Current'
      */
     passwordCurrentSuffix?: string

@@ -163,12 +163,12 @@ The `identity` field accepts email or username. Returns `{ token, refresh_token,
 | Endpoint | Method | Body | Description |
 |----------|--------|------|-------------|
 | `/auth/refresh-token` | POST | `{ "refresh_token": "..." }` + `Authorization` header | Refresh an expired token |
-| `/auth/change-password` | POST | `{ "password": "new", "passwordCurrent": "old" }` (plus `passwordConfirm` when `passwordConfirmSuffix` is set) | Change password (requires auth with a verified email). Only the password is written; any other field in the body is ignored. |
+| `/auth/change-password` | POST | `{ "password": "new", "passwordCurrent": "old" }` (plus `passwordConfirm` when `passwordConfirmSuffix` is set) | Change password (requires auth with a verified email). `passwordCurrent` is required unless `passwordCurrentSuffix: ''`. Only the password is written; any other field in the body is ignored. Ends the user's other sessions. |
 | `/auth/request-password-reset` | POST | `{ "email": "..." }` | Request password reset email |
 | `/auth/confirm-password-reset` | POST | `{ "token": "...", "password": "new" }` (plus `passwordConfirm` when `passwordConfirmSuffix` is set) | Confirm reset with token. Signs the user in and ends their other sessions. |
 | `/auth/request-verification` | POST | `{ "email": "..." }` | Request email verification |
 | `/auth/confirm-verification` | POST | `{ "token": "..." }` | Confirm email with token |
-| `/auth/login-token` | POST | — (uses `Authorization` header) | Login with external JWT |
+| `/auth/login-token` | POST | — (uses `Authorization` header) | Login with an external JWT from an issuer in `authProviders`. The token needs `aud` = the issuer's `clientId`, an `email` claim and `email_verified: true` (or the issuer `trustEmailVerified: true`). 401 with the reason when the token is refused (unknown issuer, bad signature, wrong audience, no email claim); 400 when the email isn't verified. |
 | `/auth/google-login` | POST | form-encoded; see [Google One Tap docs](https://developers.google.com/identity/gsi/web/guides/overview) | Google One Tap callback. Verifies the Google credential + CSRF, creates a session. Called by the Google JS library, not by application code. |
 | `/auth/oauth/{provider}` | GET | — | Start OAuth flow (Google, GitHub, Discord, LinkedIn) |
 | `/auth/oauth/{provider}/callback` | GET | — | OAuth callback |

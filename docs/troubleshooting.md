@@ -14,6 +14,18 @@ Error messages and fixes for the teenybase CLI, local development, deploys to Cl
 
 **`Email not verified` (400) on OAuth callback** — Different error. The OAuth provider didn't confirm email verification. For custom providers, either map a verification field (`mapping.verified`) or set `trustEmailVerified: true` if you trust the provider. See [OAuth Guide → Email Verification Trust](oauth-guide.md#email-verification-trust).
 
+**`Email not verified: the token must carry email_verified: true...` (400) on `/auth/login-token`** — The external token has no `email_verified` (or `verified`) claim set to true. Add it to the token, or set `trustEmailVerified: true` on the issuer if it never issues tokens for unverified emails. Since 0.1.1 a missing claim no longer counts as verified.
+
+**`External token has no email claim` (401)** — The token (often an Auth0 or Clerk access token) carries only `sub`. Since 0.1.1 `sub` is never used as the email. Add an `email` claim (Clerk JWT template: `"email": "{{user.primary_email_address}}"`; Auth0: a custom claim in an Action) or send the ID token.
+
+**`clientId is required for the JWT issuer ...`** (config validation) — Since 0.1.1 every issuer in `authProviders` (in the default `'login'` or `'partial'` bearerMode) must say which audience it accepts. Set `clientId` to the `aud` your issuer puts in its tokens (Google: your OAuth client ID; Auth0: the API identifier). `Invalid audience for external issuer` (401) means the token's `aud` isn't one of them.
+
+**`passwordCurrent is required` / `Invalid current password` (400) on change-password** — Send the current password as `passwordCurrent`. Users created by an OAuth/token sign-in never had one: they set a password with password reset.
+
+**`To change the password use POST /auth/change-password` (400) on a record update** — A non-admin update that sets the password on a table with a password salt column can't check `passwordCurrent`; use the change-password route.
+
+**OAuth sign-in lands on `appUrl` instead of the `redirect` you passed** — Since 0.1.1 the redirect must have `appUrl`'s exact origin (scheme, host and port), or be listed in `allowedRedirectUrls`. Add dev servers on other ports and app deep links (`myapp://...`) to `allowedRedirectUrls`.
+
 ---
 
 ## Deploy Failures

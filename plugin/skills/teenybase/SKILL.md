@@ -101,6 +101,9 @@ Field types, sqlTypes, usages, indexes, FTS, triggers, email, OAuth, actions and
 - **In `createRule`, an omitted column reads as its `default` (or NULL).**
 - **`role`, `email_verified` and `password_salt` are admin-only.** A non-admin request that sends them gets 403 (`role can only be set by an admin`). Give `role` a `default` if users need one; `auth.meta` is NOT protected this way.
 - **Sign-up needs `passwordConfirm`** when the auth extension sets `passwordConfirmSuffix: 'Confirm'` (the with-auth template does): `POST /api/v1/table/users/auth/sign-up` with `{username, email, password, passwordConfirm, name}`. Returns `{token, refresh_token, record}`; send `Authorization: Bearer <token>`.
+- **change-password needs `passwordCurrent`** (and `passwordConfirm` with `passwordConfirmSuffix`). Users created by OAuth/token sign-in have no password they know: they use password reset.
+- **Code that runs on sign-in goes in the worker, not `teenybase.ts`** (the config is JSON): `db.onSignIn.push(async ({provider, user, created, external, db}) => {...})` in the `teenyHono` callback of `src/index.ts`; write with `db.rawSQL`, throw to refuse. See `config-reference.md` "Sign-in hook".
+- **External JWT issuers (`authProviders` with `issuer`) need `clientId`**, and their tokens need `email` + `email_verified: true` claims (or `trustEmailVerified: true` on the issuer). The OAuth `redirect` must have `appUrl`'s exact origin unless listed in `allowedRedirectUrls`.
 - **`/insert` wraps the row:** `{"values": {...}, "returning": "*"}`. A bare body is a 400; without `returning` the response is empty. `/update` uses `{"where", "setValues"}`; `/edit/:id` takes bare fields.
 - **`default` / `check` strings are raw SQL.** `default: 'draft'` is not the text 'draft': use `sqlValue('draft')`.
 - **Imports:** `baseFields`, `authFields` and the triggers come from `teenybase/scaffolds/fields`; keep `satisfies DatabaseSettings` for type checking.

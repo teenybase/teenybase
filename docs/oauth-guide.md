@@ -12,6 +12,8 @@ Teenybase supports three OAuth-related flows, all configured through `DatabaseSe
 
 All three create a session and return a JWT + refresh token. Flows 1 and 2 can also set an auth cookie.
 
+All three only accept an email the provider verified, and sign in to an existing row with that email; a row whose email was never verified (e.g. someone signed up with a password using that address) is taken over first: new random password, sessions ended. See [Signing in to an existing account](config-reference.md#signing-in-to-an-existing-account). To run your own code on each sign-in, see [Sign-in hook](#sign-in-hook).
+
 ---
 
 ## 1. Google One Tap Login
@@ -191,8 +193,8 @@ Just link to the authorize endpoint:
 The `redirect` parameter is validated to prevent open redirect attacks:
 
 - **Relative paths** (e.g., `/settings`) are resolved against `appUrl` (e.g., `https://myapp.com/settings`).
-- **No `allowedRedirectUrls` configured** (default): only URLs matching `appUrl` hostname are allowed.
-- **`allowedRedirectUrls` configured**: only exact matches against that list are allowed.
+- **No `allowedRedirectUrls` configured** (default): only URLs with `appUrl`'s origin are allowed: same scheme, host and port. `http://` for an `https://` app, another port, or `javascript:`/`intent:` URLs with the app's hostname are rejected.
+- **`allowedRedirectUrls` configured**: only exact matches against that list are allowed. This is how to allow a mobile app deep link (`myapp://auth/callback`) or a frontend on another origin (e.g. a dev server at `http://localhost:5173/after-login`).
 - **Rejected URLs**: silently fall back to `provider.redirectUrl`, then `appUrl`.
 
 ```ts
@@ -224,7 +226,24 @@ TableAuthExtension.oauthExchangeHandlers['github'] = async ({ c, code, callbackU
 }
 ```
 
-The framework handles CSRF, session creation, cookies, and redirect. The handler only does token exchange + user info.
+The framework handles CSRF, session creation, cookies, and redirect. The handler only does token exchange + user info. Return `verified: true` only for an email the provider verified: `verified: false` is rejected, and the email is what links the sign-in to an existing account.
+
+`TableAuthExtension` is an advanced export: its members are internals that may change in minor versions. To react to sign-ins, use the [sign-in hook](#sign-in-hook).
+
+### Sign-in hook
+
+`db.onSignIn` hooks run on every sign-in (OAuth callback, Google One Tap, `login-token`, and password/email sign-ins) with the provider name and what the provider returned, and can update rows or refuse the sign-in by throwing. Register them where the `$Database` is created:
+
+```ts
+// src/index.ts
+db.onSignIn.push(async ({provider, created, user, external, db}) => {
+  if (provider !== 'github') return
+  // external = {provider, providerId, email, name, avatar, username, verified, rawData: GitHub's /user response}
+  await db.rawSQL({q: 'UPDATE users SET handle_set = 1 WHERE id = ? AND handle_set = 0', v: [user.id]}).run()
+})
+```
+
+Arguments and rules: [config reference → Sign-in hook](config-reference.md#sign-in-hook-dbonsignin).
 
 ---
 
@@ -241,7 +260,16 @@ const res = await fetch('/api/v1/table/users/auth/login-token', {
 const { token, refresh_token, record } = await res.json()
 ```
 
-Teenybase verifies the token against `authProviders`, finds/creates the user, and returns a session.
+Teenybase verifies the token against `authProviders`, finds/creates the user, and returns a session. The issuer needs a `clientId` (the `aud` its tokens carry), and the token needs an `email` claim and `email_verified: true` (or the issuer `trustEmailVerified: true`). Access tokens from Auth0 or Clerk often carry no email: add one (Clerk: a JWT template with `"email": "{{user.primary_email_address}}"`; Auth0: a custom claim in an Action) or send the ID token. See [What a JWT issuer's token must carry](config-reference.md#what-a-jwt-issuers-token-must-carry).
+
+```ts
+authProviders: [{
+  issuer: 'https://myapp.us.auth0.com/',
+  jwksUrl: 'https://myapp.us.auth0.com/.well-known/jwks.json',
+  clientId: '$AUTH0_CLIENT_ID',   // required: tokens for other audiences are refused
+  trustEmailVerified: false,      // default; true only if the issuer never issues tokens for unverified emails
+}]
+```
 
 ---
 
