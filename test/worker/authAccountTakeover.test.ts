@@ -166,6 +166,18 @@ describe('pre-account takeover (email linking)', () => {
         expect((await refresh(s, u.token, u.refresh_token)).status).toEqual(200)
     })
 
+    test('a verified row with a noSelect email_verified field links as before (not taken over)', async () => {
+        const s = withSettings(s => { usersTable(s).fields.find((f: any) => f.name === 'email_verified').noSelect = true })
+        const up = await signUp(s, 'hidden-verified@example.com', 'owner7', 'owner-pw-123')
+        const u = await up.json() as any
+        await db().prepare('UPDATE users SET email_verified = 1 WHERE id = ?').bind(u.record.id).run()
+        const before = await row('hidden-verified@example.com')
+
+        expect((await loginToken(s, {sub: 'y', email: 'hidden-verified@example.com', email_verified: true})).status).toEqual(200)
+        expect(await row('hidden-verified@example.com')).toEqual(before)
+        expect((await loginPassword(s, 'hidden-verified@example.com', 'owner-pw-123')).status).toEqual(200)
+    })
+
     test('a user created by OAuth is email-verified', async () => {
         const s = withSettings()
         const res = await loginToken(s, {sub: 'z', email: 'brand-new@example.com', email_verified: true})

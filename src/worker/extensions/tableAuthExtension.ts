@@ -603,7 +603,12 @@ export class TableAuthExtension extends TableExtension<TableAuthExtensionData> {
      *   email_verified field avoids it.
      */
     private async _isEmailOwnershipProven(user: UserFields) {
-        if(this.mapping.emailVerified) return !!user.emailVerified
+        if(this.mapping.emailVerified) {
+            // a noSelect email_verified isn't in the normal lookup (it would read as false): read it with the hidden auth columns
+            const field = this.table.fields[this.mapping.emailVerified]
+            const row = field && !isFieldSelectable(field, false) ? await this.getUser(user.id, true) : user
+            return !!row?.emailVerified
+        }
         if(!this.mapping.password) return true
         const identities = this.data.saveIdentities ? this.table.$db.identities : null
         if(!identities || !this.table.fields[this.mapping.email!]?.noUpdate) return false
