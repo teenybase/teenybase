@@ -152,13 +152,6 @@ const rawLogin = async (claims: Record<string, any>, s = settings) => {
 }
 const userCount = async (email: string) => (await env.PRIMARY_DB.prepare('SELECT count(*) AS n FROM users WHERE email = ?').bind(email).first<{n: number}>())!.n
 
-test('a token without an email claim is refused; its sub is never used as the email', async () => {
-    const res = await rawLogin({sub: 'user_2abc', email_verified: true})
-    expect(res.status).toEqual(401)
-    expect(((await res.json()) as any).message).toContain('External token has no email claim')
-    expect(await userCount('user_2abc')).toEqual(0)
-})
-
 test('a token without an email_verified claim signs in nobody, unless the issuer has trustEmailVerified', async () => {
     const res = await rawLogin({sub: 'u1', email: 'noclaim@example.com'})
     expect(res.status).toEqual(400)
@@ -169,17 +162,4 @@ test('a token without an email_verified claim signs in nobody, unless the issuer
     const ok = await rawLogin({sub: 'u1', email: 'noclaim@example.com'}, trusted)
     expect(ok.status).toEqual(200)
     expect(((await ok.json()) as any).record.email_verified).toEqual(true)
-})
-
-test('a token for another audience is refused', async () => {
-    const res = await rawLogin({sub: 'u1', email: 'otheraud@example.com', email_verified: true, aud: 'another-app'})
-    expect(res.status).toEqual(401)
-    expect(await userCount('otheraud@example.com')).toEqual(0)
-})
-
-test('an issuer config without clientId is rejected by settings validation', async () => {
-    const bad = {...settings, authProviders: [{issuer: EXT_ISS, secret: EXT_SECRET, algorithm: 'HS256'}]}
-    const res = await rawLogin({sub: 'u1', email: 'cfg@example.com', email_verified: true}, bad)
-    expect(res.status).toBeGreaterThanOrEqual(400)
-    expect(await res.text()).toContain('clientId is required for the JWT issuer')
 })

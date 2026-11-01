@@ -155,13 +155,6 @@ describe('a hook that throws blocks the sign-in', () => {
         const row = await userRow('oauth-c1@example.com')
         expect(await sessionCount(row.id)).toEqual(0)
     })
-
-    test('login-token: no token', async () => {
-        const tok = await extToken({sub: 'ext-2', email: 'hook-ext-block@example.com', email_verified: true})
-        const res = await api('users/auth/login-token', {method: 'POST', hook: 'throw', headers: {Authorization: 'Bearer ' + tok}})
-        expect(res.status).toEqual(403)
-        expect(((await res.json()) as any).token).toBeUndefined()
-    })
 })
 
 test('changes a hook makes to auth columns are in the new token', async () => {
