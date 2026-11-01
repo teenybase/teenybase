@@ -2,6 +2,38 @@
 
 All notable changes to the `teenybase` npm package. The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/); versions follow [semver](https://semver.org/) with the usual 0.x caveat that minor versions may break the API.
 
+## Unreleased
+
+### Breaking
+
+- JWT issuers in `login`/`partial` bearerMode (the default), including the `google` preset, need `clientId`: a token is accepted only when its `aud` (or `azp`) is one of them. Without it, config validation fails. Set it to your OAuth client ID (Google), API identifier (Auth0) or the `aud` your issuer puts in its tokens. Hosted Supabase issuers default to `'authenticated'`; a `jwtAllowedIssuers` string entry is accepted only for those (move others to `authProviders` with a `clientId`).
+- Issuer tokens count as email-verified only with an `email_verified`/`verified` claim, or with the new `trustEmailVerified: true` on the issuer. Supabase access tokens carry no such claim: set `trustEmailVerified: true` on a Supabase issuer (sensible only with "Confirm email" on).
+- `login`/`partial` issuer tokens need a top-level `email` claim; `sub` and `user_metadata.email` are never used as the email (401 that says how to add the claim: a Clerk JWT template, an Auth0 Action, or send the ID token). Anonymous Supabase users are refused.
+- An OAuth `redirect` must have `appUrl`'s origin (scheme, host and port); before, the hostname was enough. List other origins and app deep links (`myapp://callback`) in `allowedRedirectUrls`.
+
+### Security
+
+- A verified OAuth, Google or issuer-token sign-in into an account whose email was never verified (for example a password sign-up with that address) takes the account over: the email is marked verified, the password is replaced with a random one, and all sessions end. Before, whoever created the row kept access to the real owner's account. The owner can set a password with password reset.
+- Google tokeninfo returns `email_verified` as a string: `"false"` was accepted as verified.
+- `ADMIN_SERVICE_TOKEN` set to an empty value or the placeholder `not-set` counts as not set: a deployment that kept the placeholder accepted `Bearer not-set` as a superadmin login. A token shorter than 12 characters still works but logs an error.
+
+### Added
+
+- `db.onSignIn` hooks: `{table, user, provider, created, external, db}` on every sign-in (password, sign-up, OAuth, Google, issuer token, email links), before the session is created; a hook that throws blocks the sign-in. Register them in the `teenyHono` callback (see "Sign-in hook" in config-reference.md).
+- `TableAuthExtension` and the `OAuthExchangeHandler` type are exported from `teenybase/worker` (advanced: its members may change in minor versions).
+- `trustEmailVerified` on JWT issuers.
+
+### Fixed
+
+- `npx teenybase create` wrote today's date as `compatibility_date`; on days the newest workerd lags the calendar, a new project's first `deploy --local` failed with a timeout. New projects get a date a week back.
+- Cloudflare Email Service: a bare `from` address (no display name) failed every send ("Incorrect type for the 'name' field on 'EmailAddress'").
+- `teeny deploy` lost the worker's address when the Worker has cron triggers ("Deployment route not found"); custom domains are recognised too. After turning `workers_dev` off, a saved workers.dev `apiRoute` in infra.jsonc is replaced with the deployed address.
+- `teeny deploy` reads the deployed settings directly from D1 again instead of failing with "SQL Error" and falling back to the worker API; debug logs show the real D1 error.
+- Remote database setup and migrations no longer give up after 5 seconds (30 s and 5 minutes).
+- Failed worker requests name the method, URL and cause (e.g. `ENOTFOUND`) instead of "fetch failed", with a hint about a DNS cache right after a new hostname.
+- `teeny dev` with `routes` in wrangler.jsonc: the worker saw the route's host as the request URL locally; it now sees `http://localhost:<port>` (wrangler 4.153.0+).
+- `--temporary` refuses configs with cron triggers before creating an account (temporary accounts allow none).
+
 ## 0.1.0 - 2026-10-30
 
 Release 0.1.0. The last version on npm is 0.0.14; 0.0.15 and 0.0.16 were never published to npm (0.0.16 was the version on GitHub `main`), so upgrading from npm 0.0.14 also brings everything that was on that `main`. The entries below are the changes since that 0.0.16 tree.
