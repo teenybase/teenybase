@@ -24,3 +24,17 @@ describe('deployedAddresses', () => {
             .toEqual(['https://cloud.example.org', 'https://files.example.org'])
     })
 })
+
+describe('workerRequestError', () => {
+    test('a timeout (read-only DOMException) and a DNS failure are named and still count as warm-up errors', async () => {
+        const {workerRequestError, isDeploymentWarmupError} = await import('../src/node/cli-utils')
+        const timeout = new DOMException('The operation was aborted due to timeout', 'TimeoutError')
+        const t = workerRequestError(timeout, 'POST', 'https://my-app.acme.workers.dev/api/v1/setup-db')
+        expect(t.message).toBe('POST https://my-app.acme.workers.dev/api/v1/setup-db: The operation was aborted due to timeout')
+        expect(isDeploymentWarmupError(t)).toBe(true)
+        const dns = Object.assign(new TypeError('fetch failed'), {cause: Object.assign(new Error('getaddrinfo ENOTFOUND app.example.com'), {code: 'ENOTFOUND'})})
+        const d = workerRequestError(dns, 'GET', 'https://app.example.com/api/v1/migrations')
+        expect(d.message).toMatch(/^GET https:\/\/app\.example\.com\/api\/v1\/migrations: fetch failed \(ENOTFOUND\)\. If this hostname was just created/)
+        expect(isDeploymentWarmupError(d)).toBe(true)
+    })
+})

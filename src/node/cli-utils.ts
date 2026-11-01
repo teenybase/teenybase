@@ -889,14 +889,7 @@ export async function fetchWorker(c: CliContext, fPath: string, reqOptions?: Req
             : fOptions.body
         c.logger.debug(`Fetching ${fOptions.method} ${fPath}${debugBody ? ` [body: ${debugBody}]` : ''}`)
     }
-    const res = await _fetch(fPath, fOptions).catch((e: any) => {
-        // undici only says "fetch failed" (or "aborted due to timeout"): name the request and the cause. Keeps the error's
-        // type and the "fetch failed" text, which isDeploymentWarmupError matches.
-        const code = e?.cause?.code
-        e.message = `${fOptions.method} ${fPath}: ${e?.message}${code || e?.cause?.message ? ` (${code || e.cause.message})` : ''}`
-        if (code === 'ENOTFOUND' || code === 'EAI_AGAIN') e.message += '. If this hostname was just created, this machine\'s DNS may still have it cached as missing: wait a few minutes (or flush the DNS cache) and run the command again'
-        throw e
-    })
+    const res = await _fetch(fPath, fOptions).catch((e: any) => { throw workerRequestError(e, fOptions.method, fPath) })
     const rest = await res.text()
     if(!res.ok) {
         // An HTML error page (e.g. Cloudflare's 404 while a new route propagates): show its title, not the page
@@ -920,6 +913,19 @@ export async function fetchWorker(c: CliContext, fPath: string, reqOptions?: Req
     }catch (e){
         throw new Error(`Failed to parse response from ${fPath}. Status: ${res.status}, Response: ${rest}`)
     }
+}
+
+/**
+ * undici only says "fetch failed" (or "aborted due to timeout"): a new error that names the request and the cause. A new
+ * error because a timeout's DOMException has a read-only message; it keeps what isDeploymentWarmupError reads (TypeError
+ * with "fetch failed", or the TimeoutError/AbortError name).
+ */
+export function workerRequestError(e: any, method: string, url: string): Error {
+    const code = e?.cause?.code
+    let message = `${method} ${url}: ${e?.message}${code || e?.cause?.message ? ` (${code || e.cause.message})` : ''}`
+    if (code === 'ENOTFOUND' || code === 'EAI_AGAIN') message += '. If this hostname was just created, this machine\'s DNS may still have it cached as missing: wait a few minutes (or flush the DNS cache) and run the command again'
+    if (e instanceof TypeError) return new TypeError(message, {cause: e.cause ?? e})
+    return Object.assign(new Error(message, {cause: e}), {name: e?.name ?? 'Error'})
 }
 
 /**
