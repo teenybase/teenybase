@@ -1000,6 +1000,25 @@ export async function fetchDeployedMigrations(c: CliContext, settings: DatabaseS
     }
 }
 
+/** Keys of the settings that hold no database schema: saved values are only compared with the new config. */
+const SAVED_AUTH_KEYS = ['authProviders', 'jwtAllowedIssuers']
+
+/**
+ * Settings saved by the previous deploy ($settings, .local-persist/config.json), read to work out the migrations.
+ * They were valid for the teenybase version that saved them. When only the auth issuer keys fail a rule added
+ * since (e.g. `clientId` on JWT issuers), those keys are kept as saved and the rest is parsed, so the deploy that
+ * brings the config up to date can run. The new config is still validated in full.
+ */
+export function parseSavedSettings(settings: object): DatabaseSettings {
+    const saved = settings as Record<string, unknown>
+    const res = databaseSettingsSchema.safeParse(saved)
+    if (res.success) return res.data
+    if (!res.error.issues.every(i => SAVED_AUTH_KEYS.includes(String(i.path[0])))) throw res.error
+    const rest = Object.fromEntries(Object.entries(saved).filter(([k]) => !SAVED_AUTH_KEYS.includes(k)))
+    const auth = Object.fromEntries(SAVED_AUTH_KEYS.filter(k => k in saved).map(k => [k, saved[k]]))
+    return {...databaseSettingsSchema.parse(rest), ...auth} as DatabaseSettings
+}
+
 export function loadLocalPersistConfig(c: CliContext) {
     if(!c.isLocal) return undefined
     const localConfigPath = path.join(c.localPersistPath, 'config.json')
@@ -1015,7 +1034,7 @@ export function loadLocalPersistConfig(c: CliContext) {
         // const configPath = path.join(c.migrationsPath, 'config.json')
         // fs.writeFileSync(configPath, JSON.stringify(localConfig, null, 2))
         // c.logger.info(`Config found in ${readableRelative(c.localPersistPath)}. Written to ${readableRelative(configPath)}`)
-        return localConfig ? databaseSettingsSchema.parse(localConfig) : undefined
+        return localConfig ? parseSavedSettings(localConfig) : undefined
         // return true
     }
     return undefined
@@ -1122,7 +1141,7 @@ export async function generateMigrationsDir(c: CliContext, clean = false, write 
         const json = await fetchDeployedMigrations(c, config.config)
         if(json.settings === null) deployed = false
 
-        lastConfig = json.settings ? databaseSettingsSchema.parse(json.settings) : undefined
+        lastConfig = json.settings ? parseSavedSettings(json.settings) : undefined
         lastMigrations = json.migrations
         lastVersion = json.version
     } else {
