@@ -2,7 +2,7 @@
 
 All notable changes to the `teenybase` npm package. The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/); versions follow [semver](https://semver.org/) with the usual 0.x caveat that minor versions may break the API.
 
-## Unreleased
+## 0.1.1 - 2026-11-02
 
 ### Breaking
 
