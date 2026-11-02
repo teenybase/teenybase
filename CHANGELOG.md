@@ -6,7 +6,7 @@ All notable changes to the `teenybase` npm package. The format follows [Keep a C
 
 ### Breaking
 
-- JWT issuers in `login`/`partial` bearerMode (the default), including the `google` preset, need `clientId`: a token is accepted only when its `aud` (or `azp`) is one of them. Without it, config validation fails. Set it to your OAuth client ID (Google), API identifier (Auth0) or the `aud` your issuer puts in its tokens. Hosted Supabase issuers default to `'authenticated'`; a `jwtAllowedIssuers` string entry is accepted only for those (move others to `authProviders` with a `clientId`).
+- JWT issuers in `login`/`partial` bearerMode (the default), including the `google` preset, need `clientId`: a token is accepted only when its `aud` (or `azp`) is one of them. Without it, config validation fails. Set it to your OAuth client ID (Google), API identifier (Auth0) or the `aud` your issuer puts in its tokens. Hosted Supabase issuers default to `'authenticated'`; a `jwtAllowedIssuers` string entry is accepted only for those (move others to `authProviders` with a `clientId`). An empty `clientId` (`''` or `[]`) is a validation error.
 - Issuer tokens count as email-verified only with an `email_verified`/`verified` claim, or with the new `trustEmailVerified: true` on the issuer. Supabase access tokens carry no such claim: set `trustEmailVerified: true` on a Supabase issuer (sensible only with "Confirm email" on).
 - `login`/`partial` issuer tokens need a top-level `email` claim; `sub` and `user_metadata.email` are never used as the email (401 that says how to add the claim: a Clerk JWT template, an Auth0 Action, or send the ID token). Anonymous Supabase users are refused.
 - An OAuth `redirect` must have `appUrl`'s origin (scheme, host and port); before, the hostname was enough. List other origins and app deep links (`myapp://callback`) in `allowedRedirectUrls`.
@@ -25,6 +25,8 @@ All notable changes to the `teenybase` npm package. The format follows [Keep a C
 - `db.onSignIn` hooks: `{table, user, provider, created, external, db}` on every sign-in (password, sign-up, OAuth, Google, issuer token, email links), before the session is created; a hook that throws blocks the sign-in. Register them in the `teenyHono` callback (see "Sign-in hook" in config-reference.md).
 - `TableAuthExtension` and the `OAuthExchangeHandler` type are exported from `teenybase/worker` (advanced: its members may change in minor versions).
 - `trustEmailVerified` on JWT issuers.
+- `saveIdentities` records the identity on every external sign-in, also into an existing account, and waits for the write: a failed write fails the sign-in.
+- `$Database.adminServiceToken()` (the `ADMIN_SERVICE_TOKEN` secret, '' when unset) and `InternalKV.getManyQuery()`.
 
 ### Fixed
 
