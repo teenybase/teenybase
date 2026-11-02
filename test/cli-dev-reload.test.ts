@@ -173,7 +173,8 @@ describe('teeny dev follows deploy --local', () => {
         applyLocalConfig(['items', 'notes'])
         await waitFor(() => snapshotTables().includes('notes'), 10_000, 'the snapshot to include "notes"')
         expect(snapshotTables()).toEqual(['items', 'notes'])
-        expect(devLog).toContain('reloading the dev server')
+        // the line is logged right after the snapshot is written and reaches devLog through a pipe
+        await waitFor(() => devLog.includes('reloading the dev server'), 10_000, 'the reload to be logged')
     }, 120_000)
 
     it('ignores an invalid config and keeps serving the last good one', async () => {
