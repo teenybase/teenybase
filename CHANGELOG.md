@@ -17,7 +17,7 @@ All notable changes to the `teenybase` npm package. The format follows [Keep a C
 - Google tokeninfo returns `email_verified` as a string: `"false"` was accepted as verified.
 - Email normalization (`normalizeEmail`, on by default) removed dots from `live.com` addresses, so `j.smith@live.com` and `jsmith@live.com` were the same account: signing in as one, by password or a verified OAuth email, reached the other's account. Microsoft treats them as different mailboxes, so only `+tag` is removed now, as for hotmail and outlook. Existing `live.com` rows were saved without the dots: check for accounts whose owners can no longer sign in, and correct their email.
 - Sign-up and sign-in responses (`record`) leave out `noSelect` auth columns (username, email, `email_verified`, metadata). Password login returned them in 0.1.0.
-- `ADMIN_SERVICE_TOKEN` set to an empty value or the placeholder `not-set` counts as not set: a deployment that kept the placeholder accepted `Bearer not-set` as a superadmin login. A token shorter than 12 characters still works but logs an error.
+- `ADMIN_SERVICE_TOKEN` set to an empty value or the placeholder `not-set` counts as not set: a deployment that kept the placeholder accepted `not-set` as the superadmin token. A token shorter than 12 characters still works but logs an error.
 
 ### Added
 
