@@ -10,6 +10,7 @@ All notable changes to the `teenybase` npm package. The format follows [Keep a C
 - Issuer tokens count as email-verified only with an `email_verified`/`verified` claim, or with the new `trustEmailVerified: true` on the issuer. Supabase access tokens carry no such claim: set `trustEmailVerified: true` on a Supabase issuer (sensible only with "Confirm email" on).
 - `login`/`partial` issuer tokens need a top-level `email` claim; `sub` and `user_metadata.email` are never used as the email (401 that says how to add the claim: a Clerk JWT template, an Auth0 Action, or send the ID token). Anonymous Supabase users are refused.
 - An OAuth `redirect` must have `appUrl`'s origin (scheme, host and port); before, the hostname was enough. List other origins and app deep links (`myapp://callback`) in `allowedRedirectUrls`.
+- `wranglerDeploy` (`teenybase/node`) returns every address the deploy reports (`string[]`: the workers.dev URL, then custom domains) and no longer takes the `first` parameter.
 
 ### Security
 

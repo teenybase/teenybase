@@ -22,7 +22,7 @@ Error messages and fixes for the teenybase CLI, local development, deploys to Cl
 
 **`passwordCurrent is required` / `Invalid current password` (400) on change-password** — Send the current password as `passwordCurrent`. Users created by an OAuth/token sign-in never had one: they set a password with password reset.
 
-**`To change the password use POST /auth/change-password` (400) on a record update** — A non-admin update that sets the password on a table with a password salt column can't check `passwordCurrent`; use the change-password route.
+**`Not supported, use change-password route(TBD)` (400) on a record update** — A non-admin update that sets the password on a table with a password salt column can't check `passwordCurrent`; use the change-password route.
 
 **OAuth sign-in lands on `appUrl` instead of the `redirect` you passed** — Since 0.1.1 the redirect must have `appUrl`'s exact origin (scheme, host and port), or be listed in `allowedRedirectUrls`. Add dev servers on other ports and app deep links (`myapp://...`) to `allowedRedirectUrls`.
 
