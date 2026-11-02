@@ -95,7 +95,7 @@ export interface TableAuthExtensionData extends TableExtensionData {
     /**
      * Normalize email addresses before storage and lookup.
      * Applies: lowercase, trim, punycode domain normalization, and provider-specific rules
-     * (gmail/googlemail: remove dots and plus-addressing, hotmail/outlook/yahoo: remove plus-addressing).
+     * (gmail/googlemail: remove dots and plus-addressing, hotmail/live/outlook/yahoo: remove plus-addressing).
      * @default true
      */
     normalizeEmail?: boolean

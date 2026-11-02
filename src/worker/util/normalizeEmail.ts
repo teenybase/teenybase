@@ -13,8 +13,8 @@ const providers: Record<string, { cut: RegExp, alias?: string }> = {
     'hotmail.com': {
         cut: PLUS_ONLY
     },
-    'live.com': {
-        cut: PLUS_AND_DOT
+    'live.com': { // dots matter at Microsoft: j.smith@ and jsmith@ are different mailboxes
+        cut: PLUS_ONLY
     },
     'outlook.com': {
         cut: PLUS_ONLY
