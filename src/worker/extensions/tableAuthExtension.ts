@@ -1242,12 +1242,12 @@ export class TableAuthExtension extends TableExtension<TableAuthExtensionData> {
         const res = {
             [this.mapping.uid]: user.id,
         } as Record<string, z.infer<typeof sqlValSchema>>
-        if(this.mapping.username) res[this.mapping.username] = user.username!
-        if(this.mapping.email) res[this.mapping.email] = user.email!
-        // if(this.mapping.password) res[this.mapping.password] = user.password!
-        // if(this.mapping.passwordSalt) res[this.mapping.passwordSalt] = user.passwordSalt!
-        if(this.mapping.emailVerified) res[this.mapping.emailVerified] = user.emailVerified!
-        if(this.mapping.metadata) res[this.mapping.metadata] = JSON.stringify(user.metadata)
+        // `user` may have been read with noSelect columns (login lookup, token building); the record leaves them out
+        const shown = (f?: string): f is string => !!f && isFieldSelectable(this.table.fields[f], false)
+        if(shown(this.mapping.username)) res[this.mapping.username] = user.username!
+        if(shown(this.mapping.email)) res[this.mapping.email] = user.email!
+        if(shown(this.mapping.emailVerified)) res[this.mapping.emailVerified] = user.emailVerified!
+        if(shown(this.mapping.metadata)) res[this.mapping.metadata] = JSON.stringify(user.metadata)
         return res
     }
 

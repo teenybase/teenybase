@@ -164,3 +164,16 @@ test('changes a hook makes to auth columns are in the new token', async () => {
     expect(payload.aud).toEqual(['editor'])
     expect((await userRow('hook-role@example.com')).role).toEqual('editor')
 })
+
+test('noSelect auth columns stay out of the response record, with a hook and on login', async () => {
+    const s = structuredClone(settings)
+    s.tables.find((t: any) => t.name === 'users').fields.find((f: any) => f.name === 'email_verified').noSelect = true
+    const up = await api('users/auth/sign-up', {method: 'POST', body: JSON.stringify(signUpBody('hook-hidden@example.com', 'hookhidden')), hook: 'record', s})
+    expect(up.status).toEqual(200)
+    const u = await up.json() as any
+    expect(u.record).not.toHaveProperty('email_verified')
+    expect((await events())[0].user).not.toHaveProperty('email_verified')
+    const login = await api('users/auth/login-password', {method: 'POST', body: JSON.stringify({email: 'hook-hidden@example.com', password: 'pass-1234'}), s})
+    expect(login.status).toEqual(200)
+    expect(((await login.json()) as any).record).not.toHaveProperty('email_verified')
+})
